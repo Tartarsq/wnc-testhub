@@ -1,2 +1,0 @@
-timestamp,device,device_ip,connection_status,firmware,carrier,technology,mode,serving_band,rsrp_dbm,rssi_dbm,sinr_db,test_type,downlink_mbps,uplink_mbps,result,notes
-2026-07-20T11:45:37,Titan 3,192.168.1.1,Not verified,V1.2.5,Verizon,NR,NSA,n41,-91,-64,23,Wi-Fi throughput,512,48,PASS,First proof of concept
