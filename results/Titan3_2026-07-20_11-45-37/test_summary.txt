@@ -1,0 +1,20 @@
+Titan 3 Test Summary
+========================================
+
+Timestamp: 2026-07-20T11:45:37
+Device: Titan 3
+Device Ip: 192.168.1.1
+Connection Status: Not verified
+Firmware: V1.2.5
+Carrier: Verizon
+Technology: NR
+Mode: NSA
+Serving Band: n41
+Rsrp Dbm: -91
+Rssi Dbm: -64
+Sinr Db: 23
+Test Type: Wi-Fi throughput
+Downlink Mbps: 512
+Uplink Mbps: 48
+Result: PASS
+Notes: First proof of concept
