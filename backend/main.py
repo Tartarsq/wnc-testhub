@@ -12,6 +12,7 @@ from reports import generate_reports
 from titan3 import Titan3
 from utils import (
     create_session_folder,
+    create_session_folders,
     get_readable_time,
     prompt_optional_float,
     prompt_with_default,
@@ -105,6 +106,8 @@ def main() -> None:
         RESULTS_FOLDER,
         "Titan3",
     )
+
+    create_session_folders(session_folder)
 
     logger = create_logger(session_folder)
 

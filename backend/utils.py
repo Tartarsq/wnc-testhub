@@ -26,6 +26,31 @@ def create_session_folder(results_folder: Path, device_name: str) -> Path:
     return session_folder
 
 
+def create_session_folders(session_folder: Path) -> None:
+    """
+    Create the standard folder structure for a test session.
+
+    Example:
+    Titan3_2026-07-21_10-15-30/
+    ├── captures/
+    │   ├── qxdm/
+    │   └── pcap/
+    ├── reports/
+    ├── metadata/
+    └── logs/
+    """
+    folders = [
+        session_folder / "captures" / "qxdm",
+        session_folder / "captures" / "pcap",
+        session_folder / "reports",
+        session_folder / "metadata",
+        session_folder / "logs",
+    ]
+
+    for folder in folders:
+        folder.mkdir(parents=True, exist_ok=True)
+
+
 def prompt_with_default(message: str, default: str) -> str:
     """Prompt the user and return the default when nothing is entered."""
     value = input(f"{message} [{default}]: ").strip()
