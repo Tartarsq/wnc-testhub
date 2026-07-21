@@ -1,3 +1,6 @@
+
+
+
 from pathlib import Path
 
 
@@ -23,3 +26,13 @@ DEFAULT_RESULT = "PASS"
 
 # Connection settings
 PING_TIMEOUT_SECONDS = 2
+
+
+# Qualcomm tool executable paths
+QXDM_EXECUTABLE = Path(
+    r"C:\Program Files\Qualcomm\QXDM5\QXDM.exe"
+)
+
+PCAT_EXECUTABLE = Path(
+    r"C:\Program Files (x86)\Qualcomm\PCAT\bin\PCATAPP.exe"
+)

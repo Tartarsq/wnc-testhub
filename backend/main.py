@@ -109,7 +109,7 @@ def main() -> None:
 
     create_session_folders(session_folder)
 
-    logger = create_logger(session_folder)
+    logger = create_logger(session_folder / "logs")
 
     logger.info("Titan 3 test session started.")
     logger.info("Results folder: %s", session_folder)
@@ -173,7 +173,7 @@ def main() -> None:
     for report_path in report_paths:
         print(f"  - {report_path.name}")
 
-    print("  - test_session.log")
+    print("  - logs/test_session.log")
 
 
 if __name__ == "__main__":
