@@ -223,5 +223,29 @@ __marimo__/
 # --------------------------------------------------
 # WNC TestHub Generated Results
 # --------------------------------------------------
-results/*
+
+# Ignore generated Titan session folders
+results/Titan3_*/
+
+# Keep the root results folder
 !results/.gitkeep
+
+# Keep captures folder, ignore its contents
+!results/captures/
+results/captures/*
+!results/captures/.gitkeep
+
+# Keep logs folder, ignore its contents
+!results/logs/
+results/logs/*
+!results/logs/.gitkeep
+
+# Keep metadata folder, ignore its contents
+!results/metadata/
+results/metadata/*
+!results/metadata/.gitkeep
+
+# Keep reports folder, ignore its contents
+!results/reports/
+results/reports/*
+!results/reports/.gitkeep
