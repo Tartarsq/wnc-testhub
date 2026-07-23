@@ -8,6 +8,7 @@ from config import (
     QXDM_DEFAULT_LOG_FILENAME,
     RESULTS_FOLDER,
 )
+
 from controllers.qxdm_controller import QXDMController
 from logger import create_logger
 from reports import generate_reports
@@ -30,6 +31,7 @@ def collect_test_data(
     qxdm_log_path,
 ) -> dict:
     """Collect Titan 3 test information from the user."""
+
     print("\nEnter the Titan 3 test information.")
     print("Press Enter to accept any displayed default.\n")
 
@@ -111,26 +113,103 @@ def collect_test_data(
     }
 
 
+def wait_for_usb_connection(
+    titan: Titan3,
+    logger,
+) -> bool:
+    """
+    Wait for the user to connect the Titan 3 USB cable.
+
+    The program checks the Titan connection after each confirmation.
+    The user may retry, continue anyway, or cancel the test.
+    """
+
+    print("\n" + "=" * 50)
+    print("TITAN 3 USB CONNECTION")
+    print("=" * 50)
+
+    while True:
+        input(
+            "\nConnect the Titan 3 USB cable.\n"
+            "Press Enter after the USB cable is connected..."
+        )
+
+        print(
+            f"\nChecking Titan 3 connection at "
+            f"{titan.ip_address}..."
+        )
+
+        is_reachable = titan.ping()
+
+        if is_reachable:
+            logger.info(
+                "Titan 3 was detected after USB connection."
+            )
+
+            print("\nTitan 3 is connected and reachable.")
+            return True
+
+        logger.warning(
+            "Titan 3 was not reachable after the user "
+            "connected the USB cable."
+        )
+
+        print(
+            "\nTitan 3 is not responding at "
+            f"{titan.ip_address}."
+        )
+
+        retry_connection = prompt_yes_no(
+            "Check the USB connection and try again?",
+            default=True,
+        )
+
+        if retry_connection:
+            continue
+
+        continue_anyway = prompt_yes_no(
+            "Continue the test even though Titan 3 is unreachable?",
+            default=False,
+        )
+
+        if continue_anyway:
+            logger.warning(
+                "The user continued without a confirmed "
+                "Titan 3 connection."
+            )
+            return False
+
+        logger.info(
+            "The test was cancelled because Titan 3 "
+            "was not connected."
+        )
+
+        raise RuntimeError(
+            "Test cancelled because Titan 3 was not connected."
+        )
+
+
 def start_qxdm_logging(
     qxdm: QXDMController,
     logger,
     session_folder,
 ):
     """
-    Prepare the QXDM log path and start the automated logging workflow.
+    Launch QXDM, load the configured DMC file, and prepare capture.
 
-    Returns:
-        tuple[bool, Path | None]:
-            Whether logging started and the configured log path.
+    The current QXDM version does not expose the expected
+    Start Logging menu item. The user confirms the final capture
+    start from the QXDM interface.
     """
+
     should_start = prompt_yes_no(
-        "Start QXDM logging?",
+        "Start the QXDM setup?",
         default=True,
     )
 
     if not should_start:
         logger.info(
-            "The user skipped QXDM logging startup."
+            "The user skipped the QXDM setup."
         )
         return False, None
 
@@ -141,49 +220,141 @@ def start_qxdm_logging(
         / QXDM_DEFAULT_LOG_FILENAME
     )
 
+    qxdm_log_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
     try:
-        logger.info("Preparing QXDM logging.")
+        print("\n" + "=" * 50)
+        print("QXDM AUTOMATED SETUP")
+        print("=" * 50)
+
+        print(
+            "\nThe application will:"
+            "\n  1. Launch or focus QXDM."
+            "\n  2. Open File > Load Configuration."
+            "\n  3. Load the configured DMC file."
+            "\n  4. Wait for configuration confirmation."
+            "\n  5. Prepare the modem for capture."
+            "\n  6. Send ModeLPM."
+            "\n  7. Send ModeOnline."
+        )
+
+        print(
+            f"\nRequested QXDM capture path:\n"
+            f"{qxdm_log_path}"
+        )
+
+        logger.info("Launching QXDM.")
+        qxdm.launch()
+
         logger.info(
-            "Requested QXDM log path: %s",
-            qxdm_log_path,
+            "QXDM launched or focused successfully."
         )
+        print("\nQXDM is open.")
 
-        print("\nPreparing QXDM logging...")
-        print(f"Log destination: {qxdm_log_path}")
-
-        qxdm.start_logging(
-            log_path=qxdm_log_path,
-            load_mask=True,
+        input(
+            "\nVerify that QXDM can see the connected device.\n"
+            "Press Enter to load the DMC configuration..."
         )
 
         logger.info(
-            "QXDM logging started successfully."
+            "Loading the configured QXDM DMC file."
         )
 
-        print("\nQXDM logging started successfully.")
-        print(f"Log file: {qxdm_log_path}")
+        mask_loaded = qxdm.load_default_mask()
+
+        if mask_loaded:
+            logger.info(
+                "The QXDM DMC configuration was loaded."
+            )
+            print(
+                "\nThe configured DMC file was loaded."
+            )
+        else:
+            logger.warning(
+                "No default QXDM DMC configuration was loaded."
+            )
+            print(
+                "\nNo default DMC configuration was loaded."
+            )
+
+        configuration_ready = prompt_yes_no(
+            "Did the QXDM configuration load correctly?",
+            default=True,
+        )
+
+        if not configuration_ready:
+            print(
+                "\nLoad the correct DMC configuration "
+                "manually in QXDM."
+            )
+
+            input(
+                "Press Enter after the configuration "
+                "has been loaded..."
+            )
+
+            logger.warning(
+                "The QXDM configuration required "
+                "manual confirmation."
+            )
+
+        print(
+            "\nIn QXDM, start the capture and set its "
+            "destination to:"
+        )
+        print(qxdm_log_path)
+
+        input(
+            "\nPress Enter after the QXDM capture "
+            "has started..."
+        )
+
+        logger.info(
+            "The user confirmed that QXDM capture started."
+        )
+
+        print("\nPreparing the modem for the test.")
+
+        qxdm.mode_lpm()
+
+        logger.info(
+            "ModeLPM was sent successfully."
+        )
+
+        qxdm.mode_online()
+
+        logger.info(
+            "ModeOnline was sent successfully."
+        )
+
+        print("\nQXDM capture is running.")
+        print("Titan 3 is in online mode.")
+        print(f"Capture path: {qxdm_log_path}")
 
         return True, qxdm_log_path
 
     except Exception as error:
         logger.exception(
-            "QXDM logging could not be started."
+            "The QXDM setup could not be completed."
         )
 
         print(
-            "\nQXDM logging could not be started."
+            "\nThe QXDM setup could not be completed."
         )
         print(f"Reason: {error}")
 
         continue_test = prompt_yes_no(
-            "Continue the Titan 3 test without QXDM logging?",
+            "Continue the Titan 3 test without QXDM capture?",
             default=True,
         )
 
         if not continue_test:
             raise RuntimeError(
-                "Test cancelled because QXDM logging "
-                "could not be started."
+                "Test cancelled because the QXDM "
+                "setup could not be completed."
             ) from error
 
         return False, qxdm_log_path
@@ -194,52 +365,97 @@ def stop_qxdm_logging(
     logger,
     logging_started: bool,
 ) -> bool:
-    """Stop QXDM logging if it was previously started."""
+    """
+    Stop the modem and allow the user to finish the QXDM capture.
+    """
+
     if not logging_started:
         logger.info(
-            "QXDM logging was not started, so no stop "
-            "command was required."
+            "QXDM capture was not started, so no stop "
+            "procedure was required."
         )
         return False
 
     input(
         "\nPerform the Titan 3 validation test now.\n"
-        "Press Enter when you are ready to stop QXDM logging..."
+        "Press Enter when the validation test is complete..."
     )
 
     try:
-        logger.info("Stopping QXDM logging.")
+        logger.info(
+            "Preparing to stop the QXDM capture."
+        )
 
-        qxdm.stop_logging()
+        print(
+            "\nSending ModeLPM before stopping capture..."
+        )
+
+        qxdm.mode_lpm()
 
         logger.info(
-            "QXDM logging stopped successfully."
-        )
-
-        print("\nQXDM logging stopped successfully.")
-        return True
-
-    except Exception as error:
-        logger.exception(
-            "QXDM logging could not be stopped."
+            "ModeLPM was sent before capture stop."
         )
 
         print(
-            "\nQXDM logging could not be stopped automatically."
-        )
-        print(f"Reason: {error}")
-        print(
-            "Switch QXDM to ModeLPM and stop the "
-            "capture manually before continuing."
+            "\nStop and save the QXDM capture "
+            "using the QXDM toolbar."
         )
 
         input(
-            "Press Enter after manually stopping QXDM logging..."
+            "Press Enter after the QXDM capture "
+            "has been stopped and saved..."
+        )
+
+        capture_stopped = prompt_yes_no(
+            "Was the QXDM capture stopped successfully?",
+            default=True,
+        )
+
+        if capture_stopped:
+            logger.info(
+                "The user confirmed that the QXDM "
+                "capture stopped successfully."
+            )
+
+            print(
+                "\nQXDM capture stopped successfully."
+            )
+            return True
+
+        logger.warning(
+            "The user could not confirm that the "
+            "QXDM capture stopped."
+        )
+
+        print(
+            "\nQXDM capture stop was not confirmed."
+        )
+        return False
+
+    except Exception as error:
+        logger.exception(
+            "The QXDM stop procedure failed."
+        )
+
+        print(
+            "\nThe QXDM stop procedure could not "
+            "be completed automatically."
+        )
+        print(f"Reason: {error}")
+
+        print(
+            "\nSwitch QXDM to ModeLPM and stop the "
+            "capture manually."
+        )
+
+        input(
+            "Press Enter after manually stopping "
+            "and saving the capture..."
         )
 
         logger.warning(
-            "The user was instructed to stop QXDM logging "
-            "manually."
+            "The user was instructed to stop the "
+            "QXDM capture manually."
         )
 
         return False
@@ -274,41 +490,17 @@ def main() -> None:
         "Results folder: %s",
         session_folder,
     )
-    logger.info(
-        "Testing connection to %s.",
-        titan.ip_address,
-    )
 
-    is_reachable = titan.ping()
-
-    if is_reachable:
-        logger.info(
-            "Titan 3 responded successfully."
-        )
-        print("\nTitan 3 is reachable.")
-
-    else:
-        logger.warning(
-            "Titan 3 did not respond to ping at %s.",
-            titan.ip_address,
+    try:
+        is_reachable = wait_for_usb_connection(
+            titan=titan,
+            logger=logger,
         )
 
-        print(
-            f"\nTitan 3 did not respond at "
-            f"{titan.ip_address}."
-        )
-
-        continue_test = prompt_yes_no(
-            "Continue the test anyway?",
-            default=True,
-        )
-
-        if not continue_test:
-            logger.info(
-                "Test cancelled by the user."
-            )
-            print("\nTest cancelled.")
-            return
+    except RuntimeError as error:
+        logger.error("%s", error)
+        print(f"\n{error}")
+        return
 
     open_gui = prompt_yes_no(
         f"Open the Titan Web GUI at {titan.gui_url}?",
@@ -333,42 +525,17 @@ def main() -> None:
 
     try:
         print("\n" + "=" * 50)
-        print("QXDM LOGGING")
+        print("QXDM CAPTURE")
         print("=" * 50)
 
-        print(
-            "\nThe application will attempt to:"
-            "\n  1. Create the QXDM log destination."
-            "\n  2. Launch QXDM."
-            "\n  3. Load the configured default log mask."
-            "\n  4. Set the log file location."
-            "\n  5. Limit the log size to 1024 MB."
-            "\n  6. Start capture."
-            "\n  7. Send ModeLPM."
-            "\n  8. Send ModeOnline."
+        (
+            qxdm_logging_started,
+            qxdm_log_path,
+        ) = start_qxdm_logging(
+            qxdm=qxdm,
+            logger=logger,
+            session_folder=session_folder,
         )
-
-        ready_for_qxdm = prompt_yes_no(
-            "Is Titan 3 connected and ready for QXDM?",
-            default=True,
-        )
-
-        if ready_for_qxdm:
-            (
-                qxdm_logging_started,
-                qxdm_log_path,
-            ) = start_qxdm_logging(
-                qxdm=qxdm,
-                logger=logger,
-                session_folder=session_folder,
-            )
-
-        else:
-            logger.warning(
-                "Titan 3 was not ready for QXDM. "
-                "Logging was skipped."
-            )
-            print("\nQXDM logging was skipped.")
 
         qxdm_logging_stopped = stop_qxdm_logging(
             qxdm=qxdm,
@@ -399,6 +566,7 @@ def main() -> None:
     logger.info(
         "Test reports generated successfully."
     )
+
     logger.info(
         "Overall result: %s",
         test_data["overall_result"],
@@ -411,30 +579,35 @@ def main() -> None:
     print(
         f"Result: {test_data['overall_result']}"
     )
+
     print(
         f"Titan connection: "
         f"{test_data['connection_status']}"
     )
 
     print(
-        "QXDM logging started: "
+        "QXDM capture started: "
         f"{'YES' if qxdm_logging_started else 'NO'}"
     )
 
     print(
-        "QXDM logging stopped: "
+        "QXDM capture stopped: "
         f"{'YES' if qxdm_logging_stopped else 'NO'}"
     )
 
     if qxdm_log_path is not None:
-        print(f"QXDM log path: {qxdm_log_path}")
+        print(
+            f"QXDM capture path: {qxdm_log_path}"
+        )
 
     print(f"Results folder: {session_folder}")
 
     print("\nGenerated files:")
 
     for report_path in report_paths:
-        print(f"  - reports/{report_path.name}")
+        print(
+            f"  - reports/{report_path.name}"
+        )
 
     print("  - logs/test_session.log")
 
