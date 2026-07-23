@@ -51,9 +51,35 @@ PCAT_EXECUTABLE = Path(
 
 
 # ==========================================================
-# QXDM automation settings
+# QXDM log mask
 # ==========================================================
 
-QXDM_LAUNCH_DELAY = 10          # seconds to wait after launching
-QXDM_COMMAND_DELAY = 2          # seconds after sending a command
-QXDM_TRANSITION_DELAY = 2       # delay between ModeLPM and ModeOnline
+# Replace this path with the real default .dmc mask used by your team.
+# Set it to None temporarily if you do not have the mask location yet.
+QXDM_DEFAULT_MASK = None
+
+# Example:
+# QXDM_DEFAULT_MASK = Path(
+#     r"C:\QXDM\Masks\default_mask.dmc"
+# )
+
+
+# ==========================================================
+# QXDM logging settings
+# ==========================================================
+
+# Maximum allowed QXDM log size.
+# 1024 MB = 1 GB.
+QXDM_MAX_LOG_SIZE_MB = 1024
+
+# Default QXDM log filename.
+QXDM_DEFAULT_LOG_FILENAME = "Titan3_QXDM_Log.isf"
+
+
+# ==========================================================
+# QXDM automation delays
+# ==========================================================
+
+QXDM_LAUNCH_DELAY = 10
+QXDM_COMMAND_DELAY = 2
+QXDM_TRANSITION_DELAY = 2

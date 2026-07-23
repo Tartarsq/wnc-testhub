@@ -5,6 +5,7 @@ from config import (
     DEFAULT_TECHNOLOGY,
     DEFAULT_TEST_TYPE,
     DEFAULT_TITAN_IP,
+    QXDM_DEFAULT_LOG_FILENAME,
     RESULTS_FOLDER,
 )
 from controllers.qxdm_controller import QXDMController
@@ -26,6 +27,7 @@ def collect_test_data(
     connection_status: bool,
     qxdm_logging_started: bool,
     qxdm_logging_stopped: bool,
+    qxdm_log_path,
 ) -> dict:
     """Collect Titan 3 test information from the user."""
     print("\nEnter the Titan 3 test information.")
@@ -99,6 +101,11 @@ def collect_test_data(
         "uplink_mbps": upload_speed,
         "qxdm_logging_started": qxdm_logging_started,
         "qxdm_logging_stopped": qxdm_logging_stopped,
+        "qxdm_log_path": (
+            str(qxdm_log_path)
+            if qxdm_log_path is not None
+            else ""
+        ),
         "overall_result": overall_result,
         "notes": notes,
     }
@@ -107,8 +114,15 @@ def collect_test_data(
 def start_qxdm_logging(
     qxdm: QXDMController,
     logger,
-) -> bool:
-    """Prompt the user and start QXDM logging."""
+    session_folder,
+):
+    """
+    Prepare the QXDM log path and start the automated logging workflow.
+
+    Returns:
+        tuple[bool, Path | None]:
+            Whether logging started and the configured log path.
+    """
     should_start = prompt_yes_no(
         "Start QXDM logging?",
         default=True,
@@ -118,19 +132,38 @@ def start_qxdm_logging(
         logger.info(
             "The user skipped QXDM logging startup."
         )
-        return False
+        return False, None
+
+    qxdm_log_path = (
+        session_folder
+        / "captures"
+        / "qxdm"
+        / QXDM_DEFAULT_LOG_FILENAME
+    )
 
     try:
-        logger.info("Starting QXDM logging.")
+        logger.info("Preparing QXDM logging.")
+        logger.info(
+            "Requested QXDM log path: %s",
+            qxdm_log_path,
+        )
 
-        qxdm.start_logging()
+        print("\nPreparing QXDM logging...")
+        print(f"Log destination: {qxdm_log_path}")
+
+        qxdm.start_logging(
+            log_path=qxdm_log_path,
+            load_mask=True,
+        )
 
         logger.info(
             "QXDM logging started successfully."
         )
 
         print("\nQXDM logging started successfully.")
-        return True
+        print(f"Log file: {qxdm_log_path}")
+
+        return True, qxdm_log_path
 
     except Exception as error:
         logger.exception(
@@ -153,7 +186,7 @@ def start_qxdm_logging(
                 "could not be started."
             ) from error
 
-        return False
+        return False, qxdm_log_path
 
 
 def stop_qxdm_logging(
@@ -196,11 +229,12 @@ def stop_qxdm_logging(
         )
         print(f"Reason: {error}")
         print(
-            "Switch QXDM to ModeLPM manually before continuing."
+            "Switch QXDM to ModeLPM and stop the "
+            "capture manually before continuing."
         )
 
         input(
-            "Press Enter after manually switching to ModeLPM..."
+            "Press Enter after manually stopping QXDM logging..."
         )
 
         logger.warning(
@@ -295,6 +329,7 @@ def main() -> None:
 
     qxdm_logging_started = False
     qxdm_logging_stopped = False
+    qxdm_log_path = None
 
     try:
         print("\n" + "=" * 50)
@@ -302,25 +337,36 @@ def main() -> None:
         print("=" * 50)
 
         print(
-            "\nBefore starting, make sure:"
-            "\n  1. Titan 3 is connected."
-            "\n  2. QXDM can access the correct COM port."
-            "\n  3. The correct DMC filter is loaded."
+            "\nThe application will attempt to:"
+            "\n  1. Create the QXDM log destination."
+            "\n  2. Launch QXDM."
+            "\n  3. Load the configured default log mask."
+            "\n  4. Set the log file location."
+            "\n  5. Limit the log size to 1024 MB."
+            "\n  6. Start capture."
+            "\n  7. Send ModeLPM."
+            "\n  8. Send ModeOnline."
         )
 
         ready_for_qxdm = prompt_yes_no(
-            "Is QXDM ready?",
+            "Is Titan 3 connected and ready for QXDM?",
             default=True,
         )
 
         if ready_for_qxdm:
-            qxdm_logging_started = start_qxdm_logging(
+            (
+                qxdm_logging_started,
+                qxdm_log_path,
+            ) = start_qxdm_logging(
                 qxdm=qxdm,
                 logger=logger,
+                session_folder=session_folder,
             )
+
         else:
             logger.warning(
-                "QXDM was not ready. Logging was skipped."
+                "Titan 3 was not ready for QXDM. "
+                "Logging was skipped."
             )
             print("\nQXDM logging was skipped.")
 
@@ -340,6 +386,7 @@ def main() -> None:
         connection_status=is_reachable,
         qxdm_logging_started=qxdm_logging_started,
         qxdm_logging_stopped=qxdm_logging_stopped,
+        qxdm_log_path=qxdm_log_path,
     )
 
     logger.info("Generating test reports.")
@@ -378,6 +425,9 @@ def main() -> None:
         "QXDM logging stopped: "
         f"{'YES' if qxdm_logging_stopped else 'NO'}"
     )
+
+    if qxdm_log_path is not None:
+        print(f"QXDM log path: {qxdm_log_path}")
 
     print(f"Results folder: {session_folder}")
 
