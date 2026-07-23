@@ -1,103 +1,73 @@
-import json
-import subprocess
-from pathlib import Path
-from typing import Optional
+from throughput_test import ThroughputTester
 
 
-class ThroughputTester:
-    """Run automated iperf3 throughput tests."""
-
-    def __init__(
-        self,
-        server_ip: str,
-        iperf_executable: Path = Path("iperf3.exe"),
-        duration_seconds: int = 10,
-        port: int = 5201,
-    ) -> None:
-        self.server_ip = server_ip
-        self.iperf_executable = Path(iperf_executable)
-        self.duration_seconds = duration_seconds
-        self.port = port
-
-    def _run_iperf(
-        self,
-        reverse: bool = False,
-    ) -> dict:
-        command = [
-            str(self.iperf_executable),
-            "-c",
-            self.server_ip,
-            "-p",
-            str(self.port),
-            "-t",
-            str(self.duration_seconds),
-            "-J",
-        ]
-
-        # With iperf3, -R reverses the direction.
-        if reverse:
-            command.append("-R")
-
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            timeout=self.duration_seconds + 30,
-            check=False,
+def main() -> None:
+    try:
+        tester = ThroughputTester(
+            speedtest_executable="speedtest.exe",
+            timeout_seconds=180,
         )
 
-        if result.returncode != 0:
-            raise RuntimeError(
-                "iperf3 failed.\n"
-                f"Command: {' '.join(command)}\n"
-                f"Error: {result.stderr.strip()}"
-            )
+        results = tester.run_full_test()
 
-        try:
-            return json.loads(result.stdout)
+        print("\n" + "=" * 45)
+        print("SPEEDTEST RESULTS")
+        print("=" * 45)
 
-        except json.JSONDecodeError as error:
-            raise RuntimeError(
-                "iperf3 did not return valid JSON."
-            ) from error
-
-    @staticmethod
-    def _extract_mbps(data: dict) -> Optional[float]:
-        """
-        Extract receiver throughput from iperf3 JSON.
-
-        Different iperf3 modes may place the value in slightly
-        different result fields.
-        """
-        end_data = data.get("end", {})
-
-        stream = (
-            end_data.get("sum_received")
-            or end_data.get("sum")
-            or end_data.get("sum_sent")
+        print(
+            f"Download: "
+            f"{results['download_mbps']} Mbps"
         )
 
-        if not stream:
-            return None
+        print(
+            f"Upload: "
+            f"{results['upload_mbps']} Mbps"
+        )
 
-        bits_per_second = stream.get("bits_per_second")
+        print(
+            f"Ping: "
+            f"{results['ping_ms']} ms"
+        )
 
-        if bits_per_second is None:
-            return None
+        print(
+            f"Jitter: "
+            f"{results['ping_jitter_ms']} ms"
+        )
 
-        return round(bits_per_second / 1_000_000, 2)
+        print(
+            f"Packet loss: "
+            f"{results['packet_loss_percent']}%"
+        )
 
-    def run_download_test(self) -> Optional[float]:
-        """
-        Run traffic from the iperf server toward Titan.
+        print(
+            f"ISP: "
+            f"{results['isp']}"
+        )
 
-        Depending on where this script runs, you may need to swap
-        download and upload directions.
-        """
-        data = self._run_iperf(reverse=True)
-        return self._extract_mbps(data)
+        print(
+            f"External IP: "
+            f"{results['external_ip']}"
+        )
 
-    def run_upload_test(self) -> Optional[float]:
-        """Run traffic from Titan toward the iperf server."""
-        data = self._run_iperf(reverse=False)
-        return self._extract_mbps(data)
+        print(
+            f"Interface: "
+            f"{results['interface_name']}"
+        )
+
+        print(
+            f"Server: "
+            f"{results['server_name']}, "
+            f"{results['server_location']}"
+        )
+
+        print(
+            f"Result URL: "
+            f"{results['result_url']}"
+        )
+
+    except (FileNotFoundError, RuntimeError) as error:
+        print(f"\nTest failed:\n{error}")
+
+
+if __name__ == "__main__":
+    main()
