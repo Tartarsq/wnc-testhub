@@ -9,6 +9,7 @@ from config import (
     RESULTS_FOLDER,
 )
 
+from automation.automated_runner import AutomatedTestRunner
 from controllers.qxdm_controller import QXDMController
 from logger import create_logger
 from reports import generate_reports
@@ -23,19 +24,62 @@ from utils import (
 )
 
 
+def prompt_positive_integer(
+    message: str,
+    default: int,
+) -> int:
+    """
+    Ask the user for a positive integer.
+
+    Pressing Enter returns the supplied default.
+    """
+
+    while True:
+        value = input(
+            f"{message} [{default}]: "
+        ).strip()
+
+        if not value:
+            return default
+
+        try:
+            number = int(value)
+
+            if number <= 0:
+                raise ValueError
+
+            return number
+
+        except ValueError:
+            print(
+                "Enter a positive whole number, "
+                "such as 5 or 10."
+            )
+
+
 def collect_test_data(
     titan: Titan3,
     connection_status: bool,
     qxdm_logging_started: bool,
     qxdm_logging_stopped: bool,
     qxdm_log_path,
+    automated_testing_used: bool,
+    automated_run_count: int,
+    automated_excel_path,
 ) -> dict:
-    """Collect Titan 3 test information from the user."""
+    """
+    Collect session-level Titan 3 test information.
 
-    print("\nEnter the Titan 3 test information.")
+    Throughput values are recorded automatically in the Excel
+    workbook when automated testing is enabled.
+    """
+
+    print("\nEnter the Titan 3 session information.")
     print("Press Enter to accept any displayed default.\n")
 
-    firmware = input("Firmware version: ").strip()
+    firmware = input(
+        "Firmware version: "
+    ).strip()
 
     carrier = prompt_with_default(
         "Carrier",
@@ -56,29 +100,49 @@ def collect_test_data(
         "Serving band, such as n41 or B66: "
     ).strip()
 
-    rsrp = prompt_optional_float("RSRP in dBm")
-    rssi = prompt_optional_float("RSSI in dBm")
-    sinr = prompt_optional_float("SINR in dB")
+    rsrp = prompt_optional_float(
+        "RSRP in dBm"
+    )
+
+    rssi = prompt_optional_float(
+        "RSSI in dBm"
+    )
+
+    sinr = prompt_optional_float(
+        "SINR in dB"
+    )
 
     test_type = prompt_with_default(
         "Test type",
         DEFAULT_TEST_TYPE,
     )
 
-    download_speed = prompt_optional_float(
-        "Downlink throughput in Mbps"
-    )
+    if automated_testing_used:
+        print(
+            "\nThroughput results were recorded automatically "
+            "for each test run."
+        )
 
-    upload_speed = prompt_optional_float(
-        "Uplink throughput in Mbps"
-    )
+        download_speed = None
+        upload_speed = None
+
+    else:
+        download_speed = prompt_optional_float(
+            "Downlink throughput in Mbps"
+        )
+
+        upload_speed = prompt_optional_float(
+            "Uplink throughput in Mbps"
+        )
 
     overall_result = prompt_with_default(
-        "Overall result",
+        "Overall session result",
         DEFAULT_RESULT,
     ).upper()
 
-    notes = input("Notes: ").strip()
+    notes = input(
+        "Notes: "
+    ).strip()
 
     return {
         "timestamp": get_readable_time(),
@@ -108,6 +172,13 @@ def collect_test_data(
             if qxdm_log_path is not None
             else ""
         ),
+        "automated_testing_used": automated_testing_used,
+        "automated_run_count": automated_run_count,
+        "automated_excel_path": (
+            str(automated_excel_path)
+            if automated_excel_path is not None
+            else ""
+        ),
         "overall_result": overall_result,
         "notes": notes,
     }
@@ -120,8 +191,8 @@ def wait_for_usb_connection(
     """
     Wait for the user to connect the Titan 3 USB cable.
 
-    The program checks the Titan connection after each confirmation.
-    The user may retry, continue anyway, or cancel the test.
+    After each confirmation, the program checks whether Titan
+    responds at its configured IP address.
     """
 
     print("\n" + "=" * 50)
@@ -146,7 +217,10 @@ def wait_for_usb_connection(
                 "Titan 3 was detected after USB connection."
             )
 
-            print("\nTitan 3 is connected and reachable.")
+            print(
+                "\nTitan 3 is connected and reachable."
+            )
+
             return True
 
         logger.warning(
@@ -168,7 +242,7 @@ def wait_for_usb_connection(
             continue
 
         continue_anyway = prompt_yes_no(
-            "Continue the test even though Titan 3 is unreachable?",
+            "Continue even though Titan 3 is unreachable?",
             default=False,
         )
 
@@ -177,6 +251,7 @@ def wait_for_usb_connection(
                 "The user continued without a confirmed "
                 "Titan 3 connection."
             )
+
             return False
 
         logger.info(
@@ -197,9 +272,8 @@ def start_qxdm_logging(
     """
     Launch QXDM, load the configured DMC file, and prepare capture.
 
-    The current QXDM version does not expose the expected
-    Start Logging menu item. The user confirms the final capture
-    start from the QXDM interface.
+    The user currently confirms the capture start because this QXDM
+    version does not expose the expected Start Logging menu path.
     """
 
     should_start = prompt_yes_no(
@@ -211,6 +285,7 @@ def start_qxdm_logging(
         logger.info(
             "The user skipped the QXDM setup."
         )
+
         return False, None
 
     qxdm_log_path = (
@@ -236,7 +311,7 @@ def start_qxdm_logging(
             "\n  2. Open File > Load Configuration."
             "\n  3. Load the configured DMC file."
             "\n  4. Wait for configuration confirmation."
-            "\n  5. Prepare the modem for capture."
+            "\n  5. Ask you to start the QXDM capture."
             "\n  6. Send ModeLPM."
             "\n  7. Send ModeOnline."
         )
@@ -246,13 +321,19 @@ def start_qxdm_logging(
             f"{qxdm_log_path}"
         )
 
-        logger.info("Launching QXDM.")
+        logger.info(
+            "Launching QXDM."
+        )
+
         qxdm.launch()
 
         logger.info(
             "QXDM launched or focused successfully."
         )
-        print("\nQXDM is open.")
+
+        print(
+            "\nQXDM is open."
+        )
 
         input(
             "\nVerify that QXDM can see the connected device.\n"
@@ -269,13 +350,16 @@ def start_qxdm_logging(
             logger.info(
                 "The QXDM DMC configuration was loaded."
             )
+
             print(
                 "\nThe configured DMC file was loaded."
             )
+
         else:
             logger.warning(
                 "No default QXDM DMC configuration was loaded."
             )
+
             print(
                 "\nNo default DMC configuration was loaded."
             )
@@ -305,7 +389,10 @@ def start_qxdm_logging(
             "\nIn QXDM, start the capture and set its "
             "destination to:"
         )
-        print(qxdm_log_path)
+
+        print(
+            qxdm_log_path
+        )
 
         input(
             "\nPress Enter after the QXDM capture "
@@ -316,7 +403,9 @@ def start_qxdm_logging(
             "The user confirmed that QXDM capture started."
         )
 
-        print("\nPreparing the modem for the test.")
+        print(
+            "\nPreparing the modem for testing..."
+        )
 
         qxdm.mode_lpm()
 
@@ -330,9 +419,17 @@ def start_qxdm_logging(
             "ModeOnline was sent successfully."
         )
 
-        print("\nQXDM capture is running.")
-        print("Titan 3 is in online mode.")
-        print(f"Capture path: {qxdm_log_path}")
+        print(
+            "\nQXDM capture is running."
+        )
+
+        print(
+            "Titan 3 is in online mode."
+        )
+
+        print(
+            f"Capture path: {qxdm_log_path}"
+        )
 
         return True, qxdm_log_path
 
@@ -344,7 +441,10 @@ def start_qxdm_logging(
         print(
             "\nThe QXDM setup could not be completed."
         )
-        print(f"Reason: {error}")
+
+        print(
+            f"Reason: {error}"
+        )
 
         continue_test = prompt_yes_no(
             "Continue the Titan 3 test without QXDM capture?",
@@ -360,13 +460,173 @@ def start_qxdm_logging(
         return False, qxdm_log_path
 
 
+def run_automated_tests(
+    titan: Titan3,
+    qxdm: QXDMController,
+    logger,
+    session_folder,
+) -> tuple[bool, int, object]:
+    """
+    Configure and run repeated automated throughput tests.
+
+    Returns:
+        tuple:
+            automated testing used,
+            number of requested runs,
+            Excel workbook path
+    """
+
+    print("\n" + "=" * 50)
+    print("AUTOMATED THROUGHPUT TESTING")
+    print("=" * 50)
+
+    should_run = prompt_yes_no(
+        "Run automated throughput tests?",
+        default=True,
+    )
+
+    if not should_run:
+        logger.info(
+            "The user skipped automated throughput testing."
+        )
+
+        return False, 0, None
+
+    number_of_runs = prompt_positive_integer(
+        "Number of automated test runs",
+        default=5,
+    )
+
+    delay_between_runs = prompt_positive_integer(
+        "Delay between runs in seconds",
+        default=10,
+    )
+
+    test_duration = prompt_positive_integer(
+        "Duration of each iperf3 direction in seconds",
+        default=10,
+    )
+
+    iperf_server_ip = prompt_with_default(
+        "iperf3 server IP address",
+        "192.168.1.100",
+    )
+
+    excel_path = (
+        session_folder
+        / "reports"
+        / "Titan3_Automated_Results.xlsx"
+    )
+
+    print(
+        "\nAutomated test configuration:"
+    )
+
+    print(
+        f"  Runs: {number_of_runs}"
+    )
+
+    print(
+        f"  Delay: {delay_between_runs} seconds"
+    )
+
+    print(
+        f"  Test duration: {test_duration} seconds"
+    )
+
+    print(
+        f"  iperf3 server: {iperf_server_ip}"
+    )
+
+    print(
+        f"  Excel output: {excel_path}"
+    )
+
+    input(
+        "\nMake sure the remote iperf3 server is running with:\n"
+        "iperf3 -s\n\n"
+        "Press Enter to begin the automated tests..."
+    )
+
+    logger.info(
+        "Starting automated throughput testing."
+    )
+
+    logger.info(
+        "Requested runs: %s",
+        number_of_runs,
+    )
+
+    logger.info(
+        "iperf3 server: %s",
+        iperf_server_ip,
+    )
+
+    try:
+        runner = AutomatedTestRunner(
+            titan=titan,
+            qxdm=qxdm,
+            session_folder=session_folder,
+            iperf_server_ip=iperf_server_ip,
+            number_of_runs=number_of_runs,
+            delay_between_runs=delay_between_runs,
+        )
+
+        # This assumes AutomatedTestRunner exposes its ThroughputTester
+        # through the "throughput" attribute.
+        runner.throughput.duration_seconds = test_duration
+
+        runner.run()
+
+        logger.info(
+            "Automated throughput testing completed."
+        )
+
+        print(
+            "\nAutomated throughput testing completed."
+        )
+
+        print(
+            f"Excel results: {excel_path}"
+        )
+
+        return True, number_of_runs, excel_path
+
+    except Exception as error:
+        logger.exception(
+            "Automated throughput testing failed."
+        )
+
+        print(
+            "\nAutomated throughput testing failed."
+        )
+
+        print(
+            f"Reason: {error}"
+        )
+
+        continue_session = prompt_yes_no(
+            "Continue the session and generate the remaining reports?",
+            default=True,
+        )
+
+        if not continue_session:
+            raise RuntimeError(
+                "Test session cancelled because automated "
+                "throughput testing failed."
+            ) from error
+
+        return True, number_of_runs, excel_path
+
+
 def stop_qxdm_logging(
     qxdm: QXDMController,
     logger,
     logging_started: bool,
 ) -> bool:
     """
-    Stop the modem and allow the user to finish the QXDM capture.
+    Place the modem into low-power mode and allow the user
+    to stop and save the QXDM capture.
     """
 
     if not logging_started:
@@ -374,11 +634,12 @@ def stop_qxdm_logging(
             "QXDM capture was not started, so no stop "
             "procedure was required."
         )
+
         return False
 
     input(
-        "\nPerform the Titan 3 validation test now.\n"
-        "Press Enter when the validation test is complete..."
+        "\nPress Enter when all validation testing is complete "
+        "and you are ready to stop QXDM..."
     )
 
     try:
@@ -420,6 +681,7 @@ def stop_qxdm_logging(
             print(
                 "\nQXDM capture stopped successfully."
             )
+
             return True
 
         logger.warning(
@@ -430,6 +692,7 @@ def stop_qxdm_logging(
         print(
             "\nQXDM capture stop was not confirmed."
         )
+
         return False
 
     except Exception as error:
@@ -441,7 +704,10 @@ def stop_qxdm_logging(
             "\nThe QXDM stop procedure could not "
             "be completed automatically."
         )
-        print(f"Reason: {error}")
+
+        print(
+            f"Reason: {error}"
+        )
 
         print(
             "\nSwitch QXDM to ModeLPM and stop the "
@@ -471,7 +737,10 @@ def main() -> None:
         DEFAULT_TITAN_IP,
     )
 
-    titan = Titan3(ip_address=titan_ip)
+    titan = Titan3(
+        ip_address=titan_ip
+    )
+
     qxdm = QXDMController()
 
     session_folder = create_session_folder(
@@ -479,13 +748,18 @@ def main() -> None:
         "Titan3",
     )
 
-    create_session_folders(session_folder)
+    create_session_folders(
+        session_folder
+    )
 
     logger = create_logger(
         session_folder / "logs"
     )
 
-    logger.info("Titan 3 test session started.")
+    logger.info(
+        "Titan 3 test session started."
+    )
+
     logger.info(
         "Results folder: %s",
         session_folder,
@@ -498,8 +772,15 @@ def main() -> None:
         )
 
     except RuntimeError as error:
-        logger.error("%s", error)
-        print(f"\n{error}")
+        logger.error(
+            "%s",
+            error,
+        )
+
+        print(
+            f"\n{error}"
+        )
+
         return
 
     open_gui = prompt_yes_no(
@@ -514,6 +795,7 @@ def main() -> None:
             logger.info(
                 "Titan Web GUI opened."
             )
+
         else:
             logger.warning(
                 "The browser could not be opened."
@@ -522,6 +804,10 @@ def main() -> None:
     qxdm_logging_started = False
     qxdm_logging_stopped = False
     qxdm_log_path = None
+
+    automated_testing_used = False
+    automated_run_count = 0
+    automated_excel_path = None
 
     try:
         print("\n" + "=" * 50)
@@ -537,6 +823,17 @@ def main() -> None:
             session_folder=session_folder,
         )
 
+        (
+            automated_testing_used,
+            automated_run_count,
+            automated_excel_path,
+        ) = run_automated_tests(
+            titan=titan,
+            qxdm=qxdm,
+            logger=logger,
+            session_folder=session_folder,
+        )
+
         qxdm_logging_stopped = stop_qxdm_logging(
             qxdm=qxdm,
             logger=logger,
@@ -544,8 +841,15 @@ def main() -> None:
         )
 
     except RuntimeError as error:
-        logger.error("%s", error)
-        print(f"\n{error}")
+        logger.error(
+            "%s",
+            error,
+        )
+
+        print(
+            f"\n{error}"
+        )
+
         return
 
     test_data = collect_test_data(
@@ -554,9 +858,14 @@ def main() -> None:
         qxdm_logging_started=qxdm_logging_started,
         qxdm_logging_stopped=qxdm_logging_stopped,
         qxdm_log_path=qxdm_log_path,
+        automated_testing_used=automated_testing_used,
+        automated_run_count=automated_run_count,
+        automated_excel_path=automated_excel_path,
     )
 
-    logger.info("Generating test reports.")
+    logger.info(
+        "Generating test reports."
+    )
 
     report_paths = generate_reports(
         session_folder=session_folder,
@@ -577,7 +886,8 @@ def main() -> None:
     print("=" * 50)
 
     print(
-        f"Result: {test_data['overall_result']}"
+        f"Result: "
+        f"{test_data['overall_result']}"
     )
 
     print(
@@ -595,21 +905,52 @@ def main() -> None:
         f"{'YES' if qxdm_logging_stopped else 'NO'}"
     )
 
-    if qxdm_log_path is not None:
+    print(
+        "Automated testing used: "
+        f"{'YES' if automated_testing_used else 'NO'}"
+    )
+
+    if automated_testing_used:
         print(
-            f"QXDM capture path: {qxdm_log_path}"
+            f"Automated runs requested: "
+            f"{automated_run_count}"
         )
 
-    print(f"Results folder: {session_folder}")
+    if qxdm_log_path is not None:
+        print(
+            f"QXDM capture path: "
+            f"{qxdm_log_path}"
+        )
 
-    print("\nGenerated files:")
+    if automated_excel_path is not None:
+        print(
+            f"Automated Excel results: "
+            f"{automated_excel_path}"
+        )
+
+    print(
+        f"Results folder: "
+        f"{session_folder}"
+    )
+
+    print(
+        "\nGenerated files:"
+    )
 
     for report_path in report_paths:
         print(
             f"  - reports/{report_path.name}"
         )
 
-    print("  - logs/test_session.log")
+    if automated_excel_path is not None:
+        print(
+            "  - reports/"
+            f"{automated_excel_path.name}"
+        )
+
+    print(
+        "  - logs/test_session.log"
+    )
 
 
 if __name__ == "__main__":
