@@ -467,7 +467,7 @@ def run_automated_tests(
     session_folder,
 ) -> tuple[bool, int, object]:
     """
-    Configure and run repeated automated throughput tests.
+    Configure and run repeated automated Speedtest CLI tests.
 
     Returns:
         tuple:
@@ -502,14 +502,14 @@ def run_automated_tests(
         default=10,
     )
 
-    test_duration = prompt_positive_integer(
-        "Duration of each iperf3 direction in seconds",
-        default=10,
+    speedtest_timeout = prompt_positive_integer(
+        "Speedtest timeout in seconds",
+        default=180,
     )
 
-    iperf_server_ip = prompt_with_default(
-        "iperf3 server IP address",
-        "192.168.1.100",
+    speedtest_executable = prompt_with_default(
+        "Speedtest executable path",
+        "speedtest.exe",
     )
 
     excel_path = (
@@ -518,33 +518,22 @@ def run_automated_tests(
         / "Titan3_Automated_Results.xlsx"
     )
 
+    print("\nAutomated test configuration:")
+    print(f"  Runs: {number_of_runs}")
+    print(f"  Delay: {delay_between_runs} seconds")
     print(
-        "\nAutomated test configuration:"
+        f"  Speedtest timeout: "
+        f"{speedtest_timeout} seconds"
     )
-
     print(
-        f"  Runs: {number_of_runs}"
+        f"  Speedtest executable: "
+        f"{speedtest_executable}"
     )
-
-    print(
-        f"  Delay: {delay_between_runs} seconds"
-    )
-
-    print(
-        f"  Test duration: {test_duration} seconds"
-    )
-
-    print(
-        f"  iperf3 server: {iperf_server_ip}"
-    )
-
-    print(
-        f"  Excel output: {excel_path}"
-    )
+    print(f"  Excel output: {excel_path}")
 
     input(
-        "\nMake sure the remote iperf3 server is running with:\n"
-        "iperf3 -s\n\n"
+        "\nMake sure the official Ookla Speedtest CLI "
+        "is installed.\n"
         "Press Enter to begin the automated tests..."
     )
 
@@ -558,8 +547,8 @@ def run_automated_tests(
     )
 
     logger.info(
-        "iperf3 server: %s",
-        iperf_server_ip,
+        "Speedtest executable: %s",
+        speedtest_executable,
     )
 
     try:
@@ -567,14 +556,11 @@ def run_automated_tests(
             titan=titan,
             qxdm=qxdm,
             session_folder=session_folder,
-            iperf_server_ip=iperf_server_ip,
             number_of_runs=number_of_runs,
             delay_between_runs=delay_between_runs,
+            speedtest_executable=speedtest_executable,
+            timeout_seconds=speedtest_timeout,
         )
-
-        # This assumes AutomatedTestRunner exposes its ThroughputTester
-        # through the "throughput" attribute.
-        runner.throughput.duration_seconds = test_duration
 
         runner.run()
 
@@ -606,7 +592,8 @@ def run_automated_tests(
         )
 
         continue_session = prompt_yes_no(
-            "Continue the session and generate the remaining reports?",
+            "Continue the session and generate the "
+            "remaining reports?",
             default=True,
         )
 

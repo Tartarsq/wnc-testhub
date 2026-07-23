@@ -1,73 +1,123 @@
-from throughput_test import ThroughputTester
+import json
+import subprocess
+from pathlib import Path
+from typing import Any
 
 
-def main() -> None:
-    try:
-        tester = ThroughputTester(
-            speedtest_executable="speedtest.exe",
-            timeout_seconds=180,
-        )
+class ThroughputTester:
+    """Runs Ookla Speedtest CLI and returns normalized results."""
 
-        results = tester.run_full_test()
+    def __init__(
+        self,
+        speedtest_executable: str | Path = "speedtest.exe",
+        timeout_seconds: int = 180,
+    ) -> None:
+        self.speedtest_executable = Path(speedtest_executable)
+        self.timeout_seconds = timeout_seconds
 
-        print("\n" + "=" * 45)
-        print("SPEEDTEST RESULTS")
-        print("=" * 45)
+    @staticmethod
+    def _to_mbps(bytes_per_second: Any) -> float | None:
+        if bytes_per_second is None:
+            return None
 
-        print(
-            f"Download: "
-            f"{results['download_mbps']} Mbps"
-        )
+        try:
+            return round(float(bytes_per_second) * 8 / 1_000_000, 2)
+        except (TypeError, ValueError):
+            return None
 
-        print(
-            f"Upload: "
-            f"{results['upload_mbps']} Mbps"
-        )
+    @staticmethod
+    def _to_float(value: Any) -> float | None:
+        if value is None:
+            return None
 
-        print(
-            f"Ping: "
-            f"{results['ping_ms']} ms"
-        )
+        try:
+            return round(float(value), 2)
+        except (TypeError, ValueError):
+            return None
 
-        print(
-            f"Jitter: "
-            f"{results['ping_jitter_ms']} ms"
-        )
+    def run_full_test(self) -> dict[str, Any]:
+        command = [
+            str(self.speedtest_executable),
+            "--accept-license",
+            "--accept-gdpr",
+            "--format=json",
+        ]
 
-        print(
-            f"Packet loss: "
-            f"{results['packet_loss_percent']}%"
-        )
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=self.timeout_seconds,
+                check=False,
+            )
 
-        print(
-            f"ISP: "
-            f"{results['isp']}"
-        )
+        except FileNotFoundError:
+            raise FileNotFoundError(
+                "speedtest.exe was not found."
+            )
 
-        print(
-            f"External IP: "
-            f"{results['external_ip']}"
-        )
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(
+                "Speedtest timed out."
+            )
 
-        print(
-            f"Interface: "
-            f"{results['interface_name']}"
-        )
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr)
 
-        print(
-            f"Server: "
-            f"{results['server_name']}, "
-            f"{results['server_location']}"
-        )
+        try:
+            data = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            raise RuntimeError(
+                "Speedtest did not return valid JSON."
+            )
 
-        print(
-            f"Result URL: "
-            f"{results['result_url']}"
-        )
+        download = data.get("download", {})
+        upload = data.get("upload", {})
+        ping = data.get("ping", {})
+        interface = data.get("interface", {})
+        server = data.get("server", {})
+        result_data = data.get("result", {})
 
-    except (FileNotFoundError, RuntimeError) as error:
-        print(f"\nTest failed:\n{error}")
+        return {
+            "download_mbps": self._to_mbps(
+                download.get("bandwidth")
+            ),
+            "upload_mbps": self._to_mbps(
+                upload.get("bandwidth")
+            ),
+            "ping_ms": self._to_float(
+                ping.get("latency")
+            ),
+            "ping_jitter_ms": self._to_float(
+                ping.get("jitter")
+            ),
+            "packet_loss_percent": self._to_float(
+                data.get("packetLoss")
+            ),
+            "isp": data.get("isp"),
+            "external_ip": interface.get(
+                "externalIp"
+            ),
+            "interface_name": interface.get(
+                "name"
+            ),
+            "server_name": server.get(
+                "name"
+            ),
+            "server_location": (
+                f"{server.get('location', '')}, "
+                f"{server.get('country', '')}"
+            ),
+            "result_url": result_data.get(
+                "url"
+            ),
+        }
 
 
 if __name__ == "__main__":
-    main()
+    tester = ThroughputTester()
+
+    results = tester.run_full_test()
+
+    print(results)
