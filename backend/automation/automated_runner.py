@@ -2,8 +2,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from excel_report import ExcelResultWriter
-from throughput_test import ThroughputTester
+from .excel_report import ExcelResultWriter
+from .throughput_test import ThroughputTester
 
 
 class AutomatedTestRunner:
