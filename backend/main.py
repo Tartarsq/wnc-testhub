@@ -312,8 +312,8 @@ def start_qxdm_logging(
             "\n  3. Load the configured DMC file."
             "\n  4. Wait for configuration confirmation."
             "\n  5. Ask you to start the QXDM capture."
-            "\n  6. Send ModeLPM."
-            "\n  7. Send ModeOnline."
+            "\n  6. Send mode lpm."
+            "\n  7. Send mode online."
         )
 
         print(
@@ -410,13 +410,13 @@ def start_qxdm_logging(
         qxdm.mode_lpm()
 
         logger.info(
-            "ModeLPM was sent successfully."
+            "mode lpm was sent successfully."
         )
 
         qxdm.mode_online()
 
         logger.info(
-            "ModeOnline was sent successfully."
+            "mode online was sent successfully."
         )
 
         print(
@@ -467,7 +467,7 @@ def run_automated_tests(
     session_folder,
 ) -> tuple[bool, int, object]:
     """
-    Configure and run repeated automated Speedtest CLI tests.
+    Configure and run repeated automated Python Speedtest tests.
 
     Returns:
         tuple:
@@ -502,16 +502,6 @@ def run_automated_tests(
         default=10,
     )
 
-    speedtest_timeout = prompt_positive_integer(
-        "Speedtest timeout in seconds",
-        default=180,
-    )
-
-    speedtest_executable = prompt_with_default(
-        "Speedtest executable path",
-        "speedtest.exe",
-    )
-
     excel_path = (
         session_folder
         / "reports"
@@ -521,19 +511,11 @@ def run_automated_tests(
     print("\nAutomated test configuration:")
     print(f"  Runs: {number_of_runs}")
     print(f"  Delay: {delay_between_runs} seconds")
-    print(
-        f"  Speedtest timeout: "
-        f"{speedtest_timeout} seconds"
-    )
-    print(
-        f"  Speedtest executable: "
-        f"{speedtest_executable}"
-    )
+    print("  Throughput method: Python speedtest-cli library")
     print(f"  Excel output: {excel_path}")
 
     input(
-        "\nMake sure the official Ookla Speedtest CLI "
-        "is installed.\n"
+        "\nMake sure the Python speedtest-cli package is installed.\n"
         "Press Enter to begin the automated tests..."
     )
 
@@ -547,8 +529,7 @@ def run_automated_tests(
     )
 
     logger.info(
-        "Speedtest executable: %s",
-        speedtest_executable,
+        "Throughput method: Python speedtest-cli library."
     )
 
     try:
@@ -558,8 +539,6 @@ def run_automated_tests(
             session_folder=session_folder,
             number_of_runs=number_of_runs,
             delay_between_runs=delay_between_runs,
-            speedtest_executable=speedtest_executable,
-            timeout_seconds=speedtest_timeout,
         )
 
         runner.run()
@@ -605,7 +584,6 @@ def run_automated_tests(
 
         return True, number_of_runs, excel_path
 
-
 def stop_qxdm_logging(
     qxdm: QXDMController,
     logger,
@@ -635,13 +613,13 @@ def stop_qxdm_logging(
         )
 
         print(
-            "\nSending ModeLPM before stopping capture..."
+            "\nSending mode lpm before stopping capture..."
         )
 
         qxdm.mode_lpm()
 
         logger.info(
-            "ModeLPM was sent before capture stop."
+            "mode lpm was sent before capture stop."
         )
 
         print(
@@ -697,7 +675,7 @@ def stop_qxdm_logging(
         )
 
         print(
-            "\nSwitch QXDM to ModeLPM and stop the "
+            "\nSwitch QXDM to mode lpm and stop the "
             "capture manually."
         )
 
