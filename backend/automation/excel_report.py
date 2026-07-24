@@ -4,6 +4,7 @@ from typing import Any
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font
+from openpyxl.utils import get_column_letter
 
 
 HEADERS = [
@@ -24,6 +25,7 @@ HEADERS = [
     "Ping ms",
     "Jitter ms",
     "Packet Loss %",
+    "Test Duration (s)",
     "ISP",
     "External IP",
     "Interface",
@@ -42,12 +44,25 @@ class ExcelResultWriter:
     def __init__(
         self,
         workbook_path: Path,
-    ) -> None:
+    ) ->None:
         self.workbook_path = Path(workbook_path)
 
         self.workbook_path.parent.mkdir(
             parents=True,
             exist_ok=True,
+        )
+
+    def _update_filter(
+        self,
+        worksheet,
+    ) -> None:
+        """Automatically size the filter range."""
+        last_column = get_column_letter(
+            len(HEADERS)
+        )
+
+        worksheet.auto_filter.ref = (
+            f"A1:{last_column}{worksheet.max_row}"
         )
 
     def _create_workbook(self) -> None:
@@ -63,8 +78,8 @@ class ExcelResultWriter:
 
         worksheet.freeze_panes = "A2"
 
-        worksheet.auto_filter.ref = (
-            f"A1:Z{worksheet.max_row}"
+        self._update_filter(
+            worksheet
         )
 
         workbook.save(self.workbook_path)
@@ -135,6 +150,9 @@ class ExcelResultWriter:
                 result.get(
                     "packet_loss_percent"
                 ),
+                result.get(
+                    "test_duration_seconds"
+                ),
                 result.get("isp"),
                 result.get("external_ip"),
                 result.get("interface_name"),
@@ -147,8 +165,8 @@ class ExcelResultWriter:
             ]
         )
 
-        worksheet.auto_filter.ref = (
-            f"A1:Z{worksheet.max_row}"
+        self._update_filter(
+            worksheet
         )
 
         self._adjust_column_widths(
