@@ -26,8 +26,8 @@ class QXDMController:
         5. Set the output path.
         6. Set the maximum log size.
         7. Start QXDM logging.
-        8. Send ModeLPM.
-        9. Send ModeOnline.
+        8. Send mode lpm.
+        9. Send mode online.
     """
 
     PROCESS_NAME = "QXDM.exe"
@@ -566,13 +566,13 @@ class QXDMController:
 
     def mode_lpm(self) -> bool:
         """Place the modem into low-power mode."""
-        print("Sending ModeLPM...")
-        return self.send_command("ModeLPM")
+        print("Sending mode lpm...")
+        return self.send_command("mode lpm")
 
     def mode_online(self) -> bool:
         """Place the modem into online mode."""
-        print("Sending ModeOnline...")
-        return self.send_command("ModeOnline")
+        print("Sending mode online...")
+        return self.send_command("mode online")
 
     def start_logging(
         self,
@@ -590,8 +590,8 @@ class QXDMController:
             Set destination
             Set maximum size
             Start QXDM logging
-            ModeLPM
-            ModeOnline
+            mode lpm
+            mode online
         """
         self.prepare_log_path(log_path)
         self.launch()
