@@ -1,3 +1,4 @@
+import os
 import time
 from datetime import datetime
 from pathlib import Path
@@ -25,8 +26,6 @@ class AutomatedTestRunner:
         self.number_of_runs = number_of_runs
         self.delay_between_runs = delay_between_runs
 
-        # The Python speedtest-cli implementation does not require
-        # an executable path or timeout argument.
         self.throughput = ThroughputTester()
 
         self.excel_path = (
@@ -349,7 +348,38 @@ class AutomatedTestRunner:
             "\nAll automated test runs are complete."
         )
 
-        print("Excel workbook:")
-        print(self.excel_path)
+        resolved_excel_path = self.excel_path.resolve()
+
+        print(
+            f"Excel workbook: {resolved_excel_path}"
+        )
+
+        try:
+            if not resolved_excel_path.exists():
+                raise FileNotFoundError(
+                    f"Excel workbook was not found: "
+                    f"{resolved_excel_path}"
+                )
+
+            # Open the reports folder in Windows File Explorer.
+            os.startfile(
+                resolved_excel_path.parent
+            )
+
+            # Open the automated workbook in Excel.
+            os.startfile(
+                resolved_excel_path
+            )
+
+            print(
+                "Opened the reports folder and automated "
+                "Excel workbook."
+            )
+
+        except Exception as error:
+            print(
+                f"Could not open the results automatically: "
+                f"{error}"
+            )
 
         return all_results

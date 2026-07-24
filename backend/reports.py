@@ -1,5 +1,6 @@
 import csv
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -168,9 +169,32 @@ def generate_reports(
     test_data: dict[str, Any],
 ) -> list[Path]:
     """Generate all currently supported report formats."""
-    return [
+
+    generated_files = [
         save_csv_report(session_folder, test_data),
         save_text_report(session_folder, test_data),
         save_json_report(session_folder, test_data),
         save_excel_report(session_folder, test_data),
     ]
+
+    reports_folder = create_reports_folder(session_folder)
+
+    standard_excel = reports_folder / "test_results.xlsx"
+    automated_excel = reports_folder / "Titan3_Automated_Results.xlsx"
+
+    try:
+        # Open the reports folder
+        os.startfile(reports_folder.resolve())
+
+        # Prefer the automated workbook if it exists
+        if automated_excel.exists():
+            os.startfile(automated_excel.resolve())
+        elif standard_excel.exists():
+            os.startfile(standard_excel.resolve())
+
+    except Exception as error:
+        print(
+            f"Could not open reports automatically: {error}"
+        )
+
+    return generated_files
