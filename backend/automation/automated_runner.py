@@ -2,14 +2,20 @@ import os
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from .excel_report import ExcelResultWriter
 from .throughput_test import ThroughputTester
 
 
 class AutomatedTestRunner:
-    """Run repeated Titan throughput tests and save each result."""
+    """
+    Run repeated Titan throughput tests and save each result.
+
+    QXDM logging is intentionally separate from throughput testing.
+    Use start_qxdm_logging() and stop_qxdm_logging() when a QXDM
+    capture is needed.
+    """
 
     def __init__(
         self,
@@ -23,8 +29,8 @@ class AutomatedTestRunner:
         self.titan = titan
         self.qxdm = qxdm
         self.session_folder = Path(session_folder)
-        self.number_of_runs = number_of_runs
-        self.delay_between_runs = delay_between_runs
+        self.number_of_runs = max(int(number_of_runs), 1)
+        self.delay_between_runs = max(int(delay_between_runs), 0)
 
         self.throughput = ThroughputTester()
 
@@ -34,9 +40,109 @@ class AutomatedTestRunner:
             / "Titan3_Automated_Results.xlsx"
         )
 
-        self.excel = ExcelResultWriter(
-            self.excel_path
+        self.excel = ExcelResultWriter(self.excel_path)
+
+        self.active_qxdm_log_path: Optional[Path] = None
+
+    # ------------------------------------------------------------------
+    # QXDM WORKFLOW
+    # ------------------------------------------------------------------
+
+    def create_qxdm_log_path(self) -> Path:
+        """Create a timestamped QXDM log path for this session."""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        log_folder = (
+            self.session_folder
+            / "captures"
+            / "qxdm"
         )
+
+        log_folder.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        return log_folder / f"Titan3_QXDM_{timestamp}.isf"
+
+    def start_qxdm_logging(
+        self,
+        log_path: Path | None = None,
+        load_mask: bool = True,
+    ) -> Path:
+        """
+        Start an independent QXDM logging session.
+
+        This method does not run a throughput test.
+        """
+        if self.qxdm is None:
+            raise RuntimeError(
+                "A QXDM controller was not provided."
+            )
+
+        if log_path is None:
+            log_path = self.create_qxdm_log_path()
+        else:
+            log_path = Path(log_path).resolve()
+            log_path.parent.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
+
+        print("\nStarting QXDM logging...")
+        print(f"QXDM log path: {log_path}")
+
+        self.qxdm.start_logging(
+            log_path=log_path,
+            load_mask=load_mask,
+        )
+
+        self.active_qxdm_log_path = log_path
+
+        print("QXDM logging started.")
+        return log_path
+
+    def stop_qxdm_logging(
+        self,
+        load_saved_log: bool = True,
+    ) -> Path | None:
+        """
+        Stop QXDM logging and finalize the active log.
+
+        The updated QXDMController.stop_logging() is expected to:
+            1. Send mode lpm.
+            2. Stop the QXDM capture.
+            3. Wait for the log file to finish saving.
+            4. Optionally load the saved log back into QXDM.
+        """
+        if self.qxdm is None:
+            raise RuntimeError(
+                "A QXDM controller was not provided."
+            )
+
+        if self.active_qxdm_log_path is None:
+            print("No active QXDM log is registered.")
+
+        print("\nStopping QXDM logging...")
+
+        self.qxdm.stop_logging(
+            load_saved_log=load_saved_log
+        )
+
+        completed_log_path = self.active_qxdm_log_path
+        self.active_qxdm_log_path = None
+
+        if completed_log_path is not None:
+            print(
+                f"QXDM log finalized: "
+                f"{completed_log_path.resolve()}"
+            )
+
+        return completed_log_path
+
+    # ------------------------------------------------------------------
+    # TITAN DATA COLLECTION
+    # ------------------------------------------------------------------
 
     def get_radio_metrics(self) -> dict[str, Any]:
         """
@@ -117,30 +223,19 @@ class AutomatedTestRunner:
 
         return "FAIL"
 
-    def create_run_folder(
-        self,
-        run_number: int,
-    ) -> Path:
-        """Create and return the folder for one test run."""
-        run_folder = (
-            self.session_folder
-            / "captures"
-            / "qxdm"
-            / f"run_{run_number:03d}"
-        )
-
-        run_folder.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-
-        return run_folder
+    # ------------------------------------------------------------------
+    # THROUGHPUT WORKFLOW
+    # ------------------------------------------------------------------
 
     def run_single_test(
         self,
         run_number: int,
     ) -> dict[str, Any]:
-        """Run one throughput test and return the collected data."""
+        """
+        Run one throughput test.
+
+        This method does not start, stop, or send commands to QXDM.
+        """
         timestamp = datetime.now().strftime(
             "%Y-%m-%d %H:%M:%S"
         )
@@ -151,10 +246,6 @@ class AutomatedTestRunner:
             "REACHABLE"
             if titan_reachable
             else "UNREACHABLE"
-        )
-
-        run_folder = self.create_run_folder(
-            run_number
         )
 
         speedtest_results: dict[str, Any] = {}
@@ -169,11 +260,8 @@ class AutomatedTestRunner:
                     "Titan 3 is not reachable."
                 )
 
-            print("\nSending mode online...")
-            self.qxdm.mode_online()
-
             print(
-                "Running automated Python Speedtest test..."
+                "\nRunning independent Python throughput test..."
             )
 
             speedtest_results = (
@@ -200,11 +288,16 @@ class AutomatedTestRunner:
                 "packet_loss_percent"
             )
 
+            test_duration = speedtest_results.get(
+                "test_duration_seconds"
+            )
+
             print(f"Download: {download_mbps} Mbps")
             print(f"Upload: {upload_mbps} Mbps")
             print(f"Ping: {ping_ms} ms")
             print(f"Jitter: {jitter_ms} ms")
             print(f"Packet loss: {packet_loss}%")
+            print(f"Test duration: {test_duration} seconds")
 
             print("Collecting Titan radio metrics...")
 
@@ -226,25 +319,6 @@ class AutomatedTestRunner:
             if not radio_metrics:
                 radio_metrics = self.get_radio_metrics()
 
-        finally:
-            try:
-                print("Sending mode lpm...")
-                self.qxdm.mode_lpm()
-
-            except Exception as error:
-                lpm_error = (
-                    f"mode lpm error: {error}"
-                )
-
-                if notes:
-                    notes = (
-                        f"{notes}; {lpm_error}"
-                    )
-                else:
-                    notes = lpm_error
-
-                print(lpm_error)
-
         return {
             "timestamp": timestamp,
             "run_number": run_number,
@@ -264,6 +338,9 @@ class AutomatedTestRunner:
             ),
             "packet_loss_percent": speedtest_results.get(
                 "packet_loss_percent"
+            ),
+            "test_duration_seconds": speedtest_results.get(
+                "test_duration_seconds"
             ),
             "isp": speedtest_results.get(
                 "isp"
@@ -285,22 +362,21 @@ class AutomatedTestRunner:
             ),
             **radio_metrics,
             "overall_result": overall_result,
-            "run_folder": str(run_folder),
+            "run_folder": None,
             "notes": notes,
         }
 
     def run(self) -> list[dict[str, Any]]:
         """
-        Run every requested test and append each result to Excel.
+        Run every requested throughput test and append each result to Excel.
 
-        Returns:
-            A list containing all run results.
+        QXDM is not started, stopped, or controlled by this method.
         """
         all_results: list[dict[str, Any]] = []
 
         print(
             f"\nStarting {self.number_of_runs} "
-            "automated test runs."
+            "independent throughput test runs."
         )
 
         for run_number in range(
@@ -310,7 +386,7 @@ class AutomatedTestRunner:
             print("\n" + "=" * 50)
 
             print(
-                f"AUTOMATED RUN "
+                f"THROUGHPUT RUN "
                 f"{run_number}/{self.number_of_runs}"
             )
 
@@ -345,9 +421,15 @@ class AutomatedTestRunner:
                 )
 
         print(
-            "\nAll automated test runs are complete."
+            "\nAll throughput test runs are complete."
         )
 
+        self.open_results()
+
+        return all_results
+
+    def open_results(self) -> None:
+        """Open the reports folder and Excel workbook on Windows."""
         resolved_excel_path = self.excel_path.resolve()
 
         print(
@@ -361,12 +443,10 @@ class AutomatedTestRunner:
                     f"{resolved_excel_path}"
                 )
 
-            # Open the reports folder in Windows File Explorer.
             os.startfile(
                 resolved_excel_path.parent
             )
 
-            # Open the automated workbook in Excel.
             os.startfile(
                 resolved_excel_path
             )
@@ -381,5 +461,3 @@ class AutomatedTestRunner:
                 f"Could not open the results automatically: "
                 f"{error}"
             )
-
-        return all_results
