@@ -17,8 +17,6 @@ class AutomatedTestRunner:
         session_folder: Path,
         number_of_runs: int = 5,
         delay_between_runs: int = 10,
-        speedtest_executable: str = "speedtest.exe",
-        timeout_seconds: int = 180,
     ) -> None:
         """Initialize the automated test runner."""
         self.titan = titan
@@ -27,10 +25,9 @@ class AutomatedTestRunner:
         self.number_of_runs = number_of_runs
         self.delay_between_runs = delay_between_runs
 
-        self.throughput = ThroughputTester(
-            speedtest_executable=speedtest_executable,
-            timeout_seconds=timeout_seconds,
-        )
+        # The Python speedtest-cli implementation does not require
+        # an executable path or timeout argument.
+        self.throughput = ThroughputTester()
 
         self.excel_path = (
             self.session_folder
@@ -173,10 +170,12 @@ class AutomatedTestRunner:
                     "Titan 3 is not reachable."
                 )
 
-            print("\nSending ModeOnline...")
+            print("\nSending mode online...")
             self.qxdm.mode_online()
 
-            print("Running automated Speedtest CLI test...")
+            print(
+                "Running automated Python Speedtest test..."
+            )
 
             speedtest_results = (
                 self.throughput.run_full_test()
@@ -230,12 +229,12 @@ class AutomatedTestRunner:
 
         finally:
             try:
-                print("Sending ModeLPM...")
+                print("Sending mode lpm...")
                 self.qxdm.mode_lpm()
 
             except Exception as error:
                 lpm_error = (
-                    f"ModeLPM error: {error}"
+                    f"mode lpm error: {error}"
                 )
 
                 if notes:
