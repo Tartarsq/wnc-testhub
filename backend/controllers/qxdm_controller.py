@@ -979,6 +979,10 @@ class QXDMController:
 
         dialog = self.open_start_logging_dialog()
 
+        print("\n===== QXDM START LOGGING CONTROLS =====")
+        dialog.print_control_identifiers()
+        print("===== END QXDM CONTROLS =====\n")
+
         path_edit = self.find_edit_by_keywords(
             dialog,
             [
