@@ -1,4 +1,3 @@
-
 import json
 import subprocess
 import time
@@ -84,9 +83,10 @@ class QXDMController:
             else None
         )
 
-        # Never allow the requested size to exceed 1 GB.
+        # Allow a QXDM size value from 0 through 1024 MB.
+        # QXDM commonly uses 0 to mean no configured size limit.
         self.max_log_size_mb = min(
-            max(int(max_log_size_mb), 1),
+            max(int(max_log_size_mb), 0),
             1024,
         )
 
@@ -387,7 +387,8 @@ class QXDMController:
         """
         Ask the user for the desired QXDM maximum log size in MB.
 
-        The value must be between 1 MB and 1024 MB.
+        The value must be between 0 MB and 1024 MB.
+        Enter 0 to pass QXDM's zero/unlimited value.
         Cancelling keeps the currently configured value.
         """
         try:
@@ -406,10 +407,10 @@ class QXDMController:
                 "QXDM Log Size",
                 (
                     "Enter the maximum QXDM log file size in MB "
-                    "(1-1024):"
+                    "(0-1024). Enter 0 for QXDM's zero/unlimited value:"
                 ),
                 initialvalue=self.max_log_size_mb,
-                minvalue=1,
+                minvalue=0,
                 maxvalue=1024,
                 parent=root,
             )
@@ -707,23 +708,65 @@ class QXDMController:
             dialog,
             [
                 "maximum size",
+                "maximum file size",
                 "max size",
                 "file size",
                 "log size",
                 "size limit",
+                "limit",
+                "mb",
             ],
         )
 
+        # Some QXDM versions do not expose the size field's label through UIA.
+        # Fall back to a numeric-looking Edit control that is not the log path.
+        if size_edit is None:
+            edit_controls = dialog.descendants(
+                control_type="Edit"
+            )
+            numeric_candidates = []
+
+            for edit in edit_controls:
+                if path_edit is not None and edit == path_edit:
+                    continue
+
+                try:
+                    text = edit.window_text().strip()
+                    rectangle = edit.rectangle()
+
+                    # Size fields are usually short and contain a number.
+                    if text.isdigit() or rectangle.width() <= 220:
+                        numeric_candidates.append(edit)
+                except Exception:
+                    continue
+
+            if numeric_candidates:
+                size_edit = numeric_candidates[-1]
+
         if size_edit is None:
             raise RuntimeError(
-                "Could not locate the QXDM maximum "
-                "log-size field."
+                "Could not locate the QXDM maximum log-size field. "
+                "Run print_controls() while the Start Logging dialog is "
+                "open so its controls can be mapped for this QXDM version."
             )
 
         self.set_edit_value(
             size_edit,
             str(self.max_log_size_mb),
         )
+
+        # Commit the edited value in controls that validate on focus change.
+        send_keys("{TAB}")
+        time.sleep(0.5)
+
+        try:
+            applied_size = size_edit.window_text().strip()
+            print(
+                "QXDM size field now contains: "
+                f"{applied_size or self.max_log_size_mb}"
+            )
+        except Exception:
+            pass
 
         print(
             f"QXDM log destination: {log_path}"
@@ -830,7 +873,7 @@ class QXDMController:
     def start_logging(
         self,
         log_path: Path,
-        transition_delay: float = 2.0,
+        transition_delay: float = 5.0,
         load_mask: bool = True,
         prompt_for_log_size: bool = True,
     ) -> bool:
@@ -862,6 +905,11 @@ class QXDMController:
         # The test commands already defined in this controller run after
         # logging has started, so their output is captured in the saved log.
         self.mode_lpm()
+
+        print(
+            "Waiting "
+            f"{transition_delay:.1f} seconds before mode online..."
+        )
         time.sleep(transition_delay)
 
         self.mode_online()
