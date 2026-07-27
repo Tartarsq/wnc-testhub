@@ -1,4 +1,6 @@
+
 import json
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -74,6 +76,7 @@ class QXDMController:
         executable: Path = QXDM_EXECUTABLE,
         default_mask: Optional[Path] = QXDM_DEFAULT_MASK,
         max_log_size_mb: int = QXDM_MAX_LOG_SIZE_MB,
+        prefer_direct_automation: bool = True,
     ) -> None:
         self.executable = Path(executable)
 
@@ -92,6 +95,19 @@ class QXDMController:
 
         self.process: subprocess.Popen | None = None
         self.current_log_path: Optional[Path] = None
+
+        # Experimental direct QXDM automation. When unavailable or incompatible,
+        # the controller automatically falls back to the existing pywinauto flow.
+        self.prefer_direct_automation = bool(prefer_direct_automation)
+        self.direct_qxdm = None
+        self.direct_logger = None
+        self.direct_logging_active = False
+        self.direct_automation_error: Optional[str] = None
+        self.direct_debug_path = (
+            Path.home()
+            / ".wnc_testhub"
+            / "qxdm_direct_automation_debug.txt"
+        )
 
         # Stores the last successfully selected QXDM mask.
         self.mask_settings_path = (
@@ -945,6 +961,295 @@ class QXDMController:
                 "The test was not started."
             ) from error
 
+    def _write_direct_debug(self, message: str) -> None:
+        """Write direct-automation diagnostics without interrupting TestHub."""
+        try:
+            self.direct_debug_path.parent.mkdir(parents=True, exist_ok=True)
+            with self.direct_debug_path.open("a", encoding="utf-8") as debug_file:
+                timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+                debug_file.write(f"[{timestamp}] {message}\n")
+        except OSError:
+            pass
+
+    @staticmethod
+    def _call_first_available(target, method_names: list[str], argument_sets):
+        """Call the first available automation method with a compatible signature."""
+        errors: list[str] = []
+
+        for method_name in method_names:
+            try:
+                method = getattr(target, method_name)
+            except Exception as error:
+                errors.append(f"{method_name}: unavailable ({error})")
+                continue
+
+            for arguments in argument_sets:
+                try:
+                    result = method(*arguments)
+                    return method_name, result
+                except Exception as error:
+                    errors.append(
+                        f"{method_name}{arguments!r}: {type(error).__name__}: {error}"
+                    )
+
+        raise RuntimeError("; ".join(errors))
+
+    @staticmethod
+    def _set_first_available_property(
+        target,
+        property_names: list[str],
+        value,
+        required: bool = True,
+    ) -> Optional[str]:
+        """Set the first writable COM property from a list of possible names."""
+        errors: list[str] = []
+
+        for property_name in property_names:
+            try:
+                setattr(target, property_name, value)
+                return property_name
+            except Exception as error:
+                errors.append(
+                    f"{property_name}: {type(error).__name__}: {error}"
+                )
+
+        if required:
+            raise RuntimeError("; ".join(errors))
+
+        return None
+
+    def start_logging_direct(
+        self,
+        log_path: Path,
+        mask_path: Optional[Path] = None,
+        max_size_mb: Optional[int] = None,
+    ) -> bool:
+        """
+        Try to start QXDM logging through an installed Windows COM interface.
+
+        Qualcomm has shipped different automation interfaces across QXDM builds,
+        so this adapter probes several common object and method names. Failure is
+        non-fatal because start_logging() falls back to the existing UI workflow.
+
+        Set QXDM_COM_PROGID in the environment when WNC knows the exact ProgID.
+        """
+        log_path = self.prepare_log_path(log_path)
+        selected_size = (
+            self.max_log_size_mb
+            if max_size_mb is None
+            else min(max(int(max_size_mb), 0), 1024)
+        )
+
+        if mask_path is not None:
+            mask_path = Path(mask_path).expanduser().resolve()
+            if not mask_path.exists() or not mask_path.is_file():
+                raise FileNotFoundError(
+                    f"The direct-automation mask was not found:\n{mask_path}"
+                )
+
+        try:
+            import win32com.client  # type: ignore[import-untyped]
+        except ImportError as error:
+            raise RuntimeError(
+                "Direct QXDM automation requires pywin32. "
+                "Install it with: pip install pywin32"
+            ) from error
+
+        configured_progid = os.environ.get("QXDM_COM_PROGID", "").strip()
+        progids = [
+            configured_progid,
+            "QXDM.Application",
+            "QXDM4.Application",
+            "QXDM.QXDMApplication",
+            "Qualcomm.QXDM.Application",
+        ]
+        progids = list(dict.fromkeys(value for value in progids if value))
+
+        dispatch_errors: list[str] = []
+        application = None
+        selected_progid = None
+
+        for progid in progids:
+            try:
+                application = win32com.client.Dispatch(progid)
+                selected_progid = progid
+                break
+            except Exception as error:
+                dispatch_errors.append(
+                    f"{progid}: {type(error).__name__}: {error}"
+                )
+
+        if application is None:
+            raise RuntimeError(
+                "No compatible QXDM COM application was found. Tried: "
+                + " | ".join(dispatch_errors)
+            )
+
+        self.direct_qxdm = application
+        self._write_direct_debug(f"Connected using ProgID: {selected_progid}")
+
+        if mask_path is not None:
+            mask_method, _ = self._call_first_available(
+                application,
+                [
+                    "LoadConfiguration",
+                    "LoadConfig",
+                    "LoadLogMask",
+                    "OpenConfiguration",
+                    "OpenConfig",
+                ],
+                [(str(mask_path),)],
+            )
+            self._write_direct_debug(
+                f"Loaded mask with {mask_method}: {mask_path}"
+            )
+
+        # Some automation builds expose StartLogging directly on the app.
+        direct_start_errors: list[str] = []
+        for method_name in ["StartLogging", "StartLog", "BeginLogging"]:
+            try:
+                method = getattr(application, method_name)
+            except Exception as error:
+                direct_start_errors.append(f"{method_name}: unavailable ({error})")
+                continue
+
+            for arguments in [
+                (str(log_path), selected_size),
+                (str(log_path),),
+                (str(log_path.parent), log_path.name, selected_size),
+                (str(log_path.parent), log_path.name),
+            ]:
+                try:
+                    result = method(*arguments)
+                    self.direct_logger = result if result is not None else application
+                    self.direct_logging_active = True
+                    self.direct_automation_error = None
+                    self._write_direct_debug(
+                        f"Started direct logging with {method_name}{arguments!r}"
+                    )
+                    print(
+                        "QXDM direct automation started logging to: "
+                        f"{log_path}"
+                    )
+                    return True
+                except Exception as error:
+                    direct_start_errors.append(
+                        f"{method_name}{arguments!r}: "
+                        f"{type(error).__name__}: {error}"
+                    )
+
+        # Other builds expose a logger/item-store object that must be configured.
+        factory_name, logger = self._call_first_available(
+            application,
+            [
+                "CreateItemStore",
+                "CreateLogger",
+                "CreateLog",
+                "NewItemStore",
+                "GetLogger",
+            ],
+            [(), (str(log_path),)],
+        )
+
+        if logger is None:
+            raise RuntimeError(
+                f"{factory_name} returned no logger object. Direct start errors: "
+                + " | ".join(direct_start_errors)
+            )
+
+        path_property = self._set_first_available_property(
+            logger,
+            [
+                "FileName",
+                "Filename",
+                "OutputFile",
+                "OutputPath",
+                "LogFileName",
+                "LogPath",
+            ],
+            str(log_path),
+        )
+        size_property = self._set_first_available_property(
+            logger,
+            [
+                "MaximumFileSize",
+                "MaxFileSize",
+                "MaximumSize",
+                "MaxSizeMB",
+                "FileSizeLimit",
+            ],
+            selected_size,
+            required=False,
+        )
+
+        start_method, _ = self._call_first_available(
+            logger,
+            ["Start", "StartLogging", "Begin", "Open"],
+            [(), (str(log_path),), (selected_size,)],
+        )
+
+        self.direct_logger = logger
+        self.direct_logging_active = True
+        self.direct_automation_error = None
+        self._write_direct_debug(
+            "Started logger object using "
+            f"factory={factory_name}, path_property={path_property}, "
+            f"size_property={size_property}, start_method={start_method}"
+        )
+        print(f"QXDM direct automation started logging to: {log_path}")
+        return True
+
+    def stop_logging_direct(self) -> bool:
+        """Stop and flush a log started by start_logging_direct()."""
+        if not self.direct_logging_active:
+            return False
+
+        targets = []
+        if self.direct_logger is not None:
+            targets.append(self.direct_logger)
+        if self.direct_qxdm is not None and self.direct_qxdm not in targets:
+            targets.append(self.direct_qxdm)
+
+        stop_errors: list[str] = []
+        stopped = False
+
+        for target in targets:
+            try:
+                method_name, _ = self._call_first_available(
+                    target,
+                    ["Stop", "StopLogging", "End", "Close"],
+                    [()],
+                )
+                self._write_direct_debug(
+                    f"Stopped direct logger with {method_name}"
+                )
+                stopped = True
+                break
+            except Exception as error:
+                stop_errors.append(str(error))
+
+        if not stopped:
+            raise RuntimeError(
+                "Could not stop the direct QXDM logger: "
+                + " | ".join(stop_errors)
+            )
+
+        for target in targets:
+            try:
+                self._call_first_available(
+                    target,
+                    ["Save", "Flush", "Commit"],
+                    [(), (str(self.current_log_path),) if self.current_log_path else ()],
+                )
+                break
+            except Exception:
+                continue
+
+        self.direct_logging_active = False
+        self.direct_logger = None
+        print("QXDM direct logging stopped.")
+        return True
+
     def open_start_logging_dialog(self):
         """Open QXDM's Start Logging dialog."""
         window = self.focus_qxdm()
@@ -978,25 +1283,6 @@ class QXDMController:
         )
 
         dialog = self.open_start_logging_dialog()
-
-        debug_output_path = (
-            Path.home() / "Desktop" / "qxdm_start_logging_controls.txt"
-        )
-
-        try:
-            debug_output_path.parent.mkdir(parents=True, exist_ok=True)
-            dialog.print_control_identifiers(
-                filename=str(debug_output_path)
-            )
-            print(
-                "QXDM control identifiers saved to: "
-                f"{debug_output_path}"
-            )
-        except Exception as error:
-            print(
-                "Could not save QXDM control identifiers: "
-                f"{error}"
-            )
 
         path_edit = self.find_edit_by_keywords(
             dialog,
@@ -1201,10 +1487,38 @@ class QXDMController:
         self.prepare_log_path(log_path)
         self.launch()
 
-        if should_load_mask:
-            self.load_default_mask()
+        direct_started = False
 
-        self.configure_logging(log_path)
+        if self.prefer_direct_automation:
+            try:
+                direct_mask = self.default_mask if should_load_mask else None
+                direct_started = self.start_logging_direct(
+                    log_path=log_path,
+                    mask_path=direct_mask,
+                    max_size_mb=self.max_log_size_mb,
+                )
+            except Exception as error:
+                self.direct_automation_error = (
+                    f"{type(error).__name__}: {error}"
+                )
+                self._write_direct_debug(
+                    "Direct automation failed; falling back to pywinauto: "
+                    f"{self.direct_automation_error}"
+                )
+                print(
+                    "QXDM direct automation was unavailable. "
+                    "Falling back to the existing QXDM UI workflow."
+                )
+                print(
+                    f"Direct automation details: {self.direct_automation_error}"
+                )
+                print(f"Diagnostic file: {self.direct_debug_path}")
+
+        if not direct_started:
+            if should_load_mask:
+                self.load_default_mask()
+
+            self.configure_logging(log_path)
 
         self.mode_lpm()
 
@@ -1353,7 +1667,11 @@ class QXDMController:
         self.mode_lpm()
         time.sleep(wait_seconds)
 
-        self.stop_qxdm_capture()
+        if self.direct_logging_active:
+            self.stop_logging_direct()
+        else:
+            self.stop_qxdm_capture()
+
         completed_log = self.wait_for_saved_log(
             timeout_seconds=save_timeout_seconds,
         )
