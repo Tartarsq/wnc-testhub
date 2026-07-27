@@ -28,8 +28,6 @@ class QXDMController:
         7. Start QXDM logging.
         8. Send mode lpm.
         9. Send mode online.
-       10. Stop capture and finalize the log.
-       11. Reopen the completed log in QXDM.
     """
 
     PROCESS_NAME = "QXDM.exe"
@@ -56,16 +54,6 @@ class QXDMController:
         "File->Open Configuration",
         "Logging->Load Log Mask",
         "Tools->Load Log Mask",
-    ]
-
-    # Used after capture stops so the completed log becomes the active log
-    # displayed in QXDM. Menu wording varies between QXDM versions.
-    OPEN_LOG_MENU_PATHS = [
-        "File->Open Log",
-        "File->Open Log File",
-        "File->Open",
-        "Log->Open Log",
-        "Logging->Open Log",
     ]
 
     def __init__(
@@ -638,132 +626,19 @@ class QXDMController:
         time.sleep(2)
         return True
 
-    def _find_completed_log(self) -> Optional[Path]:
-        """Return the completed log file created for the current capture.
-
-        QXDM may append an extension or create a numbered/segmented file, so
-        this checks the exact configured path first and then nearby matches.
-        """
-        if self.current_log_path is None:
-            return None
-
-        expected_path = self.current_log_path
-
-        if expected_path.exists() and expected_path.is_file():
-            return expected_path
-
-        candidates = [
-            path
-            for path in expected_path.parent.glob(f"{expected_path.stem}*")
-            if path.is_file()
-        ]
-
-        if not candidates:
-            return None
-
-        return max(
-            candidates,
-            key=lambda path: path.stat().st_mtime,
-        )
-
-    def wait_for_saved_log(
-        self,
-        timeout_seconds: float = 20.0,
-        poll_interval: float = 0.5,
-    ) -> Path:
-        """Wait until QXDM has finalized the log on disk.
-
-        Stopping capture is what saves/finalizes a QXDM log because the output
-        destination was selected before logging started. This method confirms
-        that the resulting file exists and that its size has stopped changing.
-        """
-        if self.current_log_path is None:
-            raise RuntimeError(
-                "No QXDM log path has been configured."
-            )
-
-        deadline = time.monotonic() + timeout_seconds
-        previous_size: Optional[int] = None
-        stable_checks = 0
-
-        while time.monotonic() < deadline:
-            completed_log = self._find_completed_log()
-
-            if completed_log is not None:
-                try:
-                    current_size = completed_log.stat().st_size
-                except OSError:
-                    time.sleep(poll_interval)
-                    continue
-
-                if current_size == previous_size:
-                    stable_checks += 1
-                else:
-                    previous_size = current_size
-                    stable_checks = 0
-
-                # Two unchanged checks reduce the chance of reopening a file
-                # while QXDM is still flushing its final data.
-                if stable_checks >= 2:
-                    self.current_log_path = completed_log
-                    print(f"QXDM log saved: {completed_log}")
-                    return completed_log
-
-            time.sleep(poll_interval)
-
-        raise TimeoutError(
-            "QXDM stopped capture, but the completed log file was not "
-            f"confirmed within {timeout_seconds:.1f} seconds. Expected near: "
-            f"{self.current_log_path}"
-        )
-
-    def load_saved_log(
-        self,
-        log_path: Optional[Path] = None,
-    ) -> bool:
-        """Open a completed log so it becomes QXDM's active/default view."""
-        selected_log = (
-            Path(log_path).resolve()
-            if log_path is not None
-            else self._find_completed_log()
-        )
-
-        if selected_log is None or not selected_log.exists():
-            raise FileNotFoundError(
-                "Could not find the completed QXDM log to reopen."
-            )
-
-        window = self.focus_qxdm()
-        selected_menu = self.select_first_available_menu(
-            window,
-            self.OPEN_LOG_MENU_PATHS,
-        )
-
-        print(f"Opened QXDM log menu: {selected_menu}")
-        self.handle_file_dialog(selected_log)
-        self.current_log_path = selected_log
-        print(f"Loaded completed QXDM log: {selected_log}")
-        return True
-
     def stop_logging(
         self,
         wait_seconds: float = 2.0,
-        load_saved_log: bool = True,
-        save_timeout_seconds: float = 20.0,
     ) -> bool:
-        """Stop capture, finalize the log, and optionally reopen it in QXDM."""
+        """
+        Stop the modem and finalize the QXDM log.
+        """
         self.mode_lpm()
         time.sleep(wait_seconds)
 
         self.stop_qxdm_capture()
-        completed_log = self.wait_for_saved_log(
-            timeout_seconds=save_timeout_seconds,
-        )
 
-        if load_saved_log:
-            self.load_saved_log(completed_log)
-
-        print("QXDM logging stopped and finalized.")
+        print("QXDM logging stopped.")
         return True
 
     def print_controls(self) -> None:
