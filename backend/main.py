@@ -405,28 +405,51 @@ def start_qxdm_logging(
             "The user confirmed that QXDM capture started."
         )
 
-        print(
-            "\nPreparing the modem for testing..."
+        use_airplane_mode = prompt_yes_no(
+            "Do you want to perform an Airplane Mode cycle?",
+            default=False,
         )
 
-        qxdm.mode_lpm()
+        if use_airplane_mode:
+            print(
+                "\nTurning Airplane Mode on..."
+            )
 
-        logger.info(
-            "ModeLPM was sent successfully."
-        )
+            qxdm.mode_lpm()
 
-        qxdm.mode_online()
+            logger.info(
+                "The user selected Airplane Mode. ModeLPM was sent."
+            )
 
-        logger.info(
-            "ModeOnline was sent successfully."
-        )
+            print(
+                "\nTurning Airplane Mode off and returning online..."
+            )
+
+            qxdm.mode_online()
+
+            logger.info(
+                "ModeOnline was sent after the Airplane Mode cycle."
+            )
+
+            print(
+                "\nAirplane Mode cycle completed."
+            )
+
+        else:
+            logger.info(
+                "The user skipped the Airplane Mode cycle."
+            )
+
+            print(
+                "\nSkipping Airplane Mode. Continuing with testing..."
+            )
 
         print(
             "\nQXDM capture is running."
         )
 
         print(
-            "Titan 3 is in online mode."
+            "Titan 3 is ready for testing."
         )
 
         print(
