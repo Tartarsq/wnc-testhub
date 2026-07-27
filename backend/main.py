@@ -1,3 +1,4 @@
+
 from config import (
     DEFAULT_CARRIER,
     DEFAULT_MODE,
@@ -269,24 +270,33 @@ def start_qxdm_logging(
     logger,
     session_folder,
 ):
-    """Start QXDM through the controller's complete automated workflow."""
+    """
+    Launch QXDM, load the configured DMC file, and prepare capture.
+
+    The user currently confirms the capture start because this QXDM
+    version does not expose the expected Start Logging menu path.
+    """
+
     should_start = prompt_yes_no(
         "Start the QXDM setup?",
         default=True,
     )
 
     if not should_start:
-        logger.info("The user skipped the QXDM setup.")
+        logger.info(
+            "The user skipped the QXDM setup."
+        )
+
         return False, None
 
-    suggested_log_path = (
+    qxdm_log_path = (
         session_folder
         / "captures"
         / "qxdm"
         / QXDM_DEFAULT_LOG_FILENAME
     )
 
-    suggested_log_path.parent.mkdir(
+    qxdm_log_path.parent.mkdir(
         parents=True,
         exist_ok=True,
     )
@@ -298,41 +308,144 @@ def start_qxdm_logging(
 
         print(
             "\nThe application will:"
-            "\n  1. Ask for the QXDM mask, save folder, file name, and size."
-            "\n  2. Launch or focus QXDM."
-            "\n  3. Load the selected configuration when requested."
-            "\n  4. Start QXDM logging."
-            "\n  5. Ask whether to cycle the modem through Airplane Mode."
-            "\n  6. Continue to the automated throughput tests."
+            "\n  1. Launch or focus QXDM."
+            "\n  2. Open File > Load Configuration."
+            "\n  3. Load the configured DMC file."
+            "\n  4. Wait for configuration confirmation."
+            "\n  5. Ask you to start the QXDM capture."
+            "\n  6. Send ModeLPM."
+            "\n  7. Send ModeOnline."
         )
 
-        logger.info("Starting the automated QXDM logging workflow.")
-
-        qxdm.start_logging(
-            log_path=suggested_log_path,
-            load_mask=True,
-            prompt_for_setup=True,
-            airplane_mode=None,
-            prompt_for_airplane_mode=True,
+        print(
+            f"\nRequested QXDM capture path:\n"
+            f"{qxdm_log_path}"
         )
-
-        actual_log_path = qxdm.current_log_path or suggested_log_path
 
         logger.info(
-            "QXDM logging started successfully. Capture path: %s",
-            actual_log_path,
+            "Launching QXDM."
         )
 
-        print("\nQXDM capture is running.")
-        print(f"Capture path: {actual_log_path}")
+        qxdm.launch()
 
-        return True, actual_log_path
+        logger.info(
+            "QXDM launched or focused successfully."
+        )
+
+        print(
+            "\nQXDM is open."
+        )
+
+        input(
+            "\nVerify that QXDM can see the connected device.\n"
+            "Press Enter to load the DMC configuration..."
+        )
+
+        logger.info(
+            "Loading the configured QXDM DMC file."
+        )
+
+        mask_loaded = qxdm.load_default_mask()
+
+        if mask_loaded:
+            logger.info(
+                "The QXDM DMC configuration was loaded."
+            )
+
+            print(
+                "\nThe configured DMC file was loaded."
+            )
+
+        else:
+            logger.warning(
+                "No default QXDM DMC configuration was loaded."
+            )
+
+            print(
+                "\nNo default DMC configuration was loaded."
+            )
+
+        configuration_ready = prompt_yes_no(
+            "Did the QXDM configuration load correctly?",
+            default=True,
+        )
+
+        if not configuration_ready:
+            print(
+                "\nLoad the correct DMC configuration "
+                "manually in QXDM."
+            )
+
+            input(
+                "Press Enter after the configuration "
+                "has been loaded..."
+            )
+
+            logger.warning(
+                "The QXDM configuration required "
+                "manual confirmation."
+            )
+
+        print(
+            "\nIn QXDM, start the capture and set its "
+            "destination to:"
+        )
+
+        print(
+            qxdm_log_path
+        )
+
+        input(
+            "\nPress Enter after the QXDM capture "
+            "has started..."
+        )
+
+        logger.info(
+            "The user confirmed that QXDM capture started."
+        )
+
+        print(
+            "\nPreparing the modem for testing..."
+        )
+
+        qxdm.mode_lpm()
+
+        logger.info(
+            "ModeLPM was sent successfully."
+        )
+
+        qxdm.mode_online()
+
+        logger.info(
+            "ModeOnline was sent successfully."
+        )
+
+        print(
+            "\nQXDM capture is running."
+        )
+
+        print(
+            "Titan 3 is in online mode."
+        )
+
+        print(
+            f"Capture path: {qxdm_log_path}"
+        )
+
+        return True, qxdm_log_path
 
     except Exception as error:
-        logger.exception("The QXDM setup could not be completed.")
+        logger.exception(
+            "The QXDM setup could not be completed."
+        )
 
-        print("\nThe QXDM setup could not be completed.")
-        print(f"Reason: {error}")
+        print(
+            "\nThe QXDM setup could not be completed."
+        )
+
+        print(
+            f"Reason: {error}"
+        )
 
         continue_test = prompt_yes_no(
             "Continue the Titan 3 test without QXDM capture?",
@@ -341,10 +454,11 @@ def start_qxdm_logging(
 
         if not continue_test:
             raise RuntimeError(
-                "Test cancelled because the QXDM setup could not be completed."
+                "Test cancelled because the QXDM "
+                "setup could not be completed."
             ) from error
 
-        return False, qxdm.current_log_path or suggested_log_path
+        return False, qxdm_log_path
 
 
 def run_automated_tests(
@@ -354,7 +468,7 @@ def run_automated_tests(
     session_folder,
 ) -> tuple[bool, int, object]:
     """
-    Configure and run repeated automated Python Speedtest tests.
+    Configure and run repeated automated Speedtest CLI tests.
 
     Returns:
         tuple:
@@ -389,20 +503,48 @@ def run_automated_tests(
         default=10,
     )
 
+    speedtest_timeout = prompt_positive_integer(
+        "Speedtest timeout in seconds",
+        default=180,
+    )
+
+    speedtest_executable = prompt_with_default(
+        "Speedtest executable path",
+        "speedtest.exe",
+    )
+
     excel_path = (
         session_folder
         / "reports"
         / "Titan3_Automated_Results.xlsx"
     )
 
-    print("\nAutomated test configuration:")
-    print(f"  Runs: {number_of_runs}")
-    print(f"  Delay: {delay_between_runs} seconds")
-    print("  Throughput method: Python speedtest-cli library")
-    print(f"  Excel output: {excel_path}")
+    print(
+        "\nAutomated test configuration:"
+    )
+
+    print(
+        f"  Runs: {number_of_runs}"
+    )
+
+    print(
+        f"  Delay: {delay_between_runs} seconds"
+    )
+
+    print(
+        f"  Speedtest timeout: {speedtest_timeout} seconds"
+    )
+
+    print(
+        f"  Speedtest executable: {speedtest_executable}"
+    )
+
+    print(
+        f"  Excel output: {excel_path}"
+    )
 
     input(
-        "\nMake sure the Python speedtest-cli package is installed.\n"
+        "\nMake sure the official Ookla Speedtest CLI is installed.\n"
         "Press Enter to begin the automated tests..."
     )
 
@@ -416,7 +558,8 @@ def run_automated_tests(
     )
 
     logger.info(
-        "Throughput method: Python speedtest-cli library."
+        "Speedtest executable: %s",
+        speedtest_executable,
     )
 
     try:
@@ -426,6 +569,8 @@ def run_automated_tests(
             session_folder=session_folder,
             number_of_runs=number_of_runs,
             delay_between_runs=delay_between_runs,
+            speedtest_executable=speedtest_executable,
+            timeout_seconds=speedtest_timeout,
         )
 
         runner.run()
@@ -458,8 +603,7 @@ def run_automated_tests(
         )
 
         continue_session = prompt_yes_no(
-            "Continue the session and generate the "
-            "remaining reports?",
+            "Continue the session and generate the remaining reports?",
             default=True,
         )
 
@@ -476,11 +620,17 @@ def stop_qxdm_logging(
     logger,
     logging_started: bool,
 ) -> bool:
-    """Stop, finalize, and reopen the active QXDM log automatically."""
+    """
+    Place the modem into low-power mode and allow the user
+    to stop and save the QXDM capture.
+    """
+
     if not logging_started:
         logger.info(
-            "QXDM capture was not started, so no stop procedure was required."
+            "QXDM capture was not started, so no stop "
+            "procedure was required."
         )
+
         return False
 
     input(
@@ -489,35 +639,85 @@ def stop_qxdm_logging(
     )
 
     try:
-        logger.info("Stopping and finalizing the QXDM capture.")
-
-        qxdm.stop_logging(
-            load_saved_log=True,
+        logger.info(
+            "Preparing to stop the QXDM capture."
         )
+
+        print(
+            "\nSending ModeLPM before stopping capture..."
+        )
+
+        qxdm.mode_lpm()
 
         logger.info(
-            "QXDM capture stopped and finalized successfully. Log: %s",
-            qxdm.current_log_path,
+            "ModeLPM was sent before capture stop."
         )
 
-        print("\nQXDM capture stopped and finalized successfully.")
-
-        if qxdm.current_log_path is not None:
-            print(f"Completed log: {qxdm.current_log_path}")
-
-        return True
-
-    except Exception as error:
-        logger.exception("The QXDM stop procedure failed.")
-
-        print("\nThe QXDM stop procedure could not be completed automatically.")
-        print(f"Reason: {error}")
         print(
-            "\nUse QXDM to stop and save the capture manually before continuing."
+            "\nStop and save the QXDM capture "
+            "using the QXDM toolbar."
         )
 
         input(
-            "Press Enter after manually stopping and saving the capture..."
+            "Press Enter after the QXDM capture "
+            "has been stopped and saved..."
+        )
+
+        capture_stopped = prompt_yes_no(
+            "Was the QXDM capture stopped successfully?",
+            default=True,
+        )
+
+        if capture_stopped:
+            logger.info(
+                "The user confirmed that the QXDM "
+                "capture stopped successfully."
+            )
+
+            print(
+                "\nQXDM capture stopped successfully."
+            )
+
+            return True
+
+        logger.warning(
+            "The user could not confirm that the "
+            "QXDM capture stopped."
+        )
+
+        print(
+            "\nQXDM capture stop was not confirmed."
+        )
+
+        return False
+
+    except Exception as error:
+        logger.exception(
+            "The QXDM stop procedure failed."
+        )
+
+        print(
+            "\nThe QXDM stop procedure could not "
+            "be completed automatically."
+        )
+
+        print(
+            f"Reason: {error}"
+        )
+
+        print(
+            "\nSwitch QXDM to ModeLPM and stop the "
+            "capture manually."
+        )
+
+        input(
+            "Press Enter after manually stopping "
+            "and saving the capture..."
+        )
+
+        logger.warning(
+            "The user was instructed to stop the "
+            "QXDM capture manually."
         )
 
         return False

@@ -1,4 +1,3 @@
-import json
 import subprocess
 import time
 from pathlib import Path
@@ -91,13 +90,6 @@ class QXDMController:
 
         self.process: subprocess.Popen | None = None
         self.current_log_path: Optional[Path] = None
-
-        # Stores the last successfully selected QXDM mask.
-        self.mask_settings_path = (
-            Path.home()
-            / ".wnc_testhub"
-            / "qxdm_settings.json"
-        )
 
     def executable_exists(self) -> bool:
         """Return True if the QXDM executable exists."""
@@ -354,112 +346,22 @@ class QXDMController:
         time.sleep(2)
         return True
 
-    def _load_saved_mask_path(self) -> Optional[Path]:
-        """Return the last selected mask path when it still exists."""
-        if not self.mask_settings_path.exists():
-            return None
+    def load_default_mask(self) -> bool:
+        """
+        Load the configured QXDM log mask.
 
-        try:
-            settings = json.loads(
-                self.mask_settings_path.read_text(
-                    encoding="utf-8"
-                )
+        Returns False when no default mask was configured.
+        """
+        if self.default_mask is None:
+            print(
+                "No default QXDM mask was configured."
             )
-        except (
-            OSError,
-            json.JSONDecodeError,
-            TypeError,
-        ):
-            return None
+            return False
 
-        saved_value = settings.get("qxdm_default_mask")
-
-        if not saved_value:
-            return None
-
-        saved_path = Path(saved_value).expanduser()
-
-        if not saved_path.exists() or not saved_path.is_file():
-            return None
-
-        return saved_path.resolve()
-
-    def _save_mask_path(self, mask_path: Path) -> None:
-        """Remember the selected mask for the next test run."""
-        mask_path = Path(mask_path).resolve()
-
-        self.mask_settings_path.parent.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-
-        self.mask_settings_path.write_text(
-            json.dumps(
-                {
-                    "qxdm_default_mask": str(mask_path),
-                },
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
-
-    def _prompt_for_mask(self) -> Path:
-        """Ask the user to select a QXDM mask/configuration file."""
-        try:
-            from tkinter import Tk
-            from tkinter.filedialog import askopenfilename
-        except ImportError as error:
-            raise RuntimeError(
-                "A QXDM mask must be selected, but the Windows "
-                "file picker is unavailable."
-            ) from error
-
-        root = Tk()
-        root.withdraw()
-        root.attributes("-topmost", True)
-
-        try:
-            selected_file = askopenfilename(
-                parent=root,
-                title="Select QXDM Default Mask",
-                filetypes=[
-                    (
-                        "QXDM mask/configuration files",
-                        "*.dmc *.cfg *.xml *.qcn *.txt",
-                    ),
-                    ("All files", "*.*"),
-                ],
-            )
-        finally:
-            root.destroy()
-
-        if not selected_file:
-            raise RuntimeError(
-                "No QXDM mask was selected. "
-                "The test was not started."
-            )
-
-        selected_mask = Path(selected_file).resolve()
-
-        if not selected_mask.exists() or not selected_mask.is_file():
+        if not self.default_mask.exists():
             raise FileNotFoundError(
-                "The selected QXDM mask was not found:\n"
-                f"{selected_mask}"
-            )
-
-        self.default_mask = selected_mask
-        self._save_mask_path(selected_mask)
-
-        return selected_mask
-
-    def _open_mask_file(self, mask_path: Path) -> bool:
-        """Open a specific mask file through the QXDM user interface."""
-        mask_path = Path(mask_path).resolve()
-
-        if not mask_path.exists() or not mask_path.is_file():
-            raise FileNotFoundError(
-                "The QXDM mask was not found:\n"
-                f"{mask_path}"
+                "The default QXDM mask was not found:\n"
+                f"{self.default_mask}"
             )
 
         window = self.focus_qxdm()
@@ -472,93 +374,16 @@ class QXDMController:
         print(
             f"Opened QXDM mask menu: {selected_menu}"
         )
-        print(
-            f"Loading QXDM mask: {mask_path}"
+
+        self.handle_file_dialog(
+            self.default_mask
         )
 
-        self.handle_file_dialog(mask_path)
-
-        # Give QXDM time to apply the selected packet mask before logging starts.
-        time.sleep(3)
-
-        self.default_mask = mask_path
-        self._save_mask_path(mask_path)
-
         print(
-            f"Loaded QXDM mask: {mask_path}"
+            f"Loaded QXDM mask: {self.default_mask}"
         )
 
         return True
-
-    def load_default_mask(self) -> bool:
-        """
-        Load the configured QXDM mask.
-
-        Resolution order:
-            1. Mask supplied through config.py or the constructor.
-            2. Last mask selected by the user.
-            3. File picker.
-
-        If automatic loading fails, the user is asked to choose a mask.
-        Logging does not continue until a mask loads successfully.
-        """
-        candidates: list[Path] = []
-
-        if self.default_mask is not None:
-            candidates.append(
-                Path(self.default_mask).expanduser()
-            )
-
-        saved_mask = self._load_saved_mask_path()
-
-        if (
-            saved_mask is not None
-            and all(
-                saved_mask.resolve() != candidate.resolve()
-                for candidate in candidates
-                if candidate.exists()
-            )
-        ):
-            candidates.append(saved_mask)
-
-        last_error: Optional[Exception] = None
-
-        for candidate in candidates:
-            if not candidate.exists() or not candidate.is_file():
-                print(
-                    "QXDM mask path is unavailable: "
-                    f"{candidate}"
-                )
-                continue
-
-            try:
-                return self._open_mask_file(candidate)
-            except Exception as error:
-                last_error = error
-                print(
-                    "Automatic QXDM mask loading failed for "
-                    f"{candidate}: {error}"
-                )
-
-        if last_error is not None:
-            print(
-                "Please select a QXDM mask manually."
-            )
-        else:
-            print(
-                "No usable default QXDM mask was found. "
-                "Please select one."
-            )
-
-        selected_mask = self._prompt_for_mask()
-
-        try:
-            return self._open_mask_file(selected_mask)
-        except Exception as error:
-            raise RuntimeError(
-                "The selected QXDM mask could not be loaded. "
-                "The test was not started."
-            ) from error
 
     def open_start_logging_dialog(self):
         """Open QXDM's Start Logging dialog."""
@@ -783,7 +608,7 @@ class QXDMController:
         self.prepare_log_path(log_path)
         self.launch()
 
-        if load_mask:
+        if load_mask and self.default_mask is not None:
             self.load_default_mask()
 
         self.configure_logging(log_path)
