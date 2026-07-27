@@ -1501,6 +1501,10 @@ class QXDMController:
         self.prepare_log_path(log_path)
         self.launch()
 
+        print("\n========================================")
+        print("ENTERED QXDMController.start_logging()")
+        print("========================================")
+
         direct_started = False
 
         if self.prefer_direct_automation:
@@ -1511,6 +1515,9 @@ class QXDMController:
                     mask_path=direct_mask,
                     max_size_mb=self.max_log_size_mb,
                 )
+
+                print(f"Direct automation started: {direct_started}")
+
             except Exception as error:
                 self.direct_automation_error = (
                     f"{type(error).__name__}: {error}"
@@ -1529,15 +1536,30 @@ class QXDMController:
                 print(f"Diagnostic file: {self.direct_debug_path}")
 
         if not direct_started:
+            print("Using pywinauto logging workflow.")
+
             if should_load_mask:
                 self.load_default_mask()
 
             self.configure_logging(log_path)
+        else:
+            print("Using direct COM logging workflow.")
+
+        print("\n========================================")
+        print("About to handle Airplane Mode")
+        print(f"airplane_mode = {airplane_mode}")
+        print(f"prompt_for_airplane_mode = {prompt_for_airplane_mode}")
+        print(f"direct_started = {direct_started}")
+        print("========================================")
 
         if airplane_mode is None:
+            print("Calling prompt_for_airplane_mode_cycle()...")
+
             if prompt_for_airplane_mode:
                 airplane_mode = self.prompt_for_airplane_mode_cycle()
+                print(f"User selected: {airplane_mode}")
             else:
+                print("Prompt disabled.")
                 airplane_mode = False
 
         if airplane_mode:
