@@ -1,3 +1,4 @@
+
 import json
 import subprocess
 import time
@@ -354,6 +355,77 @@ class QXDMController:
         time.sleep(2)
         return True
 
+    def _ask_yes_no(
+        self,
+        title: str,
+        message: str,
+    ) -> bool:
+        """Display a simple Yes/No dialog."""
+        try:
+            from tkinter import Tk, messagebox
+        except ImportError as error:
+            raise RuntimeError(
+                "The confirmation dialog is unavailable."
+            ) from error
+
+        root = Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+
+        try:
+            return bool(
+                messagebox.askyesno(
+                    title,
+                    message,
+                    parent=root,
+                )
+            )
+        finally:
+            root.destroy()
+
+    def prompt_for_max_log_size(self) -> int:
+        """
+        Ask the user for the desired QXDM maximum log size in MB.
+
+        The value must be between 1 MB and 1024 MB.
+        Cancelling keeps the currently configured value.
+        """
+        try:
+            from tkinter import Tk, simpledialog
+        except ImportError as error:
+            raise RuntimeError(
+                "The QXDM log-size dialog is unavailable."
+            ) from error
+
+        root = Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+
+        try:
+            selected_size = simpledialog.askinteger(
+                "QXDM Log Size",
+                (
+                    "Enter the maximum QXDM log file size in MB "
+                    "(1-1024):"
+                ),
+                initialvalue=self.max_log_size_mb,
+                minvalue=1,
+                maxvalue=1024,
+                parent=root,
+            )
+        finally:
+            root.destroy()
+
+        if selected_size is not None:
+            self.max_log_size_mb = selected_size
+
+        print(
+            "QXDM maximum log size selected: "
+            f"{self.max_log_size_mb} MB"
+        )
+
+        return self.max_log_size_mb
+
     def _load_saved_mask_path(self) -> Optional[Path]:
         """Return the last selected mask path when it still exists."""
         if not self.mask_settings_path.exists():
@@ -492,63 +564,57 @@ class QXDMController:
 
     def load_default_mask(self) -> bool:
         """
-        Load the configured QXDM mask.
+        Ensure that QXDM has the required configuration before testing.
 
-        Resolution order:
-            1. Mask supplied through config.py or the constructor.
-            2. Last mask selected by the user.
-            3. File picker.
-
-        If automatic loading fails, the user is asked to choose a mask.
-        Logging does not continue until a mask loads successfully.
+        Behavior:
+            1. Try the configured or previously selected mask automatically.
+            2. If loading fails, ask whether the correct configuration is
+               already loaded in QXDM.
+            3. If it is not loaded, open a file picker and load it manually.
+            4. Continue only after one of those paths succeeds.
         """
         candidates: list[Path] = []
 
         if self.default_mask is not None:
-            candidates.append(
-                Path(self.default_mask).expanduser()
-            )
+            configured_mask = Path(
+                self.default_mask
+            ).expanduser()
+
+            if configured_mask.exists() and configured_mask.is_file():
+                candidates.append(configured_mask.resolve())
 
         saved_mask = self._load_saved_mask_path()
 
         if (
             saved_mask is not None
-            and all(
-                saved_mask.resolve() != candidate.resolve()
-                for candidate in candidates
-                if candidate.exists()
-            )
+            and saved_mask not in candidates
         ):
             candidates.append(saved_mask)
 
-        last_error: Optional[Exception] = None
-
         for candidate in candidates:
-            if not candidate.exists() or not candidate.is_file():
-                print(
-                    "QXDM mask path is unavailable: "
-                    f"{candidate}"
-                )
-                continue
-
             try:
                 return self._open_mask_file(candidate)
             except Exception as error:
-                last_error = error
                 print(
-                    "Automatic QXDM mask loading failed for "
+                    "Could not automatically load QXDM configuration "
                     f"{candidate}: {error}"
                 )
 
-        if last_error is not None:
+        configuration_already_loaded = self._ask_yes_no(
+            "QXDM Configuration",
+            (
+                "Is the required QXDM configuration already loaded "
+                "in QXDM?\n\n"
+                "Choose Yes to continue the test.\n"
+                "Choose No to select and load a configuration file."
+            ),
+        )
+
+        if configuration_already_loaded:
             print(
-                "Please select a QXDM mask manually."
+                "Using the configuration already loaded in QXDM."
             )
-        else:
-            print(
-                "No usable default QXDM mask was found. "
-                "Please select one."
-            )
+            return True
 
         selected_mask = self._prompt_for_mask()
 
@@ -556,7 +622,7 @@ class QXDMController:
             return self._open_mask_file(selected_mask)
         except Exception as error:
             raise RuntimeError(
-                "The selected QXDM mask could not be loaded. "
+                "The selected QXDM configuration could not be loaded. "
                 "The test was not started."
             ) from error
 
@@ -766,6 +832,7 @@ class QXDMController:
         log_path: Path,
         transition_delay: float = 2.0,
         load_mask: bool = True,
+        prompt_for_log_size: bool = True,
     ) -> bool:
         """
         Run the complete QXDM startup sequence.
@@ -773,7 +840,8 @@ class QXDMController:
         Sequence:
             Create output directory
             Launch QXDM
-            Load mask
+            Use the loaded configuration or load a selected configuration
+            Ask for the desired maximum log size
             Set destination
             Set maximum size
             Start QXDM logging
@@ -786,8 +854,13 @@ class QXDMController:
         if load_mask:
             self.load_default_mask()
 
+        if prompt_for_log_size:
+            self.prompt_for_max_log_size()
+
         self.configure_logging(log_path)
 
+        # The test commands already defined in this controller run after
+        # logging has started, so their output is captured in the saved log.
         self.mode_lpm()
         time.sleep(transition_delay)
 
