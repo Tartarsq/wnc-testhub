@@ -1,4 +1,3 @@
-
 from config import (
     DEFAULT_CARRIER,
     DEFAULT_MODE,
@@ -345,7 +344,9 @@ def start_qxdm_logging(
             "Loading the configured QXDM DMC file."
         )
 
-        mask_loaded = qxdm.load_default_mask()
+        mask_loaded = qxdm.ensure_default_mask_loaded(
+            retry_with_picker=True,
+        )
 
         if mask_loaded:
             logger.info(
