@@ -979,9 +979,24 @@ class QXDMController:
 
         dialog = self.open_start_logging_dialog()
 
-        print("\n===== QXDM START LOGGING CONTROLS =====")
-        dialog.print_control_identifiers()
-        print("===== END QXDM CONTROLS =====\n")
+        debug_output_path = (
+            Path.home() / "Desktop" / "qxdm_start_logging_controls.txt"
+        )
+
+        try:
+            debug_output_path.parent.mkdir(parents=True, exist_ok=True)
+            dialog.print_control_identifiers(
+                filename=str(debug_output_path)
+            )
+            print(
+                "QXDM control identifiers saved to: "
+                f"{debug_output_path}"
+            )
+        except Exception as error:
+            print(
+                "Could not save QXDM control identifiers: "
+                f"{error}"
+            )
 
         path_edit = self.find_edit_by_keywords(
             dialog,
