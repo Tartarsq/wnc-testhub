@@ -83,7 +83,8 @@ class QXDMController:
             else None
         )
 
-        # Never allow the requested size to exceed 1 GB.
+        # Allow a QXDM size value from 0 through 1024 MB.
+        # QXDM commonly uses 0 for its zero/unlimited setting.
         self.max_log_size_mb = min(
             max(int(max_log_size_mb), 0),
             1024,
@@ -387,7 +388,6 @@ class QXDMController:
         Ask the user for the desired QXDM maximum log size in MB.
 
         The value must be between 0 MB and 1024 MB.
-        Enter 0 if you want QXDM's unlimited/zero setting.
         Cancelling keeps the currently configured value.
         """
         try:
@@ -425,6 +425,325 @@ class QXDMController:
         )
 
         return self.max_log_size_mb
+
+    def prompt_for_logging_setup(
+        self,
+        suggested_log_path: Optional[Path] = None,
+    ) -> tuple[Path, bool]:
+        """
+        Display one setup window for the complete QXDM logging configuration.
+
+        The user can:
+            - choose a QXDM mask/configuration file,
+            - choose the log folder,
+            - enter the log filename,
+            - choose a maximum size from 0 through 1024 MB,
+            - choose to use a configuration already loaded in QXDM.
+
+        Returns:
+            (resolved_log_path, should_load_mask)
+        """
+        try:
+            from tkinter import (
+                BooleanVar,
+                Button,
+                Checkbutton,
+                Entry,
+                Frame,
+                IntVar,
+                Label,
+                Spinbox,
+                StringVar,
+                Tk,
+                messagebox,
+            )
+            from tkinter.filedialog import askdirectory, askopenfilename
+        except ImportError as error:
+            raise RuntimeError(
+                "The QXDM logging setup dialog is unavailable."
+            ) from error
+
+        suggested_path = (
+            Path(suggested_log_path).expanduser()
+            if suggested_log_path is not None
+            else Path.cwd() / "QXDM_Logs" / "qxdm_log.hdf"
+        )
+
+        if suggested_path.suffix:
+            initial_folder = suggested_path.parent
+            initial_filename = suggested_path.name
+        else:
+            initial_folder = suggested_path
+            initial_filename = "qxdm_log.hdf"
+
+        saved_mask = self._load_saved_mask_path()
+        initial_mask = ""
+
+        if self.default_mask is not None:
+            candidate = Path(self.default_mask).expanduser()
+            if candidate.exists() and candidate.is_file():
+                initial_mask = str(candidate.resolve())
+        elif saved_mask is not None:
+            initial_mask = str(saved_mask)
+
+        root = Tk()
+        root.title("QXDM Logging Setup")
+        root.resizable(False, False)
+        root.attributes("-topmost", True)
+
+        mask_var = StringVar(value=initial_mask)
+        folder_var = StringVar(value=str(initial_folder))
+        filename_var = StringVar(value=initial_filename)
+        size_var = IntVar(value=self.max_log_size_mb)
+        use_loaded_var = BooleanVar(value=False)
+
+        result: dict[str, object] = {}
+
+        def browse_mask() -> None:
+            selected = askopenfilename(
+                parent=root,
+                title="Select QXDM Log Mask / Configuration",
+                filetypes=[
+                    (
+                        "QXDM mask/configuration files",
+                        "*.dmc *.cfg *.xml *.qcn *.txt",
+                    ),
+                    ("All files", "*.*"),
+                ],
+            )
+            if selected:
+                mask_var.set(selected)
+                use_loaded_var.set(False)
+
+        def browse_folder() -> None:
+            selected = askdirectory(
+                parent=root,
+                title="Select QXDM Log Folder",
+                initialdir=folder_var.get() or str(Path.cwd()),
+            )
+            if selected:
+                folder_var.set(selected)
+
+        def update_mask_state() -> None:
+            state = "disabled" if use_loaded_var.get() else "normal"
+            mask_entry.configure(state=state)
+            mask_button.configure(state=state)
+
+        def submit() -> None:
+            folder_text = folder_var.get().strip()
+            filename_text = filename_var.get().strip()
+            mask_text = mask_var.get().strip()
+
+            if not folder_text:
+                messagebox.showerror(
+                    "Missing Folder",
+                    "Choose a folder for the QXDM log.",
+                    parent=root,
+                )
+                return
+
+            if not filename_text:
+                messagebox.showerror(
+                    "Missing File Name",
+                    "Enter a file name for the QXDM log.",
+                    parent=root,
+                )
+                return
+
+            invalid_filename_chars = set('<>:"/\\|?*')
+            if any(char in filename_text for char in invalid_filename_chars):
+                messagebox.showerror(
+                    "Invalid File Name",
+                    (
+                        "The file name cannot contain any of these "
+                        'characters: < > : " / \\ | ? *'
+                    ),
+                    parent=root,
+                )
+                return
+
+            try:
+                selected_size = int(size_var.get())
+            except (TypeError, ValueError):
+                messagebox.showerror(
+                    "Invalid File Size",
+                    "Enter a whole number from 0 through 1024 MB.",
+                    parent=root,
+                )
+                return
+
+            if not 0 <= selected_size <= 1024:
+                messagebox.showerror(
+                    "Invalid File Size",
+                    "The maximum file size must be from 0 through 1024 MB.",
+                    parent=root,
+                )
+                return
+
+            should_load_mask = not use_loaded_var.get()
+
+            if should_load_mask:
+                if not mask_text:
+                    messagebox.showerror(
+                        "Missing Log Mask",
+                        (
+                            "Choose a QXDM log mask/configuration or select "
+                            "'Use configuration already loaded in QXDM'."
+                        ),
+                        parent=root,
+                    )
+                    return
+
+                mask_path = Path(mask_text).expanduser()
+
+                if not mask_path.exists() or not mask_path.is_file():
+                    messagebox.showerror(
+                        "Log Mask Not Found",
+                        f"The selected QXDM mask was not found:\n{mask_path}",
+                        parent=root,
+                    )
+                    return
+
+                resolved_mask = mask_path.resolve()
+                self.default_mask = resolved_mask
+                self._save_mask_path(resolved_mask)
+
+            folder_path = Path(folder_text).expanduser().resolve()
+            folder_path.mkdir(parents=True, exist_ok=True)
+
+            log_path = folder_path / filename_text
+
+            self.max_log_size_mb = selected_size
+            self.current_log_path = log_path
+
+            result["log_path"] = log_path
+            result["should_load_mask"] = should_load_mask
+            root.destroy()
+
+        def cancel() -> None:
+            root.destroy()
+
+        container = Frame(root, padx=14, pady=14)
+        container.grid(row=0, column=0)
+
+        Label(
+            container,
+            text="Log Mask / Configuration:",
+            anchor="w",
+        ).grid(row=0, column=0, columnspan=3, sticky="w")
+
+        mask_entry = Entry(
+            container,
+            textvariable=mask_var,
+            width=62,
+        )
+        mask_entry.grid(row=1, column=0, columnspan=2, padx=(0, 8), pady=(3, 10))
+
+        mask_button = Button(
+            container,
+            text="Browse...",
+            command=browse_mask,
+            width=12,
+        )
+        mask_button.grid(row=1, column=2, pady=(3, 10))
+
+        Checkbutton(
+            container,
+            text="Use configuration already loaded in QXDM",
+            variable=use_loaded_var,
+            command=update_mask_state,
+        ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(0, 12))
+
+        Label(
+            container,
+            text="Preferred Save Folder:",
+            anchor="w",
+        ).grid(row=3, column=0, columnspan=3, sticky="w")
+
+        folder_entry = Entry(
+            container,
+            textvariable=folder_var,
+            width=62,
+        )
+        folder_entry.grid(row=4, column=0, columnspan=2, padx=(0, 8), pady=(3, 10))
+
+        Button(
+            container,
+            text="Browse...",
+            command=browse_folder,
+            width=12,
+        ).grid(row=4, column=2, pady=(3, 10))
+
+        Label(
+            container,
+            text="Log File Name:",
+            anchor="w",
+        ).grid(row=5, column=0, columnspan=3, sticky="w")
+
+        Entry(
+            container,
+            textvariable=filename_var,
+            width=62,
+        ).grid(row=6, column=0, columnspan=3, sticky="we", pady=(3, 10))
+
+        Label(
+            container,
+            text="Maximum File Size (MB, 0-1024):",
+            anchor="w",
+        ).grid(row=7, column=0, columnspan=3, sticky="w")
+
+        Spinbox(
+            container,
+            from_=0,
+            to=1024,
+            textvariable=size_var,
+            width=12,
+        ).grid(row=8, column=0, sticky="w", pady=(3, 4))
+
+        Label(
+            container,
+            text="0 uses QXDM's zero/unlimited setting.",
+            anchor="w",
+        ).grid(row=9, column=0, columnspan=3, sticky="w", pady=(0, 14))
+
+        button_frame = Frame(container)
+        button_frame.grid(row=10, column=0, columnspan=3, sticky="e")
+
+        Button(
+            button_frame,
+            text="Cancel",
+            command=cancel,
+            width=12,
+        ).grid(row=0, column=0, padx=(0, 8))
+
+        Button(
+            button_frame,
+            text="Start Test",
+            command=submit,
+            width=12,
+        ).grid(row=0, column=1)
+
+        root.protocol("WM_DELETE_WINDOW", cancel)
+        update_mask_state()
+        root.mainloop()
+
+        if "log_path" not in result:
+            raise RuntimeError(
+                "The QXDM logging setup was cancelled. "
+                "The test was not started."
+            )
+
+        selected_log_path = Path(result["log_path"])
+        should_load_mask = bool(result["should_load_mask"])
+
+        print(f"QXDM log folder: {selected_log_path.parent}")
+        print(f"QXDM log file: {selected_log_path.name}")
+        print(
+            "QXDM maximum log size selected: "
+            f"{self.max_log_size_mb} MB"
+        )
+
+        return selected_log_path, should_load_mask
 
     def _load_saved_mask_path(self) -> Optional[Path]:
         """Return the last selected mask path when it still exists."""
@@ -725,14 +1044,6 @@ class QXDMController:
             str(self.max_log_size_mb),
         )
 
-        send_keys("{TAB}")
-        time.sleep(0.5)
-        print(f"Requested QXDM max log size: {self.max_log_size_mb} MB")
-        try:
-            print("Size field currently shows:", size_edit.window_text())
-        except Exception:
-            pass
-
         print(
             f"QXDM log destination: {log_path}"
         )
@@ -837,40 +1148,51 @@ class QXDMController:
 
     def start_logging(
         self,
-        log_path: Path,
+        log_path: Optional[Path] = None,
         transition_delay: float = 5.0,
         load_mask: bool = True,
-        prompt_for_log_size: bool = True,
+        prompt_for_setup: bool = True,
     ) -> bool:
         """
         Run the complete QXDM startup sequence.
 
-        Sequence:
-            Create output directory
-            Launch QXDM
-            Use the loaded configuration or load a selected configuration
-            Ask for the desired maximum log size
-            Set destination
-            Set maximum size
-            Start QXDM logging
-            mode lpm
-            mode online
+        By default, one setup dialog asks the user for:
+            - the log mask/configuration,
+            - the preferred save folder,
+            - the log filename,
+            - the maximum file size from 0 through 1024 MB.
+
+        After the setup is confirmed, the controller creates the folder,
+        loads the mask when requested, configures logging, and runs the
+        existing mode commands.
         """
+        should_load_mask = load_mask
+
+        if prompt_for_setup:
+            log_path, should_load_mask = self.prompt_for_logging_setup(
+                suggested_log_path=log_path,
+            )
+        elif log_path is None:
+            raise ValueError(
+                "A log path is required when prompt_for_setup is False."
+            )
+
+        assert log_path is not None
+
         self.prepare_log_path(log_path)
         self.launch()
 
-        if load_mask:
+        if should_load_mask:
             self.load_default_mask()
-
-        if prompt_for_log_size:
-            self.prompt_for_max_log_size()
 
         self.configure_logging(log_path)
 
-        # The test commands already defined in this controller run after
-        # logging has started, so their output is captured in the saved log.
         self.mode_lpm()
-        print(f"Waiting {transition_delay} seconds before mode online...")
+
+        print(
+            "Waiting "
+            f"{transition_delay:.1f} seconds before mode online..."
+        )
         time.sleep(transition_delay)
 
         self.mode_online()
