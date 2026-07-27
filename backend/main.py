@@ -344,17 +344,45 @@ def start_qxdm_logging(
             "Loading the configured QXDM DMC file."
         )
 
-        mask_loaded = qxdm.ensure_default_mask_loaded(
-            retry_with_picker=True,
-        )
+        try:
+            mask_loaded = qxdm.ensure_default_mask_loaded(
+                retry_with_picker=True,
+            )
 
-        if mask_loaded:
-            logger.info(
-                "The QXDM DMC configuration was loaded."
+        except Exception as error:
+            mask_loaded = False
+
+            logger.warning(
+                "Automatic QXDM DMC loading failed: %s",
+                error,
             )
 
             print(
-                "\nThe configured DMC file was loaded."
+                "\nAutomatic DMC loading did not complete."
+            )
+
+            print(
+                f"Reason: {error}"
+            )
+
+            print(
+                "\nIn QXDM, use File > Load Configuration "
+                "and select the correct DMC file manually."
+            )
+
+            input(
+                "Press Enter after the configuration has been loaded..."
+            )
+
+            mask_loaded = True
+
+        if mask_loaded:
+            logger.info(
+                "The QXDM DMC configuration was loaded or confirmed manually."
+            )
+
+            print(
+                "\nThe DMC configuration is ready."
             )
 
         else:
