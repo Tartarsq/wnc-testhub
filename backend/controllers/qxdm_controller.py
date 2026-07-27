@@ -1,4 +1,3 @@
-
 import json
 import os
 import subprocess
@@ -1024,21 +1023,24 @@ class QXDMController:
         mask_path: Optional[Path] = None,
         max_size_mb: Optional[int] = None,
     ) -> bool:
-        """
-        Try to start QXDM logging through an installed Windows COM interface.
+        """Start QXDM logging directly and force the user-selected output path.
 
-        Qualcomm has shipped different automation interfaces across QXDM builds,
-        so this adapter probes several common object and method names. Failure is
-        non-fatal because start_logging() falls back to the existing UI workflow.
-
-        Set QXDM_COM_PROGID in the environment when WNC knows the exact ProgID.
+        This method prefers configuring a logger/item-store object because that
+        gives the controller the best chance to override the capture folder,
+        file name, and maximum size. If the installed COM interface only exposes
+        an application-level StartLogging method, compatible signatures are
+        attempted as a fallback.
         """
         log_path = self.prepare_log_path(log_path)
+        output_folder = log_path.parent
+        output_filename = log_path.name
         selected_size = (
             self.max_log_size_mb
             if max_size_mb is None
             else min(max(int(max_size_mb), 0), 1024)
         )
+
+        output_folder.mkdir(parents=True, exist_ok=True)
 
         if mask_path is not None:
             mask_path = Path(mask_path).expanduser().resolve()
@@ -1104,33 +1106,178 @@ class QXDMController:
                 f"Loaded mask with {mask_method}: {mask_path}"
             )
 
-        # Some automation builds expose StartLogging directly on the app.
+        # Preferred path: create a logger/item-store and explicitly force
+        # folder, filename, full path, and size before starting capture.
+        factory_errors: list[str] = []
+        logger = None
+        factory_name = None
+
+        for candidate_factory in [
+            "CreateItemStore",
+            "CreateLogger",
+            "CreateLog",
+            "NewItemStore",
+            "GetLogger",
+        ]:
+            try:
+                factory_name, logger = self._call_first_available(
+                    application,
+                    [candidate_factory],
+                    [(), (str(log_path),), (str(output_folder), output_filename)],
+                )
+                if logger is not None:
+                    break
+            except Exception as error:
+                factory_errors.append(str(error))
+
+        if logger is not None:
+            configured_properties: list[str] = []
+
+            folder_property = self._set_first_available_property(
+                logger,
+                [
+                    "OutputDirectory",
+                    "OutputFolder",
+                    "LogDirectory",
+                    "LogFolder",
+                    "Directory",
+                    "Folder",
+                    "CaptureDirectory",
+                    "CaptureFolder",
+                ],
+                str(output_folder),
+                required=False,
+            )
+            if folder_property:
+                configured_properties.append(
+                    f"{folder_property}={output_folder}"
+                )
+
+            filename_property = self._set_first_available_property(
+                logger,
+                [
+                    "FileName",
+                    "Filename",
+                    "LogFileName",
+                    "CaptureFileName",
+                    "BaseFileName",
+                ],
+                output_filename,
+                required=False,
+            )
+            if filename_property:
+                configured_properties.append(
+                    f"{filename_property}={output_filename}"
+                )
+
+            full_path_property = self._set_first_available_property(
+                logger,
+                [
+                    "OutputFile",
+                    "OutputPath",
+                    "LogPath",
+                    "FullPath",
+                    "CapturePath",
+                ],
+                str(log_path),
+                required=False,
+            )
+            if full_path_property:
+                configured_properties.append(
+                    f"{full_path_property}={log_path}"
+                )
+
+            size_property = self._set_first_available_property(
+                logger,
+                [
+                    "MaximumFileSize",
+                    "MaxFileSize",
+                    "MaximumSize",
+                    "MaxSizeMB",
+                    "FileSizeLimit",
+                    "MaximumFileSizeMB",
+                    "MaxFileSizeMB",
+                ],
+                selected_size,
+                required=False,
+            )
+            if size_property:
+                configured_properties.append(
+                    f"{size_property}={selected_size}"
+                )
+
+            # At least one path-related property should be writable. Otherwise
+            # this object cannot reliably override QXDM's default destination.
+            if not any(
+                property_name is not None
+                for property_name in (
+                    folder_property,
+                    filename_property,
+                    full_path_property,
+                )
+            ):
+                raise RuntimeError(
+                    "A direct logger object was created, but none of its output "
+                    "path properties were writable."
+                )
+
+            start_method, _ = self._call_first_available(
+                logger,
+                ["Start", "StartLogging", "Begin", "Open"],
+                [
+                    (),
+                    (str(log_path),),
+                    (str(log_path), selected_size),
+                    (str(output_folder), output_filename),
+                    (str(output_folder), output_filename, selected_size),
+                ],
+            )
+
+            self.direct_logger = logger
+            self.direct_logging_active = True
+            self.direct_automation_error = None
+            self._write_direct_debug(
+                "Started direct logger using "
+                f"factory={factory_name}, start_method={start_method}, "
+                f"properties={configured_properties}"
+            )
+            print(f"QXDM direct logging folder: {output_folder}")
+            print(f"QXDM direct logging filename: {output_filename}")
+            print(f"QXDM direct maximum size: {selected_size} MB")
+            return True
+
+        # Fallback for builds that expose StartLogging directly on the app.
+        # Put folder+filename signatures first so the requested destination is
+        # preferred over QXDM's default capture directory.
         direct_start_errors: list[str] = []
         for method_name in ["StartLogging", "StartLog", "BeginLogging"]:
             try:
                 method = getattr(application, method_name)
             except Exception as error:
-                direct_start_errors.append(f"{method_name}: unavailable ({error})")
+                direct_start_errors.append(
+                    f"{method_name}: unavailable ({error})"
+                )
                 continue
 
             for arguments in [
+                (str(output_folder), output_filename, selected_size),
+                (str(output_folder), output_filename),
                 (str(log_path), selected_size),
                 (str(log_path),),
-                (str(log_path.parent), log_path.name, selected_size),
-                (str(log_path.parent), log_path.name),
             ]:
                 try:
                     result = method(*arguments)
-                    self.direct_logger = result if result is not None else application
+                    self.direct_logger = (
+                        result if result is not None else application
+                    )
                     self.direct_logging_active = True
                     self.direct_automation_error = None
                     self._write_direct_debug(
                         f"Started direct logging with {method_name}{arguments!r}"
                     )
-                    print(
-                        "QXDM direct automation started logging to: "
-                        f"{log_path}"
-                    )
+                    print(f"QXDM direct logging folder: {output_folder}")
+                    print(f"QXDM direct logging filename: {output_filename}")
+                    print(f"QXDM direct maximum size: {selected_size} MB")
                     return True
                 except Exception as error:
                     direct_start_errors.append(
@@ -1138,66 +1285,13 @@ class QXDMController:
                         f"{type(error).__name__}: {error}"
                     )
 
-        # Other builds expose a logger/item-store object that must be configured.
-        factory_name, logger = self._call_first_available(
-            application,
-            [
-                "CreateItemStore",
-                "CreateLogger",
-                "CreateLog",
-                "NewItemStore",
-                "GetLogger",
-            ],
-            [(), (str(log_path),)],
+        raise RuntimeError(
+            "Could not start direct QXDM logging with the requested capture "
+            "location. Factory errors: "
+            + " | ".join(factory_errors)
+            + ". Start errors: "
+            + " | ".join(direct_start_errors)
         )
-
-        if logger is None:
-            raise RuntimeError(
-                f"{factory_name} returned no logger object. Direct start errors: "
-                + " | ".join(direct_start_errors)
-            )
-
-        path_property = self._set_first_available_property(
-            logger,
-            [
-                "FileName",
-                "Filename",
-                "OutputFile",
-                "OutputPath",
-                "LogFileName",
-                "LogPath",
-            ],
-            str(log_path),
-        )
-        size_property = self._set_first_available_property(
-            logger,
-            [
-                "MaximumFileSize",
-                "MaxFileSize",
-                "MaximumSize",
-                "MaxSizeMB",
-                "FileSizeLimit",
-            ],
-            selected_size,
-            required=False,
-        )
-
-        start_method, _ = self._call_first_available(
-            logger,
-            ["Start", "StartLogging", "Begin", "Open"],
-            [(), (str(log_path),), (selected_size,)],
-        )
-
-        self.direct_logger = logger
-        self.direct_logging_active = True
-        self.direct_automation_error = None
-        self._write_direct_debug(
-            "Started logger object using "
-            f"factory={factory_name}, path_property={path_property}, "
-            f"size_property={size_property}, start_method={start_method}"
-        )
-        print(f"QXDM direct automation started logging to: {log_path}")
-        return True
 
     def stop_logging_direct(self) -> bool:
         """Stop and flush a log started by start_logging_direct()."""
