@@ -1,3 +1,4 @@
+import json
 import subprocess
 import time
 from pathlib import Path
@@ -90,6 +91,15 @@ class QXDMController:
 
         self.process: subprocess.Popen | None = None
         self.current_log_path: Optional[Path] = None
+
+        # Remember the last mask selected by the user. This allows future test
+        # runs to load it automatically, while still falling back to a picker
+        # if the file is moved, deleted, or cannot be loaded.
+        self.mask_settings_path = (
+            Path.home()
+            / ".wnc_testhub"
+            / "qxdm_settings.json"
+        )
 
     def executable_exists(self) -> bool:
         """Return True if the QXDM executable exists."""
@@ -302,37 +312,14 @@ class QXDMController:
         file_path = Path(file_path).resolve()
 
         dialog = Desktop(backend="uia").window(
-            title_re=r".*(Open|Save|Browse|Select|Load Configuration).*",
+            title_re=r".*(Open|Save|Browse|Select).*",
             top_level_only=True,
         )
 
         dialog.wait(
             "visible enabled ready",
-            timeout=15,
+            timeout=10,
         )
-        dialog.set_focus()
-        time.sleep(0.5)
-
-        # In the standard Windows file picker, Alt+N focuses the
-        # File name field. This is more reliable than selecting the
-        # last Edit control, which can accidentally target Search.
-        try:
-            send_keys("%n")
-            time.sleep(0.3)
-            send_keys("^a")
-            send_keys(
-                str(file_path),
-                with_spaces=True,
-                pause=0.01,
-            )
-            send_keys("{ENTER}")
-            time.sleep(2)
-            return True
-        except Exception as keyboard_error:
-            print(
-                "Keyboard file selection failed; trying UI controls: "
-                f"{keyboard_error}"
-            )
 
         file_name_edit = self.find_edit_by_keywords(
             dialog,
@@ -350,8 +337,7 @@ class QXDMController:
 
             if not edit_controls:
                 raise RuntimeError(
-                    "Could not locate the file-name field in the "
-                    "QXDM configuration dialog."
+                    "Could not locate the file path field."
                 )
 
             file_name_edit = edit_controls[-1]
@@ -370,69 +356,253 @@ class QXDMController:
         time.sleep(2)
         return True
 
+    def load_saved_mask_preference(self) -> Optional[Path]:
+        """Return the last user-selected mask path, when it still exists."""
+        if not self.mask_settings_path.exists():
+            return None
+
+        try:
+            settings = json.loads(
+                self.mask_settings_path.read_text(
+                    encoding="utf-8"
+                )
+            )
+        except (
+            OSError,
+            json.JSONDecodeError,
+            TypeError,
+        ) as error:
+            print(
+                "Could not read the saved QXDM mask preference: "
+                f"{error}"
+            )
+            return None
+
+        saved_value = settings.get("qxdm_default_mask")
+
+        if not saved_value:
+            return None
+
+        saved_path = Path(saved_value).expanduser()
+
+        if not saved_path.exists() or not saved_path.is_file():
+            print(
+                "The previously selected QXDM mask is no longer "
+                f"available: {saved_path}"
+            )
+            return None
+
+        return saved_path.resolve()
+
+    def save_mask_preference(
+        self,
+        mask_path: Path,
+    ) -> None:
+        """Persist the selected mask path for future test runs."""
+        mask_path = Path(mask_path).resolve()
+
+        self.mask_settings_path.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        settings = {
+            "qxdm_default_mask": str(mask_path),
+        }
+
+        self.mask_settings_path.write_text(
+            json.dumps(settings, indent=2),
+            encoding="utf-8",
+        )
+
+        print(
+            "Saved QXDM mask preference: "
+            f"{mask_path}"
+        )
+
+    def prompt_for_default_mask(self) -> Path:
+        """
+        Ask the user to select a QXDM mask or configuration file.
+
+        The selected path is stored in self.default_mask and remembered for
+        future test runs. Cancelling the dialog stops the test safely.
+        """
+        try:
+            from tkinter import Tk
+            from tkinter.filedialog import askopenfilename
+        except ImportError as error:
+            raise RuntimeError(
+                "The QXDM mask could not be loaded automatically, "
+                "and the Tkinter file picker is unavailable."
+            ) from error
+
+        root = Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+
+        try:
+            selected_file = askopenfilename(
+                parent=root,
+                title="Select QXDM Default Mask",
+                filetypes=[
+                    (
+                        "QXDM mask/configuration files",
+                        "*.dmc *.cfg *.xml *.qcn *.txt",
+                    ),
+                    ("All files", "*.*"),
+                ],
+            )
+        finally:
+            root.destroy()
+
+        if not selected_file:
+            raise RuntimeError(
+                "No QXDM mask was selected. "
+                "The test was not started."
+            )
+
+        selected_mask = Path(selected_file).resolve()
+
+        if not selected_mask.exists() or not selected_mask.is_file():
+            raise FileNotFoundError(
+                "The selected QXDM mask was not found:\n"
+                f"{selected_mask}"
+            )
+
+        self.default_mask = selected_mask
+        self.save_mask_preference(selected_mask)
+
+        print(
+            "Selected QXDM mask: "
+            f"{selected_mask}"
+        )
+
+        return selected_mask
+
+    def resolve_default_mask(self) -> Optional[Path]:
+        """
+        Resolve the mask to use without opening the picker when possible.
+
+        Priority:
+            1. The mask supplied through config.py or the constructor.
+            2. The last mask selected by the user.
+            3. No mask, which causes the caller to open the picker.
+        """
+        if self.default_mask is not None:
+            configured_mask = Path(
+                self.default_mask
+            ).expanduser()
+
+            if configured_mask.exists() and configured_mask.is_file():
+                self.default_mask = configured_mask.resolve()
+                return self.default_mask
+
+            print(
+                "Configured QXDM mask was not found: "
+                f"{configured_mask}"
+            )
+
+        saved_mask = self.load_saved_mask_preference()
+
+        if saved_mask is not None:
+            self.default_mask = saved_mask
+            print(
+                "Using previously selected QXDM mask: "
+                f"{saved_mask}"
+            )
+            return saved_mask
+
+        self.default_mask = None
+        return None
+
+    def ensure_default_mask_loaded(
+        self,
+        retry_with_picker: bool = True,
+    ) -> bool:
+        """
+        Load the configured or remembered mask.
+
+        If no usable mask exists, or automatic loading fails, prompt the user
+        to select a mask and retry before allowing the test to continue.
+        """
+        resolved_mask = self.resolve_default_mask()
+
+        if resolved_mask is None:
+            self.prompt_for_default_mask()
+            return self.load_default_mask()
+
+        try:
+            loaded = self.load_default_mask()
+
+            if loaded:
+                # Also remember a valid configured mask so later runs can use it.
+                self.save_mask_preference(self.default_mask)
+                return True
+
+        except Exception as error:
+            if not retry_with_picker:
+                raise
+
+            print(
+                "Automatic QXDM mask loading failed: "
+                f"{error}"
+            )
+            print(
+                "Please select a QXDM mask manually."
+            )
+
+        if not retry_with_picker:
+            raise RuntimeError(
+                "The QXDM mask could not be loaded."
+            )
+
+        self.prompt_for_default_mask()
+
+        try:
+            return self.load_default_mask()
+        except Exception as error:
+            raise RuntimeError(
+                "The manually selected QXDM mask could not be loaded. "
+                "The test was not started."
+            ) from error
+
     def load_default_mask(self) -> bool:
         """
-        Open File > Load Configuration and select the configured DMC file.
+        Load the configured QXDM log mask.
 
-        Returns False when no default configuration was configured.
+        Returns False when no default mask was configured.
         """
         if self.default_mask is None:
-            print("No default QXDM configuration was configured.")
+            print(
+                "No default QXDM mask was configured."
+            )
             return False
 
-        mask_path = self.default_mask.expanduser().resolve()
-
-        if not mask_path.exists():
+        if not self.default_mask.exists():
             raise FileNotFoundError(
-                "The default QXDM configuration was not found:\n"
-                f"{mask_path}"
+                "The default QXDM mask was not found:\n"
+                f"{self.default_mask}"
             )
 
         window = self.focus_qxdm()
-        selected_menu = None
 
-        # First use the exact menu path used by QXDM.
-        try:
-            window.menu_select("File->Load Configuration")
-            selected_menu = "File->Load Configuration"
-            time.sleep(1)
-        except Exception as exact_menu_error:
-            print(
-                "Exact File > Load Configuration selection failed; "
-                f"trying menu discovery: {exact_menu_error}"
-            )
+        selected_menu = self.select_first_available_menu(
+            window,
+            self.LOAD_MASK_MENU_PATHS,
+        )
 
-            # Some QXDM versions expose the menu only after File is opened.
-            try:
-                send_keys("%f")
-                time.sleep(0.8)
+        print(
+            f"Opened QXDM mask menu: {selected_menu}"
+        )
 
-                menu_items = Desktop(backend="uia").windows(
-                    control_type="MenuItem"
-                )
+        self.handle_file_dialog(
+            self.default_mask
+        )
 
-                for item in menu_items:
-                    text = item.window_text().strip().lower()
-                    if "load configuration" in text:
-                        item.click_input()
-                        selected_menu = "File->Load Configuration"
-                        time.sleep(1)
-                        break
-            except Exception:
-                selected_menu = None
+        print(
+            f"Loaded QXDM mask: {self.default_mask}"
+        )
 
-        if selected_menu is None:
-            # Preserve compatibility with alternate wording in other builds.
-            selected_menu = self.select_first_available_menu(
-                window,
-                self.LOAD_MASK_MENU_PATHS,
-            )
-
-        print(f"Opened QXDM configuration menu: {selected_menu}")
-
-        self.handle_file_dialog(mask_path)
-
-        print(f"Loaded QXDM configuration: {mask_path}")
         return True
 
     def open_start_logging_dialog(self):
@@ -658,8 +828,10 @@ class QXDMController:
         self.prepare_log_path(log_path)
         self.launch()
 
-        if load_mask and self.default_mask is not None:
-            self.load_default_mask()
+        if load_mask:
+            self.ensure_default_mask_loaded(
+                retry_with_picker=True,
+            )
 
         self.configure_logging(log_path)
 
