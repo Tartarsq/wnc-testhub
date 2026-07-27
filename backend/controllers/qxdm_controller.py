@@ -28,6 +28,8 @@ class QXDMController:
         7. Start QXDM logging.
         8. Send mode lpm.
         9. Send mode online.
+       10. Stop capture and finalize the log.
+       11. Reopen the completed log in QXDM.
     """
 
     PROCESS_NAME = "QXDM.exe"
@@ -54,6 +56,16 @@ class QXDMController:
         "File->Open Configuration",
         "Logging->Load Log Mask",
         "Tools->Load Log Mask",
+    ]
+
+    # Used after capture stops so the completed log becomes the active log
+    # displayed in QXDM. Menu wording varies between QXDM versions.
+    OPEN_LOG_MENU_PATHS = [
+        "File->Open Log",
+        "File->Open Log File",
+        "File->Open",
+        "Log->Open Log",
+        "Logging->Open Log",
     ]
 
     def __init__(
@@ -290,14 +302,37 @@ class QXDMController:
         file_path = Path(file_path).resolve()
 
         dialog = Desktop(backend="uia").window(
-            title_re=r".*(Open|Save|Browse|Select).*",
+            title_re=r".*(Open|Save|Browse|Select|Load Configuration).*",
             top_level_only=True,
         )
 
         dialog.wait(
             "visible enabled ready",
-            timeout=10,
+            timeout=15,
         )
+        dialog.set_focus()
+        time.sleep(0.5)
+
+        # In the standard Windows file picker, Alt+N focuses the
+        # File name field. This is more reliable than selecting the
+        # last Edit control, which can accidentally target Search.
+        try:
+            send_keys("%n")
+            time.sleep(0.3)
+            send_keys("^a")
+            send_keys(
+                str(file_path),
+                with_spaces=True,
+                pause=0.01,
+            )
+            send_keys("{ENTER}")
+            time.sleep(2)
+            return True
+        except Exception as keyboard_error:
+            print(
+                "Keyboard file selection failed; trying UI controls: "
+                f"{keyboard_error}"
+            )
 
         file_name_edit = self.find_edit_by_keywords(
             dialog,
@@ -315,7 +350,8 @@ class QXDMController:
 
             if not edit_controls:
                 raise RuntimeError(
-                    "Could not locate the file path field."
+                    "Could not locate the file-name field in the "
+                    "QXDM configuration dialog."
                 )
 
             file_name_edit = edit_controls[-1]
@@ -336,41 +372,67 @@ class QXDMController:
 
     def load_default_mask(self) -> bool:
         """
-        Load the configured QXDM log mask.
+        Open File > Load Configuration and select the configured DMC file.
 
-        Returns False when no default mask was configured.
+        Returns False when no default configuration was configured.
         """
         if self.default_mask is None:
-            print(
-                "No default QXDM mask was configured."
-            )
+            print("No default QXDM configuration was configured.")
             return False
 
-        if not self.default_mask.exists():
+        mask_path = self.default_mask.expanduser().resolve()
+
+        if not mask_path.exists():
             raise FileNotFoundError(
-                "The default QXDM mask was not found:\n"
-                f"{self.default_mask}"
+                "The default QXDM configuration was not found:\n"
+                f"{mask_path}"
             )
 
         window = self.focus_qxdm()
+        selected_menu = None
 
-        selected_menu = self.select_first_available_menu(
-            window,
-            self.LOAD_MASK_MENU_PATHS,
-        )
+        # First use the exact menu path used by QXDM.
+        try:
+            window.menu_select("File->Load Configuration")
+            selected_menu = "File->Load Configuration"
+            time.sleep(1)
+        except Exception as exact_menu_error:
+            print(
+                "Exact File > Load Configuration selection failed; "
+                f"trying menu discovery: {exact_menu_error}"
+            )
 
-        print(
-            f"Opened QXDM mask menu: {selected_menu}"
-        )
+            # Some QXDM versions expose the menu only after File is opened.
+            try:
+                send_keys("%f")
+                time.sleep(0.8)
 
-        self.handle_file_dialog(
-            self.default_mask
-        )
+                menu_items = Desktop(backend="uia").windows(
+                    control_type="MenuItem"
+                )
 
-        print(
-            f"Loaded QXDM mask: {self.default_mask}"
-        )
+                for item in menu_items:
+                    text = item.window_text().strip().lower()
+                    if "load configuration" in text:
+                        item.click_input()
+                        selected_menu = "File->Load Configuration"
+                        time.sleep(1)
+                        break
+            except Exception:
+                selected_menu = None
 
+        if selected_menu is None:
+            # Preserve compatibility with alternate wording in other builds.
+            selected_menu = self.select_first_available_menu(
+                window,
+                self.LOAD_MASK_MENU_PATHS,
+            )
+
+        print(f"Opened QXDM configuration menu: {selected_menu}")
+
+        self.handle_file_dialog(mask_path)
+
+        print(f"Loaded QXDM configuration: {mask_path}")
         return True
 
     def open_start_logging_dialog(self):
@@ -626,19 +688,132 @@ class QXDMController:
         time.sleep(2)
         return True
 
+    def _find_completed_log(self) -> Optional[Path]:
+        """Return the completed log file created for the current capture.
+
+        QXDM may append an extension or create a numbered/segmented file, so
+        this checks the exact configured path first and then nearby matches.
+        """
+        if self.current_log_path is None:
+            return None
+
+        expected_path = self.current_log_path
+
+        if expected_path.exists() and expected_path.is_file():
+            return expected_path
+
+        candidates = [
+            path
+            for path in expected_path.parent.glob(f"{expected_path.stem}*")
+            if path.is_file()
+        ]
+
+        if not candidates:
+            return None
+
+        return max(
+            candidates,
+            key=lambda path: path.stat().st_mtime,
+        )
+
+    def wait_for_saved_log(
+        self,
+        timeout_seconds: float = 20.0,
+        poll_interval: float = 0.5,
+    ) -> Path:
+        """Wait until QXDM has finalized the log on disk.
+
+        Stopping capture is what saves/finalizes a QXDM log because the output
+        destination was selected before logging started. This method confirms
+        that the resulting file exists and that its size has stopped changing.
+        """
+        if self.current_log_path is None:
+            raise RuntimeError(
+                "No QXDM log path has been configured."
+            )
+
+        deadline = time.monotonic() + timeout_seconds
+        previous_size: Optional[int] = None
+        stable_checks = 0
+
+        while time.monotonic() < deadline:
+            completed_log = self._find_completed_log()
+
+            if completed_log is not None:
+                try:
+                    current_size = completed_log.stat().st_size
+                except OSError:
+                    time.sleep(poll_interval)
+                    continue
+
+                if current_size == previous_size:
+                    stable_checks += 1
+                else:
+                    previous_size = current_size
+                    stable_checks = 0
+
+                # Two unchanged checks reduce the chance of reopening a file
+                # while QXDM is still flushing its final data.
+                if stable_checks >= 2:
+                    self.current_log_path = completed_log
+                    print(f"QXDM log saved: {completed_log}")
+                    return completed_log
+
+            time.sleep(poll_interval)
+
+        raise TimeoutError(
+            "QXDM stopped capture, but the completed log file was not "
+            f"confirmed within {timeout_seconds:.1f} seconds. Expected near: "
+            f"{self.current_log_path}"
+        )
+
+    def load_saved_log(
+        self,
+        log_path: Optional[Path] = None,
+    ) -> bool:
+        """Open a completed log so it becomes QXDM's active/default view."""
+        selected_log = (
+            Path(log_path).resolve()
+            if log_path is not None
+            else self._find_completed_log()
+        )
+
+        if selected_log is None or not selected_log.exists():
+            raise FileNotFoundError(
+                "Could not find the completed QXDM log to reopen."
+            )
+
+        window = self.focus_qxdm()
+        selected_menu = self.select_first_available_menu(
+            window,
+            self.OPEN_LOG_MENU_PATHS,
+        )
+
+        print(f"Opened QXDM log menu: {selected_menu}")
+        self.handle_file_dialog(selected_log)
+        self.current_log_path = selected_log
+        print(f"Loaded completed QXDM log: {selected_log}")
+        return True
+
     def stop_logging(
         self,
         wait_seconds: float = 2.0,
+        load_saved_log: bool = True,
+        save_timeout_seconds: float = 20.0,
     ) -> bool:
-        """
-        Stop the modem and finalize the QXDM log.
-        """
+        """Stop capture, finalize the log, and optionally reopen it in QXDM."""
         self.mode_lpm()
         time.sleep(wait_seconds)
 
         self.stop_qxdm_capture()
+        completed_log = self.wait_for_saved_log(
+            timeout_seconds=save_timeout_seconds,
+        )
 
-        print("QXDM logging stopped.")
+        if load_saved_log:
+            self.load_saved_log(completed_log)
+
+        print("QXDM logging stopped and finalized.")
         return True
 
     def print_controls(self) -> None:
