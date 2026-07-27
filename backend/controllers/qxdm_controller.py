@@ -83,8 +83,7 @@ class QXDMController:
             else None
         )
 
-        # Allow a QXDM size value from 0 through 1024 MB.
-        # QXDM commonly uses 0 to mean no configured size limit.
+        # Never allow the requested size to exceed 1 GB.
         self.max_log_size_mb = min(
             max(int(max_log_size_mb), 0),
             1024,
@@ -388,7 +387,7 @@ class QXDMController:
         Ask the user for the desired QXDM maximum log size in MB.
 
         The value must be between 0 MB and 1024 MB.
-        Enter 0 to pass QXDM's zero/unlimited value.
+        Enter 0 if you want QXDM's unlimited/zero setting.
         Cancelling keeps the currently configured value.
         """
         try:
@@ -407,7 +406,7 @@ class QXDMController:
                 "QXDM Log Size",
                 (
                     "Enter the maximum QXDM log file size in MB "
-                    "(0-1024). Enter 0 for QXDM's zero/unlimited value:"
+                    "(0-1024):"
                 ),
                 initialvalue=self.max_log_size_mb,
                 minvalue=0,
@@ -708,46 +707,17 @@ class QXDMController:
             dialog,
             [
                 "maximum size",
-                "maximum file size",
                 "max size",
                 "file size",
                 "log size",
                 "size limit",
-                "limit",
-                "mb",
             ],
         )
 
-        # Some QXDM versions do not expose the size field's label through UIA.
-        # Fall back to a numeric-looking Edit control that is not the log path.
-        if size_edit is None:
-            edit_controls = dialog.descendants(
-                control_type="Edit"
-            )
-            numeric_candidates = []
-
-            for edit in edit_controls:
-                if path_edit is not None and edit == path_edit:
-                    continue
-
-                try:
-                    text = edit.window_text().strip()
-                    rectangle = edit.rectangle()
-
-                    # Size fields are usually short and contain a number.
-                    if text.isdigit() or rectangle.width() <= 220:
-                        numeric_candidates.append(edit)
-                except Exception:
-                    continue
-
-            if numeric_candidates:
-                size_edit = numeric_candidates[-1]
-
         if size_edit is None:
             raise RuntimeError(
-                "Could not locate the QXDM maximum log-size field. "
-                "Run print_controls() while the Start Logging dialog is "
-                "open so its controls can be mapped for this QXDM version."
+                "Could not locate the QXDM maximum "
+                "log-size field."
             )
 
         self.set_edit_value(
@@ -755,16 +725,11 @@ class QXDMController:
             str(self.max_log_size_mb),
         )
 
-        # Commit the edited value in controls that validate on focus change.
         send_keys("{TAB}")
         time.sleep(0.5)
-
+        print(f"Requested QXDM max log size: {self.max_log_size_mb} MB")
         try:
-            applied_size = size_edit.window_text().strip()
-            print(
-                "QXDM size field now contains: "
-                f"{applied_size or self.max_log_size_mb}"
-            )
+            print("Size field currently shows:", size_edit.window_text())
         except Exception:
             pass
 
@@ -905,11 +870,7 @@ class QXDMController:
         # The test commands already defined in this controller run after
         # logging has started, so their output is captured in the saved log.
         self.mode_lpm()
-
-        print(
-            "Waiting "
-            f"{transition_delay:.1f} seconds before mode online..."
-        )
+        print(f"Waiting {transition_delay} seconds before mode online...")
         time.sleep(transition_delay)
 
         self.mode_online()
