@@ -211,11 +211,10 @@ class QXDMController:
 
         window = candidates[0][2]
 
-        window.wait(
-            "visible enabled ready",
-            timeout=20,
-        )
-
+        # Desktop().windows() returns a UIAWrapper, not a
+        # WindowSpecification. UIAWrapper does not provide wait().
+        # The windows() call already filtered for visible windows, so
+        # return the selected main window directly.
         return window
 
     def focus_qxdm(self):
