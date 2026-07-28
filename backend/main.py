@@ -1,3 +1,9 @@
+import ipaddress
+import platform
+import socket
+import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 from config import (
     DEFAULT_CARRIER,
     DEFAULT_MODE,
@@ -344,45 +350,15 @@ def start_qxdm_logging(
             "Loading the configured QXDM DMC file."
         )
 
-        try:
-            mask_loaded = qxdm.ensure_default_mask_loaded(
-                retry_with_picker=True,
-            )
-
-        except Exception as error:
-            mask_loaded = False
-
-            logger.warning(
-                "Automatic QXDM DMC loading failed: %s",
-                error,
-            )
-
-            print(
-                "\nAutomatic DMC loading did not complete."
-            )
-
-            print(
-                f"Reason: {error}"
-            )
-
-            print(
-                "\nIn QXDM, use File > Load Configuration "
-                "and select the correct DMC file manually."
-            )
-
-            input(
-                "Press Enter after the configuration has been loaded..."
-            )
-
-            mask_loaded = True
+        mask_loaded = qxdm.load_default_mask()
 
         if mask_loaded:
             logger.info(
-                "The QXDM DMC configuration was loaded or confirmed manually."
+                "The QXDM DMC configuration was loaded."
             )
 
             print(
-                "\nThe DMC configuration is ready."
+                "\nThe configured DMC file was loaded."
             )
 
         else:
@@ -398,6 +374,49 @@ def start_qxdm_logging(
             "Did the QXDM configuration load correctly?",
             default=True,
         )
+
+        change_log_location = prompt_yes_no(
+            "Change the QXDM log file location in Tools > Settings?",
+            default=False,
+        )
+
+        if change_log_location:
+            try:
+                selected_log_directory = (
+                    qxdm.configure_log_directory()
+                )
+
+                logger.info(
+                    "QXDM log directory changed to: %s",
+                    selected_log_directory,
+                )
+
+                print(
+                    "\nQXDM log location updated successfully."
+                )
+
+            except Exception as error:
+                logger.warning(
+                    "QXDM log-location automation failed: %s",
+                    error,
+                )
+
+                print(
+                    "\nThe log location could not be changed automatically."
+                )
+
+                print(
+                    f"Reason: {error}"
+                )
+
+                print(
+                    "\nOpen Tools > Settings in QXDM and change the "
+                    "log location manually."
+                )
+
+                input(
+                    "Press Enter after the log location is ready..."
+                )
 
         if not configuration_ready:
             print(
@@ -752,14 +771,339 @@ def stop_qxdm_logging(
         return False
 
 
+
+def get_local_ipv4_address() -> str | None:
+    """
+    Return the IPv4 address used by the active network interface.
+
+    No data is sent. The UDP socket is only used so Windows selects
+    the interface it would use for an outbound connection.
+    """
+    sock = socket.socket(
+        socket.AF_INET,
+        socket.SOCK_DGRAM,
+    )
+
+    try:
+        sock.connect(("8.8.8.8", 80))
+        return sock.getsockname()[0]
+
+    except OSError:
+        return None
+
+    finally:
+        sock.close()
+
+
+def ping_ip_address(
+    ip_address: str,
+    timeout_ms: int = 250,
+) -> bool:
+    """Return True when the address responds to one ping."""
+    if platform.system().lower() == "windows":
+        command = [
+            "ping",
+            "-n",
+            "1",
+            "-w",
+            str(timeout_ms),
+            ip_address,
+        ]
+
+        creation_flags = getattr(
+            subprocess,
+            "CREATE_NO_WINDOW",
+            0,
+        )
+
+    else:
+        timeout_seconds = max(
+            1,
+            round(timeout_ms / 1000),
+        )
+
+        command = [
+            "ping",
+            "-c",
+            "1",
+            "-W",
+            str(timeout_seconds),
+            ip_address,
+        ]
+
+        creation_flags = 0
+
+    try:
+        result = subprocess.run(
+            command,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=max(2, timeout_ms / 1000 + 1),
+            creationflags=creation_flags,
+            check=False,
+        )
+
+        return result.returncode == 0
+
+    except (
+        OSError,
+        subprocess.TimeoutExpired,
+    ):
+        return False
+
+
+def has_titan_web_port(
+    ip_address: str,
+    timeout_seconds: float = 0.25,
+) -> bool:
+    """
+    Check for a web interface commonly used by the Titan dashboard.
+
+    This does not prove that the host is a Titan 3, so the user is
+    still asked to confirm the selected address.
+    """
+    for port in (80, 443):
+        try:
+            with socket.create_connection(
+                (ip_address, port),
+                timeout=timeout_seconds,
+            ):
+                return True
+
+        except OSError:
+            continue
+
+    return False
+
+
+def check_titan_candidate(
+    ip_address: str,
+) -> tuple[str, bool, bool]:
+    """Check whether an address responds to ping or exposes a web port."""
+    web_port_open = has_titan_web_port(ip_address)
+    ping_replied = ping_ip_address(ip_address)
+
+    return ip_address, ping_replied, web_port_open
+
+
+def build_discovery_networks(
+    default_ip: str,
+) -> list[ipaddress.IPv4Network]:
+    """
+    Build a short list of /24 networks that may contain the Titan 3.
+
+    The Titan USB network 192.168.100.0/24 is always checked. The
+    current PC network and the configured default IP network are also
+    included when available.
+    """
+    networks: list[ipaddress.IPv4Network] = []
+
+    def add_network(ip_value: str | None) -> None:
+        if not ip_value:
+            return
+
+        try:
+            network = ipaddress.ip_network(
+                f"{ip_value}/24",
+                strict=False,
+            )
+
+        except ValueError:
+            return
+
+        if network not in networks:
+            networks.append(network)
+
+    add_network("192.168.100.1")
+    add_network(default_ip)
+    add_network(get_local_ipv4_address())
+
+    return networks
+
+
+def discover_titan_candidates(
+    default_ip: str,
+) -> list[str]:
+    """
+    Search likely local /24 networks for reachable Titan candidates.
+
+    Addresses with a web interface are placed first because the Titan
+    dashboard normally uses HTTP or HTTPS.
+    """
+    networks = build_discovery_networks(default_ip)
+
+    addresses: list[str] = []
+
+    for network in networks:
+        for host in network.hosts():
+            host_text = str(host)
+
+            if host_text not in addresses:
+                addresses.append(host_text)
+
+    # Test the known/default addresses first so the common case is fast.
+    priority_addresses = [
+        "192.168.100.1",
+        default_ip,
+    ]
+
+    ordered_addresses: list[str] = []
+
+    for address in priority_addresses + addresses:
+        if address and address not in ordered_addresses:
+            ordered_addresses.append(address)
+
+    candidates: list[tuple[str, bool, bool]] = []
+
+    with ThreadPoolExecutor(max_workers=48) as executor:
+        futures = {
+            executor.submit(
+                check_titan_candidate,
+                address,
+            ): address
+            for address in ordered_addresses
+        }
+
+        for future in as_completed(futures):
+            try:
+                ip_address, ping_replied, web_port_open = (
+                    future.result()
+                )
+
+            except Exception:
+                continue
+
+            if ping_replied or web_port_open:
+                candidates.append(
+                    (
+                        ip_address,
+                        ping_replied,
+                        web_port_open,
+                    )
+                )
+
+    def sort_key(
+        item: tuple[str, bool, bool],
+    ) -> tuple[int, int, int]:
+        ip_address, ping_replied, web_port_open = item
+
+        preferred = (
+            0
+            if ip_address in {
+                "192.168.100.1",
+                default_ip,
+            }
+            else 1
+        )
+
+        return (
+            0 if web_port_open else 1,
+            preferred,
+            int(ipaddress.ip_address(ip_address)),
+        )
+
+    candidates.sort(key=sort_key)
+
+    return [
+        ip_address
+        for ip_address, _, _ in candidates
+    ]
+
+
+def select_titan_ip_address(
+    default_ip: str,
+) -> str:
+    """
+    Automatically look for the Titan 3 and allow manual fallback.
+
+    Because another device may also answer on the network, the user
+    confirms the detected address before the test proceeds.
+    """
+    print("\nSearching for the Titan 3 IP address...")
+
+    candidates = discover_titan_candidates(
+        default_ip
+    )
+
+    if not candidates:
+        print(
+            "\nNo reachable Titan 3 candidate was found automatically."
+        )
+
+        return prompt_with_default(
+            "Enter Titan 3 IP address",
+            default_ip,
+        )
+
+    print("\nReachable device candidates:")
+
+    for index, ip_address in enumerate(
+        candidates,
+        start=1,
+    ):
+        marker = (
+            " (usual Titan 3 address)"
+            if ip_address == "192.168.100.1"
+            else ""
+        )
+
+        print(
+            f"  [{index}] {ip_address}{marker}"
+        )
+
+    print(
+        "  [M] Enter an IP address manually"
+    )
+
+    while True:
+        choice = input(
+            "\nSelect the Titan 3 address "
+            f"[default: 1]: "
+        ).strip()
+
+        if not choice:
+            selected_ip = candidates[0]
+
+        elif choice.lower() == "m":
+            return prompt_with_default(
+                "Enter Titan 3 IP address",
+                default_ip,
+            )
+
+        else:
+            try:
+                selected_index = int(choice) - 1
+                selected_ip = candidates[selected_index]
+
+            except (
+                ValueError,
+                IndexError,
+            ):
+                print(
+                    "Choose one of the displayed numbers or enter M."
+                )
+                continue
+
+        confirmed = prompt_yes_no(
+            f"Use {selected_ip} for the Titan 3?",
+            default=True,
+        )
+
+        if confirmed:
+            return selected_ip
+
+
 def main() -> None:
     print("=" * 50)
     print("WNC TESTHUB - TITAN 3 TEST AUTOMATION")
     print("=" * 50)
 
-    titan_ip = prompt_with_default(
-        "Enter Titan 3 IP address",
+    titan_ip = select_titan_ip_address(
         DEFAULT_TITAN_IP,
+    )
+
+    print(
+        f"\nUsing Titan 3 IP address: {titan_ip}"
     )
 
     titan = Titan3(
