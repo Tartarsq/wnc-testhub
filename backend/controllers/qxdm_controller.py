@@ -163,58 +163,16 @@ class QXDMController:
         return True
 
     def get_window(self):
-        """
-        Locate the main QXDM window.
-
-        QXDM may have Settings, Open, or other dialogs whose titles also
-        contain "QXDM". Select the largest visible QXDM window so command
-        entry is directed to the main application instead of a child dialog.
-        """
-        desktop = Desktop(backend="uia")
-        candidates = []
-
-        for window in desktop.windows(
-            title_re=self.WINDOW_TITLE_PATTERN,
-            visible_only=True,
-        ):
-            try:
-                title = window.window_text().strip()
-                rectangle = window.rectangle()
-                area = max(rectangle.width(), 0) * max(
-                    rectangle.height(),
-                    0,
-                )
-
-                if area <= 0:
-                    continue
-
-                candidates.append(
-                    (
-                        area,
-                        title,
-                        window,
-                    )
-                )
-
-            except Exception:
-                continue
-
-        if not candidates:
-            raise RuntimeError(
-                "Could not locate the main QXDM window."
-            )
-
-        candidates.sort(
-            key=lambda item: item[0],
-            reverse=True,
+        """Locate and return the main QXDM window."""
+        window = Desktop(backend="uia").window(
+            title_re=self.WINDOW_TITLE_PATTERN
         )
 
-        window = candidates[0][2]
+        window.wait(
+            "visible enabled ready",
+            timeout=20,
+        )
 
-        # Desktop().windows() returns a UIAWrapper, not a
-        # WindowSpecification. UIAWrapper does not provide wait().
-        # The windows() call already filtered for visible windows, so
-        # return the selected main window directly.
         return window
 
     def focus_qxdm(self):
@@ -816,27 +774,14 @@ class QXDMController:
         return candidates[0][1]
 
     def send_command(self, command: str) -> bool:
-        """Enter a command in the main QXDM Command box."""
+        """Enter a command in QXDM's Command box."""
         if not self.is_running():
             self.launch()
 
         window = self.focus_qxdm()
-
-        try:
-            command_box = self.get_command_box(
-                window
-            )
-
-        except Exception:
-            # A QXDM child dialog may still have focus. Press Escape once,
-            # refocus the main window, and retry locating the command box.
-            send_keys("{ESC}")
-            time.sleep(1)
-
-            window = self.focus_qxdm()
-            command_box = self.get_command_box(
-                window
-            )
+        command_box = self.get_command_box(
+            window
+        )
 
         command_box.click_input()
         time.sleep(0.5)
@@ -845,16 +790,10 @@ class QXDMController:
         send_keys(
             command,
             with_spaces=True,
-            pause=0.05,
         )
         send_keys("{ENTER}")
 
         time.sleep(2)
-
-        print(
-            f"QXDM command submitted: {command}"
-        )
-
         return True
 
     def mode_lpm(self) -> bool:
