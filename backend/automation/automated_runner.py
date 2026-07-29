@@ -24,6 +24,7 @@ class AutomatedTestRunner:
         session_folder: Path,
         number_of_runs: int = 5,
         delay_between_runs: int = 10,
+        timeout_seconds: int = 180,
     ) -> None:
         """Initialize the automated test runner."""
         self.titan = titan
@@ -31,8 +32,11 @@ class AutomatedTestRunner:
         self.session_folder = Path(session_folder)
         self.number_of_runs = max(int(number_of_runs), 1)
         self.delay_between_runs = max(int(delay_between_runs), 0)
+        self.timeout_seconds = max(int(timeout_seconds), 1)
 
-        self.throughput = ThroughputTester()
+        self.throughput = ThroughputTester(
+            timeout_seconds=self.timeout_seconds
+        )
 
         self.excel_path = (
             self.session_folder
@@ -261,7 +265,7 @@ class AutomatedTestRunner:
                 )
 
             print(
-                "\nRunning independent Python throughput test..."
+                "\nRunning official Ookla CLI throughput test..."
             )
 
             speedtest_results = (

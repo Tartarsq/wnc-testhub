@@ -1,10 +1,3 @@
-import ipaddress
-import platform
-import socket
-import subprocess
-import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
 from config import (
     DEFAULT_CARRIER,
     DEFAULT_MODE,
@@ -277,9 +270,10 @@ def start_qxdm_logging(
     session_folder,
 ):
     """
-    Launch QXDM, load the DMC once, verify it, let the user configure
-    log-saving settings, then send mode lpm and mode online before
-    automated throughput testing.
+    Launch QXDM, load the configured DMC file, and prepare capture.
+
+    The user currently confirms the capture start because this QXDM
+    version does not expose the expected Start Logging menu path.
     """
 
     should_start = prompt_yes_no(
@@ -288,7 +282,10 @@ def start_qxdm_logging(
     )
 
     if not should_start:
-        logger.info("The user skipped the QXDM setup.")
+        logger.info(
+            "The user skipped the QXDM setup."
+        )
+
         return False, None
 
     qxdm_log_path = (
@@ -308,40 +305,64 @@ def start_qxdm_logging(
         print("QXDM AUTOMATED SETUP")
         print("=" * 50)
 
+        print(
+            "\nThe application will:"
+            "\n  1. Launch or focus QXDM."
+            "\n  2. Open File > Load Configuration."
+            "\n  3. Load the configured DMC file."
+            "\n  4. Wait for configuration confirmation."
+            "\n  5. Ask you to start the QXDM capture."
+            "\n  6. Send mode lpm."
+            "\n  7. Send mode online."
+        )
+
+        print(
+            f"\nRequested QXDM capture path:\n"
+            f"{qxdm_log_path}"
+        )
+
+        logger.info(
+            "Launching QXDM."
+        )
+
         qxdm.launch()
-        logger.info("QXDM launched or focused successfully.")
+
+        logger.info(
+            "QXDM launched or focused successfully."
+        )
+
+        print(
+            "\nQXDM is open."
+        )
 
         input(
             "\nVerify that QXDM can see the connected device.\n"
             "Press Enter to load the DMC configuration..."
         )
 
-        try:
-            resolved_mask = qxdm.resolve_default_mask()
+        logger.info(
+            "Loading the configured QXDM DMC file."
+        )
 
-            if resolved_mask is None:
-                qxdm.prompt_for_default_mask()
+        mask_loaded = qxdm.load_default_mask()
 
-            qxdm.load_default_mask()
-
+        if mask_loaded:
             logger.info(
-                "The QXDM DMC load command was submitted."
+                "The QXDM DMC configuration was loaded."
             )
 
             print(
-                "\nThe configured DMC file was submitted to QXDM."
+                "\nThe configured DMC file was loaded."
             )
 
-        except Exception as error:
+        else:
             logger.warning(
-                "Automatic QXDM DMC loading could not be confirmed: %s",
-                error,
+                "No default QXDM DMC configuration was loaded."
             )
 
             print(
-                "\nAutomatic DMC loading could not be confirmed."
+                "\nNo default DMC configuration was loaded."
             )
-            print(f"Reason: {error}")
 
         configuration_ready = prompt_yes_no(
             "Did the QXDM configuration load correctly?",
@@ -350,121 +371,67 @@ def start_qxdm_logging(
 
         if not configuration_ready:
             print(
-                "\nLoad the correct DMC configuration manually in QXDM."
+                "\nLoad the correct DMC configuration "
+                "manually in QXDM."
             )
 
             input(
-                "Press Enter after the configuration has been loaded..."
+                "Press Enter after the configuration "
+                "has been loaded..."
             )
 
             logger.warning(
-                "The QXDM configuration required manual loading."
-            )
-
-        print("\n" + "=" * 50)
-        print("QXDM LOG SETTINGS")
-        print("=" * 50)
-
-        try:
-            qxdm.open_qxdm_settings()
-
-            logger.info(
-                "The QXDM Settings window was opened automatically."
-            )
-
-            print(
-                "\nThe QXDM Settings window is open."
-            )
-
-        except Exception as error:
-            logger.warning(
-                "Could not open QXDM Settings automatically: %s",
-                error,
-            )
-
-            print(
-                "\nThe QXDM Settings window could not be opened "
-                "automatically."
-            )
-
-            print(
-                "Open Options > Settings manually."
+                "The QXDM configuration required "
+                "manual confirmation."
             )
 
         print(
-            "\nConfigure:"
-            "\n  - Base File Name"
-            "\n  - Log File Directory"
-            "\n  - Maximum Log File Size"
-            "\n  - Maximum Log File Duration"
-            "\n  - Automatic file-saving options"
+            "\nIn QXDM, start the capture and set its "
+            "destination to:"
         )
 
         print(
-            f"\nSuggested session log directory:\n"
-            f"{qxdm_log_path.parent}"
+            qxdm_log_path
         )
 
         input(
-            "\nClick OK in QXDM after configuring the settings, "
-            "then press Enter here..."
+            "\nPress Enter after the QXDM capture "
+            "has started..."
         )
-
-        log_settings_ready = prompt_yes_no(
-            "Are the QXDM log settings configured correctly?",
-            default=True,
-        )
-
-        if not log_settings_ready:
-            print(
-                "\nReturn to Options > Settings and correct "
-                "the QXDM log settings."
-            )
-
-            input(
-                "Press Enter after the settings are ready..."
-            )
 
         logger.info(
-            "The user confirmed that the QXDM log settings are ready."
+            "The user confirmed that QXDM capture started."
         )
-
-        perform_airplane_mode = prompt_yes_no(
-            "Perform Airplane Mode before throughput testing?",
-            default=True,
-        )
-
-        if perform_airplane_mode:
-            print(
-                "\nPreparing the modem for throughput testing..."
-            )
-
-            qxdm.mode_lpm()
-            logger.info("ModeLPM was sent successfully.")
-            time.sleep(2)
-
-            qxdm.mode_online()
-            logger.info("ModeOnline was sent successfully.")
-            time.sleep(2)
-
-            print(
-                "\nTitan 3 is back in online mode."
-            )
-
-        else:
-            logger.info(
-                "The user skipped Airplane Mode."
-            )
-
-            print(
-                "\nSkipping Airplane Mode."
-            )
 
         print(
-            "Proceeding directly to automated throughput testing."
+            "\nPreparing the modem for testing..."
         )
 
-        return False, qxdm_log_path
+        qxdm.mode_lpm()
+
+        logger.info(
+            "mode lpm was sent successfully."
+        )
+
+        qxdm.mode_online()
+
+        logger.info(
+            "mode online was sent successfully."
+        )
+
+        print(
+            "\nQXDM capture is running."
+        )
+
+        print(
+            "Titan 3 is in online mode."
+        )
+
+        print(
+            f"Capture path: {qxdm_log_path}"
+        )
+
+        return True, qxdm_log_path
 
     except Exception as error:
         logger.exception(
@@ -474,17 +441,20 @@ def start_qxdm_logging(
         print(
             "\nThe QXDM setup could not be completed."
         )
-        print(f"Reason: {error}")
+
+        print(
+            f"Reason: {error}"
+        )
 
         continue_test = prompt_yes_no(
-            "Continue the Titan 3 test without QXDM setup?",
+            "Continue the Titan 3 test without QXDM capture?",
             default=True,
         )
 
         if not continue_test:
             raise RuntimeError(
-                "Test cancelled because the QXDM setup "
-                "could not be completed."
+                "Test cancelled because the QXDM "
+                "setup could not be completed."
             ) from error
 
         return False, qxdm_log_path
@@ -497,7 +467,7 @@ def run_automated_tests(
     session_folder,
 ) -> tuple[bool, int, object]:
     """
-    Configure and run repeated automated Speedtest CLI tests.
+    Configure and run repeated automated Python Speedtest tests.
 
     Returns:
         tuple:
@@ -532,48 +502,20 @@ def run_automated_tests(
         default=10,
     )
 
-    speedtest_timeout = prompt_positive_integer(
-        "Speedtest timeout in seconds",
-        default=180,
-    )
-
-    speedtest_executable = prompt_with_default(
-        "Speedtest executable path",
-        "speedtest.exe",
-    )
-
     excel_path = (
         session_folder
         / "reports"
         / "Titan3_Automated_Results.xlsx"
     )
 
-    print(
-        "\nAutomated test configuration:"
-    )
-
-    print(
-        f"  Runs: {number_of_runs}"
-    )
-
-    print(
-        f"  Delay: {delay_between_runs} seconds"
-    )
-
-    print(
-        f"  Speedtest timeout: {speedtest_timeout} seconds"
-    )
-
-    print(
-        f"  Speedtest executable: {speedtest_executable}"
-    )
-
-    print(
-        f"  Excel output: {excel_path}"
-    )
+    print("\nAutomated test configuration:")
+    print(f"  Runs: {number_of_runs}")
+    print(f"  Delay: {delay_between_runs} seconds")
+    print("  Throughput method: Python speedtest-cli library")
+    print(f"  Excel output: {excel_path}")
 
     input(
-        "\nMake sure the official Ookla Speedtest CLI is installed.\n"
+        "\nMake sure the Python speedtest-cli package is installed.\n"
         "Press Enter to begin the automated tests..."
     )
 
@@ -587,8 +529,7 @@ def run_automated_tests(
     )
 
     logger.info(
-        "Speedtest executable: %s",
-        speedtest_executable,
+        "Throughput method: Python speedtest-cli library."
     )
 
     try:
@@ -598,8 +539,6 @@ def run_automated_tests(
             session_folder=session_folder,
             number_of_runs=number_of_runs,
             delay_between_runs=delay_between_runs,
-            speedtest_executable=speedtest_executable,
-            timeout_seconds=speedtest_timeout,
         )
 
         runner.run()
@@ -632,7 +571,8 @@ def run_automated_tests(
         )
 
         continue_session = prompt_yes_no(
-            "Continue the session and generate the remaining reports?",
+            "Continue the session and generate the "
+            "remaining reports?",
             default=True,
         )
 
@@ -673,13 +613,13 @@ def stop_qxdm_logging(
         )
 
         print(
-            "\nSending ModeLPM before stopping capture..."
+            "\nSending mode lpm before stopping capture..."
         )
 
         qxdm.mode_lpm()
 
         logger.info(
-            "ModeLPM was sent before capture stop."
+            "mode lpm was sent before capture stop."
         )
 
         print(
@@ -735,7 +675,7 @@ def stop_qxdm_logging(
         )
 
         print(
-            "\nSwitch QXDM to ModeLPM and stop the "
+            "\nSwitch QXDM to mode lpm and stop the "
             "capture manually."
         )
 
@@ -752,339 +692,14 @@ def stop_qxdm_logging(
         return False
 
 
-
-def get_local_ipv4_address() -> str | None:
-    """
-    Return the IPv4 address used by the active network interface.
-
-    No data is sent. The UDP socket is only used so Windows selects
-    the interface it would use for an outbound connection.
-    """
-    sock = socket.socket(
-        socket.AF_INET,
-        socket.SOCK_DGRAM,
-    )
-
-    try:
-        sock.connect(("8.8.8.8", 80))
-        return sock.getsockname()[0]
-
-    except OSError:
-        return None
-
-    finally:
-        sock.close()
-
-
-def ping_ip_address(
-    ip_address: str,
-    timeout_ms: int = 250,
-) -> bool:
-    """Return True when the address responds to one ping."""
-    if platform.system().lower() == "windows":
-        command = [
-            "ping",
-            "-n",
-            "1",
-            "-w",
-            str(timeout_ms),
-            ip_address,
-        ]
-
-        creation_flags = getattr(
-            subprocess,
-            "CREATE_NO_WINDOW",
-            0,
-        )
-
-    else:
-        timeout_seconds = max(
-            1,
-            round(timeout_ms / 1000),
-        )
-
-        command = [
-            "ping",
-            "-c",
-            "1",
-            "-W",
-            str(timeout_seconds),
-            ip_address,
-        ]
-
-        creation_flags = 0
-
-    try:
-        result = subprocess.run(
-            command,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=max(2, timeout_ms / 1000 + 1),
-            creationflags=creation_flags,
-            check=False,
-        )
-
-        return result.returncode == 0
-
-    except (
-        OSError,
-        subprocess.TimeoutExpired,
-    ):
-        return False
-
-
-def has_titan_web_port(
-    ip_address: str,
-    timeout_seconds: float = 0.25,
-) -> bool:
-    """
-    Check for a web interface commonly used by the Titan dashboard.
-
-    This does not prove that the host is a Titan 3, so the user is
-    still asked to confirm the selected address.
-    """
-    for port in (80, 443):
-        try:
-            with socket.create_connection(
-                (ip_address, port),
-                timeout=timeout_seconds,
-            ):
-                return True
-
-        except OSError:
-            continue
-
-    return False
-
-
-def check_titan_candidate(
-    ip_address: str,
-) -> tuple[str, bool, bool]:
-    """Check whether an address responds to ping or exposes a web port."""
-    web_port_open = has_titan_web_port(ip_address)
-    ping_replied = ping_ip_address(ip_address)
-
-    return ip_address, ping_replied, web_port_open
-
-
-def build_discovery_networks(
-    default_ip: str,
-) -> list[ipaddress.IPv4Network]:
-    """
-    Build a short list of /24 networks that may contain the Titan 3.
-
-    The Titan USB network 192.168.100.0/24 is always checked. The
-    current PC network and the configured default IP network are also
-    included when available.
-    """
-    networks: list[ipaddress.IPv4Network] = []
-
-    def add_network(ip_value: str | None) -> None:
-        if not ip_value:
-            return
-
-        try:
-            network = ipaddress.ip_network(
-                f"{ip_value}/24",
-                strict=False,
-            )
-
-        except ValueError:
-            return
-
-        if network not in networks:
-            networks.append(network)
-
-    add_network("192.168.100.1")
-    add_network(default_ip)
-    add_network(get_local_ipv4_address())
-
-    return networks
-
-
-def discover_titan_candidates(
-    default_ip: str,
-) -> list[str]:
-    """
-    Search likely local /24 networks for reachable Titan candidates.
-
-    Addresses with a web interface are placed first because the Titan
-    dashboard normally uses HTTP or HTTPS.
-    """
-    networks = build_discovery_networks(default_ip)
-
-    addresses: list[str] = []
-
-    for network in networks:
-        for host in network.hosts():
-            host_text = str(host)
-
-            if host_text not in addresses:
-                addresses.append(host_text)
-
-    # Test the known/default addresses first so the common case is fast.
-    priority_addresses = [
-        "192.168.100.1",
-        default_ip,
-    ]
-
-    ordered_addresses: list[str] = []
-
-    for address in priority_addresses + addresses:
-        if address and address not in ordered_addresses:
-            ordered_addresses.append(address)
-
-    candidates: list[tuple[str, bool, bool]] = []
-
-    with ThreadPoolExecutor(max_workers=48) as executor:
-        futures = {
-            executor.submit(
-                check_titan_candidate,
-                address,
-            ): address
-            for address in ordered_addresses
-        }
-
-        for future in as_completed(futures):
-            try:
-                ip_address, ping_replied, web_port_open = (
-                    future.result()
-                )
-
-            except Exception:
-                continue
-
-            if ping_replied or web_port_open:
-                candidates.append(
-                    (
-                        ip_address,
-                        ping_replied,
-                        web_port_open,
-                    )
-                )
-
-    def sort_key(
-        item: tuple[str, bool, bool],
-    ) -> tuple[int, int, int]:
-        ip_address, ping_replied, web_port_open = item
-
-        preferred = (
-            0
-            if ip_address in {
-                "192.168.100.1",
-                default_ip,
-            }
-            else 1
-        )
-
-        return (
-            0 if web_port_open else 1,
-            preferred,
-            int(ipaddress.ip_address(ip_address)),
-        )
-
-    candidates.sort(key=sort_key)
-
-    return [
-        ip_address
-        for ip_address, _, _ in candidates
-    ]
-
-
-def select_titan_ip_address(
-    default_ip: str,
-) -> str:
-    """
-    Automatically look for the Titan 3 and allow manual fallback.
-
-    Because another device may also answer on the network, the user
-    confirms the detected address before the test proceeds.
-    """
-    print("\nSearching for the Titan 3 IP address...")
-
-    candidates = discover_titan_candidates(
-        default_ip
-    )
-
-    if not candidates:
-        print(
-            "\nNo reachable Titan 3 candidate was found automatically."
-        )
-
-        return prompt_with_default(
-            "Enter Titan 3 IP address",
-            default_ip,
-        )
-
-    print("\nReachable device candidates:")
-
-    for index, ip_address in enumerate(
-        candidates,
-        start=1,
-    ):
-        marker = (
-            " (usual Titan 3 address)"
-            if ip_address == "192.168.100.1"
-            else ""
-        )
-
-        print(
-            f"  [{index}] {ip_address}{marker}"
-        )
-
-    print(
-        "  [M] Enter an IP address manually"
-    )
-
-    while True:
-        choice = input(
-            "\nSelect the Titan 3 address "
-            f"[default: 1]: "
-        ).strip()
-
-        if not choice:
-            selected_ip = candidates[0]
-
-        elif choice.lower() == "m":
-            return prompt_with_default(
-                "Enter Titan 3 IP address",
-                default_ip,
-            )
-
-        else:
-            try:
-                selected_index = int(choice) - 1
-                selected_ip = candidates[selected_index]
-
-            except (
-                ValueError,
-                IndexError,
-            ):
-                print(
-                    "Choose one of the displayed numbers or enter M."
-                )
-                continue
-
-        confirmed = prompt_yes_no(
-            f"Use {selected_ip} for the Titan 3?",
-            default=True,
-        )
-
-        if confirmed:
-            return selected_ip
-
-
 def main() -> None:
     print("=" * 50)
     print("WNC TESTHUB - TITAN 3 TEST AUTOMATION")
     print("=" * 50)
 
-    titan_ip = select_titan_ip_address(
+    titan_ip = prompt_with_default(
+        "Enter Titan 3 IP address",
         DEFAULT_TITAN_IP,
-    )
-
-    print(
-        f"\nUsing Titan 3 IP address: {titan_ip}"
     )
 
     titan = Titan3(
