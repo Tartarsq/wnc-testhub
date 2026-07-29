@@ -1,3 +1,9 @@
+import ipaddress
+import platform
+import re
+import socket
+import subprocess
+
 from config import (
     DEFAULT_CARRIER,
     DEFAULT_MODE,
@@ -23,6 +29,297 @@ from utils import (
     prompt_yes_no,
 )
 
+
+
+def _is_valid_ipv4(value: str) -> bool:
+    """Return True when value is a usable IPv4 address."""
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return False
+
+    return (
+        address.version == 4
+        and not address.is_loopback
+        and not address.is_multicast
+        and not address.is_unspecified
+    )
+
+
+def _add_candidate(
+    candidates: list[str],
+    value: str | None,
+) -> None:
+    """Add a unique, valid IPv4 address to the candidate list."""
+    if not value:
+        return
+
+    value = value.strip()
+
+    if _is_valid_ipv4(value) and value not in candidates:
+        candidates.append(value)
+
+
+def discover_titan_ip_candidates() -> list[str]:
+    """
+    Build a list of likely Titan 3 addresses.
+
+    The preferred Titan address is listed first. On Windows, this also
+    reads ipconfig, adds detected default gateways, and derives the .1
+    address for each active private IPv4 subnet.
+    """
+    candidates: list[str] = []
+
+    _add_candidate(candidates, "192.168.100.1")
+    _add_candidate(candidates, DEFAULT_TITAN_IP)
+
+    for common_address in (
+        "192.168.1.1",
+        "192.168.0.1",
+        "192.168.225.1",
+        "192.168.137.1",
+    ):
+        _add_candidate(candidates, common_address)
+
+    if platform.system().lower() == "windows":
+        try:
+            completed = subprocess.run(
+                ["ipconfig"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=10,
+                encoding="utf-8",
+                errors="replace",
+            )
+
+            ipconfig_output = completed.stdout or ""
+
+            ipv4_matches = re.findall(
+                r"IPv4 Address[^:]*:\s*([0-9.]+)",
+                ipconfig_output,
+                flags=re.IGNORECASE,
+            )
+
+            for local_ip in ipv4_matches:
+                if not _is_valid_ipv4(local_ip):
+                    continue
+
+                try:
+                    address = ipaddress.ip_address(local_ip)
+
+                    if address.is_private:
+                        octets = local_ip.split(".")
+                        subnet_device_ip = ".".join(
+                            octets[:3] + ["1"]
+                        )
+                        _add_candidate(
+                            candidates,
+                            subnet_device_ip,
+                        )
+                except ValueError:
+                    continue
+
+            gateway_matches = re.findall(
+                r"Default Gateway[^:]*:\s*([0-9.]+)",
+                ipconfig_output,
+                flags=re.IGNORECASE,
+            )
+
+            for gateway in gateway_matches:
+                _add_candidate(candidates, gateway)
+
+        except (
+            OSError,
+            subprocess.SubprocessError,
+        ):
+            pass
+
+    return candidates
+
+
+def check_titan_candidate(
+    ip_address: str,
+    port: int = 80,
+) -> tuple[bool, bool]:
+    """
+    Check whether an address responds to ping and whether its web port opens.
+
+    Returns:
+        tuple:
+            ping reachable,
+            TCP port reachable
+    """
+    operating_system = platform.system().lower()
+
+    if operating_system == "windows":
+        ping_command = [
+            "ping",
+            "-n",
+            "1",
+            "-w",
+            "700",
+            ip_address,
+        ]
+    else:
+        ping_command = [
+            "ping",
+            "-c",
+            "1",
+            "-W",
+            "1",
+            ip_address,
+        ]
+
+    try:
+        ping_result = subprocess.run(
+            ping_command,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=2,
+        )
+        ping_reachable = ping_result.returncode == 0
+    except (
+        OSError,
+        subprocess.SubprocessError,
+    ):
+        ping_reachable = False
+
+    try:
+        with socket.create_connection(
+            (ip_address, port),
+            timeout=0.8,
+        ):
+            port_reachable = True
+    except OSError:
+        port_reachable = False
+
+    return ping_reachable, port_reachable
+
+
+def select_titan_ip() -> str:
+    """
+    Show likely Titan 3 IP addresses and let the user choose one.
+
+    Reachable addresses are placed first. The user may also enter a
+    completely different address manually.
+    """
+    print("\n" + "=" * 50)
+    print("TITAN 3 IP FINDER")
+    print("=" * 50)
+    print("\nChecking likely Titan 3 addresses...")
+
+    candidate_results: list[tuple[str, bool, bool]] = []
+
+    for candidate in discover_titan_ip_candidates():
+        ping_reachable, port_reachable = check_titan_candidate(
+            candidate,
+            port=80,
+        )
+
+        candidate_results.append(
+            (
+                candidate,
+                ping_reachable,
+                port_reachable,
+            )
+        )
+
+    candidate_results.sort(
+        key=lambda item: (
+            not item[2],
+            not item[1],
+            item[0] != "192.168.100.1",
+        )
+    )
+
+    print()
+
+    for index, (
+        candidate,
+        ping_reachable,
+        port_reachable,
+    ) in enumerate(candidate_results, start=1):
+        if port_reachable:
+            status = "WEB PORT REACHABLE"
+        elif ping_reachable:
+            status = "PING REACHABLE"
+        else:
+            status = "NO RESPONSE"
+
+        preferred = (
+            "  [preferred Titan address]"
+            if candidate == "192.168.100.1"
+            else ""
+        )
+
+        print(
+            f"  {index}. {candidate:<15} "
+            f"{status}{preferred}"
+        )
+
+    manual_option = len(candidate_results) + 1
+
+    print(
+        f"  {manual_option}. Enter another IP address"
+    )
+
+    default_index = 1
+
+    for index, result in enumerate(
+        candidate_results,
+        start=1,
+    ):
+        if result[0] == "192.168.100.1":
+            default_index = index
+            break
+
+    while True:
+        selection = input(
+            f"\nSelect the Titan 3 address "
+            f"[{default_index}]: "
+        ).strip()
+
+        if not selection:
+            selection = str(default_index)
+
+        try:
+            selected_index = int(selection)
+        except ValueError:
+            print("Enter one of the displayed option numbers.")
+            continue
+
+        if 1 <= selected_index <= len(candidate_results):
+            selected_ip = candidate_results[
+                selected_index - 1
+            ][0]
+
+            print(
+                f"\nSelected Titan 3 IP: {selected_ip}"
+            )
+
+            return selected_ip
+
+        if selected_index == manual_option:
+            while True:
+                manual_ip = input(
+                    "Enter the Titan 3 IPv4 address: "
+                ).strip()
+
+                if _is_valid_ipv4(manual_ip):
+                    print(
+                        f"\nSelected Titan 3 IP: {manual_ip}"
+                    )
+
+                    return manual_ip
+
+                print(
+                    "Enter a valid IPv4 address, "
+                    "such as 192.168.100.1."
+                )
+
+        print("Enter one of the displayed option numbers.")
 
 def prompt_positive_integer(
     message: str,
@@ -467,7 +764,7 @@ def run_automated_tests(
     session_folder,
 ) -> tuple[bool, int, object]:
     """
-    Configure and run repeated automated Python Speedtest tests.
+    Configure and run repeated official Ookla Speedtest CLI tests.
 
     Returns:
         tuple:
@@ -502,6 +799,11 @@ def run_automated_tests(
         default=10,
     )
 
+    speedtest_timeout = prompt_positive_integer(
+        "Speedtest timeout in seconds",
+        default=180,
+    )
+
     excel_path = (
         session_folder
         / "reports"
@@ -529,7 +831,7 @@ def run_automated_tests(
     )
 
     logger.info(
-        "Throughput method: Python speedtest-cli library."
+        "Throughput method: Official Ookla Speedtest CLI."
     )
 
     try:
@@ -539,6 +841,7 @@ def run_automated_tests(
             session_folder=session_folder,
             number_of_runs=number_of_runs,
             delay_between_runs=delay_between_runs,
+            timeout_seconds=speedtest_timeout,
         )
 
         runner.run()
@@ -697,10 +1000,7 @@ def main() -> None:
     print("WNC TESTHUB - TITAN 3 TEST AUTOMATION")
     print("=" * 50)
 
-    titan_ip = prompt_with_default(
-        "Enter Titan 3 IP address",
-        DEFAULT_TITAN_IP,
-    )
+    titan_ip = select_titan_ip()
 
     titan = Titan3(
         ip_address=titan_ip
