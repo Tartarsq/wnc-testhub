@@ -91,52 +91,6 @@ QXDM_TRANSITION_DELAY = 2
 # Ookla Speedtest CLI detection
 # ==========================================================
 
-def find_speedtest_executable() -> Path:
-    """
-    Locate an installed Speedtest executable.
-
-    Search order:
-        1. Windows PATH
-        2. Common Ookla installation folders
-
-    This function only locates the executable. It does not verify
-    whether it is the official Ookla CLI.
-    """
-
-    possible_commands = [
-        "speedtest.exe",
-        "speedtest",
-    ]
-
-    for command in possible_commands:
-        executable = shutil.which(command)
-
-        if executable:
-            return Path(executable).resolve()
-
-    common_locations = [
-        Path(
-            r"C:\Program Files\Ookla\Speedtest CLI\speedtest.exe"
-        ),
-        Path(
-            r"C:\Program Files (x86)\Ookla\Speedtest CLI\speedtest.exe"
-        ),
-        Path(
-            r"C:\Ookla\speedtest.exe"
-        ),
-    ]
-
-    for executable in common_locations:
-        if executable.is_file():
-            return executable.resolve()
-
-    raise FileNotFoundError(
-        "The official Ookla Speedtest CLI could not be found.\n\n"
-        "Install the official Ookla Speedtest CLI and make sure "
-        "speedtest.exe is available in the Windows PATH."
-    )
-
-
 def verify_speedtest_executable(
     executable: Path,
 ) -> str:
@@ -144,15 +98,15 @@ def verify_speedtest_executable(
     Verify that an executable is the official Ookla Speedtest CLI.
 
     Returns:
-        The version output reported by the executable.
+        The complete version output reported by the executable.
 
     Raises:
         FileNotFoundError:
-            If the supplied executable path does not exist.
+            If the executable does not exist.
 
         RuntimeError:
             If the executable cannot be started, returns an error,
-            or appears to be the Python speedtest-cli package.
+            or is not the official Ookla Speedtest CLI.
     """
 
     executable = Path(executable).resolve()
@@ -227,3 +181,119 @@ def verify_speedtest_executable(
         )
 
     return version_output
+
+
+def find_speedtest_executable() -> Path:
+    """
+    Locate and verify the official Ookla Speedtest CLI.
+
+    Search order:
+        1. C:\\Tools\\OoklaSpeedtest
+        2. Common Program Files locations
+        3. Other common manual-install locations
+        4. Windows PATH
+
+    The Python speedtest-cli executable inside a virtual environment
+    is ignored.
+    """
+
+    preferred_locations = [
+        Path(
+            r"C:\Tools\OoklaSpeedtest\speedtest.exe"
+        ),
+        Path(
+            r"C:\Program Files\Ookla\Speedtest CLI\speedtest.exe"
+        ),
+        Path(
+            r"C:\Program Files (x86)\Ookla\Speedtest CLI\speedtest.exe"
+        ),
+        Path(
+            r"C:\Ookla\speedtest.exe"
+        ),
+    ]
+
+    candidates: list[Path] = []
+
+    # Check known official/manual installation locations first.
+    for location in preferred_locations:
+        if location.is_file():
+            candidates.append(
+                location.resolve()
+            )
+
+    # Check Windows PATH after the preferred locations.
+    for command in [
+        "speedtest.exe",
+        "speedtest",
+    ]:
+        path_result = shutil.which(command)
+
+        if not path_result:
+            continue
+
+        path_candidate = Path(
+            path_result
+        ).resolve()
+
+        path_text = str(
+            path_candidate
+        ).lower()
+
+        virtual_environment_markers = [
+            r"\.venv\scripts\\",
+            r"\venv\scripts\\",
+            r"\env\scripts\\",
+            r"\virtualenv\scripts\\",
+        ]
+
+        is_virtual_environment_executable = any(
+            marker in path_text
+            for marker in virtual_environment_markers
+        )
+
+        if not is_virtual_environment_executable:
+            candidates.append(
+                path_candidate
+            )
+
+    checked_paths: set[Path] = set()
+    rejected_candidates: list[str] = []
+
+    for candidate in candidates:
+        if candidate in checked_paths:
+            continue
+
+        checked_paths.add(candidate)
+
+        try:
+            verify_speedtest_executable(
+                candidate
+            )
+
+            return candidate
+
+        except (
+            FileNotFoundError,
+            RuntimeError,
+        ) as error:
+            rejected_candidates.append(
+                f"{candidate}\n{error}"
+            )
+
+    rejection_details = ""
+
+    if rejected_candidates:
+        rejection_details = (
+            "\n\nRejected candidates:\n"
+            + "\n\n".join(
+                rejected_candidates
+            )
+        )
+
+    raise FileNotFoundError(
+        "The official Ookla Speedtest CLI could not be found.\n\n"
+        "Expected location:\n"
+        r"C:\Tools\OoklaSpeedtest\speedtest.exe"
+        "\n\nMake sure the official speedtest.exe is inside that folder."
+        f"{rejection_details}"
+    )
