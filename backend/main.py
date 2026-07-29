@@ -429,21 +429,37 @@ def start_qxdm_logging(
             "The user confirmed that the QXDM log settings are ready."
         )
 
-        print(
-            "\nPreparing the modem for throughput testing..."
+        perform_airplane_mode = prompt_yes_no(
+            "Perform Airplane Mode before throughput testing?",
+            default=True,
         )
 
-        qxdm.mode_lpm()
-        logger.info("ModeLPM was sent successfully.")
-        time.sleep(2)
+        if perform_airplane_mode:
+            print(
+                "\nPreparing the modem for throughput testing..."
+            )
 
-        qxdm.mode_online()
-        logger.info("ModeOnline was sent successfully.")
-        time.sleep(2)
+            qxdm.mode_lpm()
+            logger.info("ModeLPM was sent successfully.")
+            time.sleep(2)
 
-        print(
-            "\nTitan 3 is back in online mode."
-        )
+            qxdm.mode_online()
+            logger.info("ModeOnline was sent successfully.")
+            time.sleep(2)
+
+            print(
+                "\nTitan 3 is back in online mode."
+            )
+
+        else:
+            logger.info(
+                "The user skipped Airplane Mode."
+            )
+
+            print(
+                "\nSkipping Airplane Mode."
+            )
+
         print(
             "Proceeding directly to automated throughput testing."
         )
