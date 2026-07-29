@@ -277,11 +277,9 @@ def start_qxdm_logging(
     session_folder,
 ):
     """
-    Launch QXDM, attempt one automatic DMC load, verify it once,
-    send ModeLPM and ModeOnline, then continue to throughput testing.
-
-    A QXDM file-dialog timeout does not cancel the test. The user's
-    verification decides whether the configuration is ready.
+    Launch QXDM, load the DMC once, verify it, let the user configure
+    log-saving settings, then send mode lpm and mode online before
+    automated throughput testing.
     """
 
     should_start = prompt_yes_no(
@@ -290,9 +288,7 @@ def start_qxdm_logging(
     )
 
     if not should_start:
-        logger.info(
-            "The user skipped the QXDM setup."
-        )
+        logger.info("The user skipped the QXDM setup.")
         return False, None
 
     qxdm_log_path = (
@@ -312,34 +308,15 @@ def start_qxdm_logging(
         print("QXDM AUTOMATED SETUP")
         print("=" * 50)
 
-        print(
-            "\nThe application will:"
-            "\n  1. Launch or focus QXDM."
-            "\n  2. Attempt File > Load Configuration once."
-            "\n  3. Ask once whether the DMC loaded correctly."
-            "\n  4. Send ModeLPM."
-            "\n  5. Send ModeOnline."
-            "\n  6. Continue directly to throughput testing."
-        )
-
-        logger.info("Launching QXDM.")
         qxdm.launch()
         logger.info("QXDM launched or focused successfully.")
 
-        print("\nQXDM is open.")
-
         input(
             "\nVerify that QXDM can see the connected device.\n"
-            "Press Enter to attempt the DMC configuration load..."
-        )
-
-        logger.info(
-            "Attempting one automatic QXDM DMC load."
+            "Press Enter to load the DMC configuration..."
         )
 
         try:
-            # Resolve the configured or previously remembered DMC. If none
-            # exists, show the picker once. Never retry with a second picker.
             resolved_mask = qxdm.resolve_default_mask()
 
             if resolved_mask is None:
@@ -348,21 +325,21 @@ def start_qxdm_logging(
             qxdm.load_default_mask()
 
             logger.info(
-                "The QXDM DMC load action completed."
+                "The QXDM DMC load command was submitted."
             )
+
             print(
-                "\nThe DMC load action was completed."
+                "\nThe configured DMC file was submitted to QXDM."
             )
 
         except Exception as error:
-            # QXDM sometimes loads the file even when UI automation times out.
-            # Do not retry or cancel. Let the verification prompt decide.
             logger.warning(
-                "The automatic DMC load could not be confirmed: %s",
+                "Automatic QXDM DMC loading could not be confirmed: %s",
                 error,
             )
+
             print(
-                "\nThe automatic DMC load could not be confirmed."
+                "\nAutomatic DMC loading could not be confirmed."
             )
             print(f"Reason: {error}")
 
@@ -375,12 +352,57 @@ def start_qxdm_logging(
             print(
                 "\nLoad the correct DMC configuration manually in QXDM."
             )
+
             input(
                 "Press Enter after the configuration has been loaded..."
             )
+
             logger.warning(
                 "The QXDM configuration required manual loading."
             )
+
+        print("\n" + "=" * 50)
+        print("QXDM LOG SETTINGS")
+        print("=" * 50)
+
+        print(
+            "\nIn QXDM, open Options > Settings."
+            "\nConfigure:"
+            "\n  - Base File Name"
+            "\n  - Log File Directory"
+            "\n  - Maximum Log File Size"
+            "\n  - Maximum Log File Duration"
+            "\n  - Automatic file-saving options"
+        )
+
+        print(
+            f"\nSuggested session log directory:\n"
+            f"{qxdm_log_path.parent}"
+        )
+
+        input(
+            "\nPress Enter after you configured the "
+            "QXDM log settings and clicked OK..."
+        )
+
+        log_settings_ready = prompt_yes_no(
+            "Are the QXDM log settings configured correctly?",
+            default=True,
+        )
+
+        if not log_settings_ready:
+            print(
+                "\nReturn to Options > Settings and correct "
+                "the QXDM log settings."
+            )
+
+            input(
+                "Press Enter after the settings are ready..."
+            )
+
+        logger.info(
+            "The user confirmed that the QXDM log settings are ready."
+        )
 
         print(
             "\nPreparing the modem for throughput testing..."
@@ -394,13 +416,13 @@ def start_qxdm_logging(
         logger.info("ModeOnline was sent successfully.")
         time.sleep(2)
 
-        print("\nTitan 3 is back in online mode.")
+        print(
+            "\nTitan 3 is back in online mode."
+        )
         print(
             "Proceeding directly to automated throughput testing."
         )
 
-        # No QXDM capture was started by this simplified flow, so returning
-        # False prevents the later manual capture-stop prompt.
         return False, qxdm_log_path
 
     except Exception as error:
@@ -414,16 +436,18 @@ def start_qxdm_logging(
         print(f"Reason: {error}")
 
         continue_test = prompt_yes_no(
-            "Continue directly to throughput testing?",
+            "Continue the Titan 3 test without QXDM setup?",
             default=True,
         )
 
         if not continue_test:
             raise RuntimeError(
-                "Test cancelled because the QXDM setup failed."
+                "Test cancelled because the QXDM setup "
+                "could not be completed."
             ) from error
 
         return False, qxdm_log_path
+
 
 def run_automated_tests(
     titan: Titan3,
