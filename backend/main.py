@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import ipaddress
 import platform
 import re
@@ -567,14 +569,13 @@ def start_qxdm_logging(
     session_folder,
 ):
     """
-    Automatically launch QXDM, select or reuse a DMC configuration,
-    configure the capture destination and size, and start logging.
+    Launch QXDM and guide the user through the configurable logging setup.
 
-    If no saved DMC configuration exists, a file picker is opened.
-    The selected file is remembered for later runs.
+    The workflow preserves automatic DMC loading while allowing the user
+    to choose the log folder, filename, size, and modem mode transitions.
     """
     should_start = prompt_yes_no(
-        "Start the automated QXDM logging setup?",
+        "Start the QXDM logging setup?",
         default=True,
     )
 
@@ -584,52 +585,175 @@ def start_qxdm_logging(
         )
         return False, None
 
-    qxdm_log_path = (
-        session_folder
-        / "captures"
-        / "qxdm"
-        / QXDM_DEFAULT_LOG_FILENAME
-    )
-
-    qxdm_log_path.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
+    print("\n" + "=" * 50)
+    print("QXDM LOGGING SETUP")
+    print("=" * 50)
 
     try:
-        print("\n" + "=" * 50)
-        print("QXDM AUTOMATED SETUP")
-        print("=" * 50)
+        logger.info("Launching QXDM.")
+        qxdm.launch()
 
-        print(
-            "\nThe application will:"
-            "\n  1. Launch or focus QXDM."
-            "\n  2. Reuse the last selected DMC configuration, if available."
-            "\n  3. Otherwise open a file picker so you can select the DMC file."
-            "\n  4. Open File > Load Configuration automatically."
-            "\n  5. Configure the QXDM log destination."
-            "\n  6. Set the maximum log size."
-            "\n  7. Start the QXDM capture."
-            "\n  8. Send mode lpm."
-            "\n  9. Send mode online."
+        print("\nQXDM is open.")
+
+        open_settings = prompt_yes_no(
+            "Open QXDM Options > Settings before configuring the log?",
+            default=True,
         )
 
+        if open_settings:
+            try:
+                qxdm.open_qxdm_settings()
+
+                print(
+                    "\nReview or change the QXDM logging settings."
+                )
+                print(
+                    "Save or apply the settings, then close the "
+                    "Settings window."
+                )
+
+                input(
+                    "Press Enter after the QXDM Settings window is closed..."
+                )
+
+            except Exception as settings_error:
+                logger.warning(
+                    "QXDM Settings could not be opened automatically: %s",
+                    settings_error,
+                )
+
+                print(
+                    "\nThe QXDM Settings window could not be opened "
+                    "automatically."
+                )
+                print(
+                    "Open Options > Settings manually if you need to "
+                    "change additional QXDM preferences."
+                )
+
+                input(
+                    "Press Enter when you are ready to continue..."
+                )
+
+        default_log_folder = (
+            session_folder
+            / "captures"
+            / "qxdm"
+        )
+
+        log_folder_text = prompt_with_default(
+            "QXDM log folder",
+            str(default_log_folder),
+        )
+
+        log_filename = prompt_with_default(
+            "QXDM log filename",
+            QXDM_DEFAULT_LOG_FILENAME,
+        )
+
+        if not log_filename.lower().endswith(".isf"):
+            log_filename = f"{log_filename}.isf"
+
+        maximum_log_size_mb = prompt_positive_integer(
+            "Maximum QXDM log size in MB",
+            default=qxdm.max_log_size_mb,
+        )
+
+        maximum_log_size_mb = min(
+            maximum_log_size_mb,
+            1024,
+        )
+
+        if maximum_log_size_mb != qxdm.max_log_size_mb:
+            qxdm.max_log_size_mb = maximum_log_size_mb
+
+        qxdm_log_path = (
+            Path(log_folder_text).expanduser()
+            / log_filename
+        ).resolve()
+
+        qxdm_log_path.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        print("\nQXDM capture configuration:")
+        print(f"  Folder: {qxdm_log_path.parent}")
+        print(f"  Filename: {qxdm_log_path.name}")
         print(
-            f"\nQXDM capture path:\n{qxdm_log_path}"
+            f"  Maximum size: {qxdm.max_log_size_mb} MB"
         )
 
         logger.info(
-            "Starting the automated QXDM logging sequence."
+            "QXDM log path: %s",
+            qxdm_log_path,
+        )
+        logger.info(
+            "QXDM maximum log size: %s MB",
+            qxdm.max_log_size_mb,
         )
 
-        qxdm.start_logging(
-            log_path=qxdm_log_path,
-            load_mask=True,
+        print(
+            "\nLoading the QXDM DMC configuration..."
+        )
+
+        qxdm.ensure_default_mask_loaded(
+            retry_with_picker=True,
         )
 
         logger.info(
-            "QXDM logging started successfully."
+            "The QXDM DMC configuration was loaded."
         )
+
+        print(
+            "\nConfiguring and starting the QXDM capture..."
+        )
+
+        qxdm.configure_logging(
+            qxdm_log_path
+        )
+
+        logger.info(
+            "QXDM capture started."
+        )
+
+        use_airplane_transition = prompt_yes_no(
+            "Use the airplane/low-power mode transition before testing?",
+            default=True,
+        )
+
+        if use_airplane_transition:
+            send_lpm = prompt_yes_no(
+                "Send mode lpm now?",
+                default=True,
+            )
+
+            if send_lpm:
+                qxdm.mode_lpm()
+                logger.info("mode lpm was sent.")
+            else:
+                logger.info(
+                    "The user skipped mode lpm."
+                )
+
+            send_online = prompt_yes_no(
+                "Send mode online now?",
+                default=True,
+            )
+
+            if send_online:
+                qxdm.mode_online()
+                logger.info("mode online was sent.")
+            else:
+                logger.info(
+                    "The user skipped mode online."
+                )
+
+        else:
+            logger.info(
+                "The user skipped the airplane/low-power "
+                "mode transition."
+            )
 
         print(
             "\nQXDM capture is running."
@@ -642,21 +766,23 @@ def start_qxdm_logging(
 
     except Exception as error:
         logger.exception(
-            "The automated QXDM setup could not be completed."
+            "The QXDM logging setup could not be completed."
         )
 
         print(
-            "\nThe automated QXDM setup could not be completed."
+            "\nThe QXDM logging setup could not be completed."
         )
         print(
             f"Reason: {error}"
         )
 
         print(
-            "\nYou may complete the setup manually in QXDM:"
+            "\nYou can complete these steps manually in QXDM:"
             "\n  1. Open File > Load Configuration."
-            "\n  2. Select the DMC configuration."
-            "\n  3. Start logging and save to the displayed capture path."
+            "\n  2. Select the DMC file."
+            "\n  3. Set the log name, folder, and maximum size."
+            "\n  4. Start the capture."
+            "\n  5. Send mode lpm and mode online if required."
         )
 
         manual_setup = prompt_yes_no(
@@ -666,22 +792,33 @@ def start_qxdm_logging(
 
         if manual_setup:
             logger.warning(
-                "The user completed the QXDM setup manually."
+                "The user completed QXDM setup manually."
             )
-            return True, qxdm_log_path
+
+            manual_path = input(
+                "Enter the QXDM log path, or press Enter "
+                "to leave it blank: "
+            ).strip()
+
+            return (
+                True,
+                Path(manual_path).expanduser().resolve()
+                if manual_path
+                else None,
+            )
 
         continue_test = prompt_yes_no(
-            "Continue the Titan 3 test without QXDM capture?",
+            "Continue without QXDM capture?",
             default=True,
         )
 
         if not continue_test:
             raise RuntimeError(
-                "Test cancelled because the QXDM setup "
-                "could not be completed."
+                "Test cancelled because QXDM logging "
+                "could not be started."
             ) from error
 
-        return False, qxdm_log_path
+        return False, None
 
 
 def run_automated_tests(
