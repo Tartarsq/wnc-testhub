@@ -810,6 +810,54 @@ def start_qxdm_logging(
                 "to leave it blank: "
             ).strip()
 
+            use_airplane_mode = prompt_yes_no(
+                "Do you want to send the Titan 3 to airplane mode "
+                "before testing?",
+                default=True,
+            )
+
+            if use_airplane_mode:
+                print(
+                    "\nSending mode lpm..."
+                )
+                qxdm.mode_lpm()
+                logger.info(
+                    "mode lpm was sent automatically after manual QXDM setup."
+                )
+
+                print(
+                    "\nWaiting for the modem to enter low-power mode..."
+                )
+                time.sleep(2)
+
+                print(
+                    "\nSending mode online..."
+                )
+                qxdm.mode_online()
+                logger.info(
+                    "mode online was sent automatically after manual QXDM setup."
+                )
+
+                print(
+                    "\nWaiting for the modem to return online..."
+                )
+                time.sleep(2)
+
+                print(
+                    "\nAirplane-mode transition completed."
+                )
+
+            else:
+                logger.info(
+                    "The user skipped the airplane-mode transition "
+                    "after manual QXDM setup."
+                )
+
+                print(
+                    "\nAirplane-mode transition skipped. "
+                    "mode lpm and mode online were not sent."
+                )
+
             return (
                 True,
                 Path(manual_path).expanduser().resolve()
