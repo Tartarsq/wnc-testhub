@@ -1,18 +1,27 @@
 from __future__ import annotations
 
+import json
 import socket
+import subprocess
 import time
+from pathlib import Path
 from typing import Any
 
-import speedtest
+from config import (
+    find_speedtest_executable,
+    verify_speedtest_executable,
+)
 
 
 class ThroughputTester:
     """
-    Run internet throughput tests using speedtest-cli.
+    Run throughput tests using the official Ookla Speedtest CLI.
 
-    The Speedtest object and selected server are reused between runs
-    to reduce setup time.
+    The executable is detected automatically through config.py.
+
+    The public class interface is kept similar to the previous
+    speedtest-cli implementation so existing project code does not
+    require major changes.
     """
 
     def __init__(
@@ -21,170 +30,380 @@ class ThroughputTester:
         maximum_retries: int = 1,
         retry_delay_seconds: int = 2,
         refresh_server_every: int = 10,
+        server_id: str | int | None = None,
     ) -> None:
         self.timeout_seconds = timeout_seconds
         self.maximum_retries = maximum_retries
         self.retry_delay_seconds = retry_delay_seconds
+
+        # Kept for compatibility with existing code.
+        # The official CLI starts a new process for every test, so it
+        # does not reuse a persistent Speedtest connection.
         self.refresh_server_every = refresh_server_every
 
-        self.tester: speedtest.Speedtest | None = None
+        # This will later allow us to lock testing to the
+        # Verizon Bridgewater Speedtest server.
+        self.server_id = (
+            str(server_id)
+            if server_id is not None
+            else None
+        )
+
         self.completed_tests = 0
 
+        # Automatically locate the official Ookla CLI.
+        self.speedtest_path: Path = (
+            find_speedtest_executable()
+        )
+
+        # Make sure the detected executable is the official
+        # Ookla CLI and not the Python speedtest-cli package.
+        self.speedtest_version = (
+            verify_speedtest_executable(
+                self.speedtest_path
+            )
+        )
+
     @staticmethod
-    def _to_float(value: Any) -> float | None:
+    def _to_float(
+        value: Any,
+    ) -> float | None:
         """Convert a value to a rounded float when possible."""
         if value is None:
             return None
 
         try:
-            return round(float(value), 2)
+            return round(
+                float(value),
+                2,
+            )
         except (TypeError, ValueError):
             return None
 
     @staticmethod
     def _get_interface_name() -> str | None:
         """
-        Return the local hostname.
-
-        speedtest-cli does not directly expose the Windows network
-        interface name, so this provides a useful local identifier.
+        Return the local hostname when the CLI does not provide
+        a network-interface name.
         """
         try:
             return socket.gethostname()
         except OSError:
             return None
 
-    def _create_tester(self) -> speedtest.Speedtest:
-        """Create and configure the Speedtest object."""
-        print("Initializing Speedtest connection...")
-
-        tester = speedtest.Speedtest(
-            timeout=self.timeout_seconds,
-            secure=True,
-        )
-
-        print("Selecting the best Speedtest server...")
-        tester.get_best_server()
-
-        return tester
-
-    def _ensure_tester(self) -> speedtest.Speedtest:
+    @staticmethod
+    def _extract_json(
+        output: str,
+    ) -> dict[str, Any]:
         """
-        Return the existing Speedtest object or create a new one.
+        Parse JSON returned by the Ookla CLI.
 
-        The server is periodically refreshed so long test sessions do
-        not permanently rely on a server that may become degraded.
+        Normally the CLI returns only JSON when --format=json is used.
+        The fallback handles cases where another informational line is
+        printed before the JSON object.
         """
-        should_refresh = (
-            self.tester is None
-            or (
-                self.refresh_server_every > 0
-                and self.completed_tests > 0
-                and self.completed_tests
-                % self.refresh_server_every
-                == 0
+        cleaned_output = output.strip()
+
+        if not cleaned_output:
+            raise RuntimeError(
+                "Ookla Speedtest returned no output."
             )
-        )
 
-        if should_refresh:
-            self.tester = self._create_tester()
+        try:
+            parsed_output = json.loads(
+                cleaned_output
+            )
+        except json.JSONDecodeError:
+            json_start = cleaned_output.find("{")
 
-        return self.tester
+            if json_start == -1:
+                raise RuntimeError(
+                    "Ookla Speedtest did not return valid JSON.\n"
+                    f"Output:\n{cleaned_output}"
+                )
+
+            try:
+                parsed_output = json.loads(
+                    cleaned_output[json_start:]
+                )
+            except json.JSONDecodeError as error:
+                raise RuntimeError(
+                    "Ookla Speedtest returned invalid JSON.\n"
+                    f"Output:\n{cleaned_output}"
+                ) from error
+
+        if not isinstance(parsed_output, dict):
+            raise RuntimeError(
+                "Ookla Speedtest returned an unexpected "
+                "JSON structure."
+            )
+
+        return parsed_output
+
+    def _build_command(self) -> list[str]:
+        """
+        Create the command used to run the official Ookla CLI.
+        """
+        command = [
+            str(self.speedtest_path),
+            "--accept-license",
+            "--accept-gdpr",
+            "--format=json",
+        ]
+
+        if self.server_id:
+            command.extend(
+                [
+                    "--server-id",
+                    self.server_id,
+                ]
+            )
+
+        return command
 
     def reset_connection(self) -> None:
-        """Force a new Speedtest connection on the next test."""
-        self.tester = None
+        """
+        Compatibility method.
 
-    def _run_test_once(self) -> dict[str, Any]:
-        """Run one download and upload test."""
-        tester = self._ensure_tester()
+        The official CLI creates a new process and connection for every
+        throughput test, so there is no persistent connection to reset.
+        """
+        return None
 
+    def _run_speedtest_command(
+        self,
+    ) -> dict[str, Any]:
+        """Run the official Ookla CLI and return its JSON output."""
+        command = self._build_command()
+
+        print(
+            f"Using Speedtest CLI: {self.speedtest_path}"
+        )
+
+        if self.server_id:
+            print(
+                f"Using Speedtest server ID: "
+                f"{self.server_id}"
+            )
+        else:
+            print(
+                "Using the automatically selected "
+                "Speedtest server..."
+            )
+
+        # A full download/upload test normally needs much longer than
+        # the network timeout value supplied to the constructor.
+        process_timeout_seconds = max(
+            180,
+            self.timeout_seconds,
+        )
+
+        completed_process = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=process_timeout_seconds,
+            encoding="utf-8",
+            errors="replace",
+        )
+
+        standard_output = (
+            completed_process.stdout.strip()
+        )
+
+        standard_error = (
+            completed_process.stderr.strip()
+        )
+
+        if completed_process.returncode != 0:
+            error_output = (
+                standard_error
+                or standard_output
+                or "No error details were returned."
+            )
+
+            raise RuntimeError(
+                "Ookla Speedtest failed.\n"
+                f"Exit code: "
+                f"{completed_process.returncode}\n"
+                f"Details:\n{error_output}"
+            )
+
+        return self._extract_json(
+            standard_output
+        )
+
+    def _run_test_once(
+        self,
+    ) -> dict[str, Any]:
+        """Run one complete download and upload test."""
         test_start = time.perf_counter()
 
-        print("Running download test...")
-        download_mbps = tester.download() / 1_000_000
+        print("Running Ookla throughput test...")
 
-        print("Running upload test...")
-        upload_mbps = tester.upload() / 1_000_000
+        raw_results = (
+            self._run_speedtest_command()
+        )
 
-        elapsed_seconds = time.perf_counter() - test_start
-
-        results = tester.results.dict()
+        elapsed_seconds = (
+            time.perf_counter()
+            - test_start
+        )
 
         self.completed_tests += 1
 
-        server = results.get("server") or {}
-        client = results.get("client") or {}
+        download = (
+            raw_results.get("download")
+            or {}
+        )
 
-        server_name = server.get("name")
-        server_country = server.get("country")
-        server_sponsor = server.get("sponsor")
+        upload = (
+            raw_results.get("upload")
+            or {}
+        )
 
-        server_location_parts = [
-            part
-            for part in [
-                server_name,
-                server_country,
-            ]
-            if part
-        ]
+        ping = (
+            raw_results.get("ping")
+            or {}
+        )
 
-        server_location = ", ".join(
-            server_location_parts
+        server = (
+            raw_results.get("server")
+            or {}
+        )
+
+        interface = (
+            raw_results.get("interface")
+            or {}
+        )
+
+        result_information = (
+            raw_results.get("result")
+            or {}
+        )
+
+        # The official Ookla CLI reports bandwidth in bytes per second.
+        # Multiply by 8 to convert bytes to bits, then divide by
+        # 1,000,000 to convert to Mbps.
+        download_bandwidth = self._to_float(
+            download.get("bandwidth")
+        )
+
+        upload_bandwidth = self._to_float(
+            upload.get("bandwidth")
+        )
+
+        download_mbps = (
+            round(
+                download_bandwidth
+                * 8
+                / 1_000_000,
+                2,
+            )
+            if download_bandwidth is not None
+            else None
+        )
+
+        upload_mbps = (
+            round(
+                upload_bandwidth
+                * 8
+                / 1_000_000,
+                2,
+            )
+            if upload_bandwidth is not None
+            else None
+        )
+
+        server_name = (
+            server.get("name")
+            or server.get("host")
+        )
+
+        server_location = (
+            server.get("location")
+            or server.get("country")
+        )
+
+        interface_name = (
+            interface.get("name")
+            or self._get_interface_name()
         )
 
         return {
-            "download_mbps": round(
-                download_mbps,
-                2,
-            ),
-            "upload_mbps": round(
-                upload_mbps,
-                2,
-            ),
+            "download_mbps": download_mbps,
+            "upload_mbps": upload_mbps,
+
             "ping_ms": self._to_float(
-                results.get("ping")
+                ping.get("latency")
             ),
 
-            # speedtest-cli does not normally provide jitter.
-            "ping_jitter_ms": None,
+            "ping_jitter_ms": self._to_float(
+                ping.get("jitter")
+            ),
 
-            # speedtest-cli often does not provide packet loss.
             "packet_loss_percent": self._to_float(
-                results.get("packetLoss")
-                or results.get("packet_loss")
+                raw_results.get("packetLoss")
+                or raw_results.get(
+                    "packet_loss"
+                )
             ),
 
-            "isp": client.get("isp"),
-            "external_ip": client.get("ip"),
-            "interface_name": self._get_interface_name(),
+            "isp": raw_results.get("isp"),
 
-            "server_name": (
-                server_sponsor
-                or server_name
+            "external_ip": (
+                interface.get("externalIp")
+                or interface.get("external_ip")
             ),
+
+            "interface_name": interface_name,
+
+            "server_name": server_name,
             "server_location": server_location,
 
-            # This is usually blank unless results.share()
-            # is explicitly called.
-            "result_url": results.get("share"),
+            "server_id": (
+                server.get("id")
+            ),
+
+            "server_host": (
+                server.get("host")
+            ),
+
+            "result_url": (
+                result_information.get("url")
+                or raw_results.get("share")
+            ),
 
             "test_duration_seconds": round(
                 elapsed_seconds,
                 2,
             ),
+
+            # Keep the full response available so that we can save
+            # a separate JSON log for every throughput test later.
+            "raw_speedtest_result": raw_results,
         }
 
-    def run_full_test(self) -> dict[str, Any]:
+    def run_full_test(
+        self,
+    ) -> dict[str, Any]:
         """
         Run a complete throughput test.
 
-        If a test fails, reset the Speedtest connection and retry.
+        If a test fails, retry according to maximum_retries.
         """
-        attempts = self.maximum_retries + 1
+        attempts = (
+            self.maximum_retries
+            + 1
+        )
+
         last_error: Exception | None = None
 
-        for attempt in range(1, attempts + 1):
+        for attempt in range(
+            1,
+            attempts + 1,
+        ):
             try:
                 print(
                     f"Speedtest attempt "
@@ -193,30 +412,38 @@ class ThroughputTester:
 
                 return self._run_test_once()
 
+            except subprocess.TimeoutExpired as error:
+                last_error = error
+
+                print(
+                    "Speedtest attempt "
+                    f"{attempt} timed out."
+                )
+
             except Exception as error:
                 last_error = error
 
                 print(
-                    f"Speedtest attempt {attempt} failed: "
+                    f"Speedtest attempt "
+                    f"{attempt} failed: "
                     f"{error}"
                 )
 
-                # Discard the current connection and server.
-                self.reset_connection()
+            if attempt < attempts:
+                print(
+                    f"Retrying in "
+                    f"{self.retry_delay_seconds} "
+                    "seconds..."
+                )
 
-                if attempt < attempts:
-                    print(
-                        f"Retrying in "
-                        f"{self.retry_delay_seconds} seconds..."
-                    )
-
-                    time.sleep(
-                        self.retry_delay_seconds
-                    )
+                time.sleep(
+                    self.retry_delay_seconds
+                )
 
         raise RuntimeError(
-            f"Speedtest failed after {attempts} "
-            f"attempt(s): {last_error}"
+            f"Speedtest failed after "
+            f"{attempts} attempt(s): "
+            f"{last_error}"
         ) from last_error
 
 
@@ -228,10 +455,26 @@ if __name__ == "__main__":
         refresh_server_every=10,
     )
 
-    test_results = throughput_tester.run_full_test()
+    print("\nSpeedtest Installation")
+    print("=" * 40)
+    print(
+        f"Executable: "
+        f"{throughput_tester.speedtest_path}"
+    )
+    print(
+        f"Version: "
+        f"{throughput_tester.speedtest_version}"
+    )
+
+    test_results = (
+        throughput_tester.run_full_test()
+    )
 
     print("\nSpeedtest Results")
     print("=" * 40)
 
     for key, value in test_results.items():
+        if key == "raw_speedtest_result":
+            continue
+
         print(f"{key}: {value}")
