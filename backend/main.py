@@ -567,22 +567,21 @@ def start_qxdm_logging(
     session_folder,
 ):
     """
-    Launch QXDM, load the configured DMC file, and prepare capture.
+    Automatically launch QXDM, select or reuse a DMC configuration,
+    configure the capture destination and size, and start logging.
 
-    The user currently confirms the capture start because this QXDM
-    version does not expose the expected Start Logging menu path.
+    If no saved DMC configuration exists, a file picker is opened.
+    The selected file is remembered for later runs.
     """
-
     should_start = prompt_yes_no(
-        "Start the QXDM setup?",
+        "Start the automated QXDM logging setup?",
         default=True,
     )
 
     if not should_start:
         logger.info(
-            "The user skipped the QXDM setup."
+            "The user skipped the QXDM logging setup."
         )
-
         return False, None
 
     qxdm_log_path = (
@@ -605,125 +604,36 @@ def start_qxdm_logging(
         print(
             "\nThe application will:"
             "\n  1. Launch or focus QXDM."
-            "\n  2. Open File > Load Configuration."
-            "\n  3. Load the configured DMC file."
-            "\n  4. Wait for configuration confirmation."
-            "\n  5. Ask you to start the QXDM capture."
-            "\n  6. Send mode lpm."
-            "\n  7. Send mode online."
+            "\n  2. Reuse the last selected DMC configuration, if available."
+            "\n  3. Otherwise open a file picker so you can select the DMC file."
+            "\n  4. Open File > Load Configuration automatically."
+            "\n  5. Configure the QXDM log destination."
+            "\n  6. Set the maximum log size."
+            "\n  7. Start the QXDM capture."
+            "\n  8. Send mode lpm."
+            "\n  9. Send mode online."
         )
 
         print(
-            f"\nRequested QXDM capture path:\n"
-            f"{qxdm_log_path}"
+            f"\nQXDM capture path:\n{qxdm_log_path}"
         )
 
         logger.info(
-            "Launching QXDM."
+            "Starting the automated QXDM logging sequence."
         )
 
-        qxdm.launch()
-
-        logger.info(
-            "QXDM launched or focused successfully."
-        )
-
-        print(
-            "\nQXDM is open."
-        )
-
-        input(
-            "\nVerify that QXDM can see the connected device.\n"
-            "Press Enter to load the DMC configuration..."
+        qxdm.start_logging(
+            log_path=qxdm_log_path,
+            load_mask=True,
         )
 
         logger.info(
-            "Loading the configured QXDM DMC file."
-        )
-
-        mask_loaded = qxdm.load_default_mask()
-
-        if mask_loaded:
-            logger.info(
-                "The QXDM DMC configuration was loaded."
-            )
-
-            print(
-                "\nThe configured DMC file was loaded."
-            )
-
-        else:
-            logger.warning(
-                "No default QXDM DMC configuration was loaded."
-            )
-
-            print(
-                "\nNo default DMC configuration was loaded."
-            )
-
-        configuration_ready = prompt_yes_no(
-            "Did the QXDM configuration load correctly?",
-            default=True,
-        )
-
-        if not configuration_ready:
-            print(
-                "\nLoad the correct DMC configuration "
-                "manually in QXDM."
-            )
-
-            input(
-                "Press Enter after the configuration "
-                "has been loaded..."
-            )
-
-            logger.warning(
-                "The QXDM configuration required "
-                "manual confirmation."
-            )
-
-        print(
-            "\nIn QXDM, start the capture and set its "
-            "destination to:"
-        )
-
-        print(
-            qxdm_log_path
-        )
-
-        input(
-            "\nPress Enter after the QXDM capture "
-            "has started..."
-        )
-
-        logger.info(
-            "The user confirmed that QXDM capture started."
-        )
-
-        print(
-            "\nPreparing the modem for testing..."
-        )
-
-        qxdm.mode_lpm()
-
-        logger.info(
-            "mode lpm was sent successfully."
-        )
-
-        qxdm.mode_online()
-
-        logger.info(
-            "mode online was sent successfully."
+            "QXDM logging started successfully."
         )
 
         print(
             "\nQXDM capture is running."
         )
-
-        print(
-            "Titan 3 is in online mode."
-        )
-
         print(
             f"Capture path: {qxdm_log_path}"
         )
@@ -732,16 +642,33 @@ def start_qxdm_logging(
 
     except Exception as error:
         logger.exception(
-            "The QXDM setup could not be completed."
+            "The automated QXDM setup could not be completed."
         )
 
         print(
-            "\nThe QXDM setup could not be completed."
+            "\nThe automated QXDM setup could not be completed."
         )
-
         print(
             f"Reason: {error}"
         )
+
+        print(
+            "\nYou may complete the setup manually in QXDM:"
+            "\n  1. Open File > Load Configuration."
+            "\n  2. Select the DMC configuration."
+            "\n  3. Start logging and save to the displayed capture path."
+        )
+
+        manual_setup = prompt_yes_no(
+            "Did you complete the QXDM setup manually?",
+            default=False,
+        )
+
+        if manual_setup:
+            logger.warning(
+                "The user completed the QXDM setup manually."
+            )
+            return True, qxdm_log_path
 
         continue_test = prompt_yes_no(
             "Continue the Titan 3 test without QXDM capture?",
@@ -750,8 +677,8 @@ def start_qxdm_logging(
 
         if not continue_test:
             raise RuntimeError(
-                "Test cancelled because the QXDM "
-                "setup could not be completed."
+                "Test cancelled because the QXDM setup "
+                "could not be completed."
             ) from error
 
         return False, qxdm_log_path
@@ -893,16 +820,13 @@ def stop_qxdm_logging(
     logging_started: bool,
 ) -> bool:
     """
-    Place the modem into low-power mode and allow the user
-    to stop and save the QXDM capture.
+    Automatically stop QXDM capture, wait for the log to finish saving,
+    and reopen the completed log in QXDM.
     """
-
     if not logging_started:
         logger.info(
-            "QXDM capture was not started, so no stop "
-            "procedure was required."
+            "QXDM capture was not started, so no stop procedure was required."
         )
-
         return False
 
     input(
@@ -912,87 +836,50 @@ def stop_qxdm_logging(
 
     try:
         logger.info(
-            "Preparing to stop the QXDM capture."
+            "Stopping and finalizing the QXDM capture."
         )
 
-        print(
-            "\nSending mode lpm before stopping capture..."
+        qxdm.stop_logging(
+            load_saved_log=True,
         )
-
-        qxdm.mode_lpm()
 
         logger.info(
-            "mode lpm was sent before capture stop."
+            "QXDM capture stopped, saved, and reopened successfully."
         )
 
         print(
-            "\nStop and save the QXDM capture "
-            "using the QXDM toolbar."
+            "\nQXDM capture stopped successfully."
         )
-
-        input(
-            "Press Enter after the QXDM capture "
-            "has been stopped and saved..."
-        )
-
-        capture_stopped = prompt_yes_no(
-            "Was the QXDM capture stopped successfully?",
-            default=True,
-        )
-
-        if capture_stopped:
-            logger.info(
-                "The user confirmed that the QXDM "
-                "capture stopped successfully."
-            )
-
-            print(
-                "\nQXDM capture stopped successfully."
-            )
-
-            return True
-
-        logger.warning(
-            "The user could not confirm that the "
-            "QXDM capture stopped."
-        )
-
         print(
-            "\nQXDM capture stop was not confirmed."
+            "The completed log was saved and loaded back into QXDM."
         )
 
-        return False
+        return True
 
     except Exception as error:
         logger.exception(
-            "The QXDM stop procedure failed."
+            "The automated QXDM stop procedure failed."
         )
 
         print(
-            "\nThe QXDM stop procedure could not "
-            "be completed automatically."
+            "\nThe QXDM capture could not be stopped automatically."
         )
-
         print(
             f"Reason: {error}"
         )
 
         print(
-            "\nSwitch QXDM to mode lpm and stop the "
-            "capture manually."
+            "\nStop and save the capture manually in QXDM."
         )
 
         input(
-            "Press Enter after manually stopping "
-            "and saving the capture..."
+            "Press Enter after manually stopping and saving the capture..."
         )
 
-        logger.warning(
-            "The user was instructed to stop the "
-            "QXDM capture manually."
+        return prompt_yes_no(
+            "Was the QXDM capture stopped successfully?",
+            default=True,
         )
-
-        return False
 
 
 def main() -> None:
