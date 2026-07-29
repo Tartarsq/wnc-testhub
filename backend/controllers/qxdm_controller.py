@@ -59,6 +59,12 @@ class QXDMController:
         "Tools->Load Log Mask",
     ]
 
+    SETTINGS_MENU_PATHS = [
+        "Options->Settings",
+        "Tools->Settings",
+        "View->Settings",
+    ]
+
     # Used after capture stops so the completed log becomes the active log
     # displayed in QXDM. Menu wording varies between QXDM versions.
     OPEN_LOG_MENU_PATHS = [
@@ -186,6 +192,37 @@ class QXDMController:
         time.sleep(1)
 
         return window
+
+    def open_qxdm_settings(self) -> bool:
+        """
+        Open QXDM Options > Settings and leave the dialog open
+        so the user can configure log-saving options manually.
+        """
+        window = self.focus_qxdm()
+
+        selected_menu = self.select_first_available_menu(
+            window,
+            self.SETTINGS_MENU_PATHS,
+        )
+
+        print(
+            f"Opened QXDM settings using: {selected_menu}"
+        )
+
+        settings_dialog = Desktop(backend="uia").window(
+            title_re=r".*Settings.*",
+            top_level_only=True,
+        )
+
+        settings_dialog.wait(
+            "visible enabled ready",
+            timeout=10,
+        )
+
+        settings_dialog.set_focus()
+        time.sleep(1)
+
+        return True
 
     def select_first_available_menu(
         self,

@@ -365,8 +365,33 @@ def start_qxdm_logging(
         print("QXDM LOG SETTINGS")
         print("=" * 50)
 
+        try:
+            qxdm.open_qxdm_settings()
+
+            logger.info(
+                "The QXDM Settings window was opened automatically."
+            )
+
+            print(
+                "\nThe QXDM Settings window is open."
+            )
+
+        except Exception as error:
+            logger.warning(
+                "Could not open QXDM Settings automatically: %s",
+                error,
+            )
+
+            print(
+                "\nThe QXDM Settings window could not be opened "
+                "automatically."
+            )
+
+            print(
+                "Open Options > Settings manually."
+            )
+
         print(
-            "\nIn QXDM, open Options > Settings."
             "\nConfigure:"
             "\n  - Base File Name"
             "\n  - Log File Directory"
@@ -381,8 +406,8 @@ def start_qxdm_logging(
         )
 
         input(
-            "\nPress Enter after you configured the "
-            "QXDM log settings and clicked OK..."
+            "\nClick OK in QXDM after configuring the settings, "
+            "then press Enter here..."
         )
 
         log_settings_ready = prompt_yes_no(
