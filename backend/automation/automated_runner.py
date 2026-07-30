@@ -300,8 +300,20 @@ class AutomatedTestRunner:
             print(f"Upload: {upload_mbps} Mbps")
             print(f"Ping: {ping_ms} ms")
             print(f"Jitter: {jitter_ms} ms")
+            server_name = speedtest_results.get(
+                "server_name"
+            )
+            server_location = speedtest_results.get(
+                "server_location"
+            )
+
             print(f"Packet loss: {packet_loss}%")
             print(f"Test duration: {test_duration} seconds")
+            print(f"Server: {server_name or 'Unknown'}")
+            print(
+                f"Server location: "
+                f"{server_location or 'Unknown'}"
+            )
 
             print("Collecting Titan radio metrics...")
 
