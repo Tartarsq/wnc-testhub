@@ -30,7 +30,7 @@ class AutomatedTestRunner:
         self.titan = titan
         self.qxdm = qxdm
         self.session_folder = Path(session_folder)
-        self.number_of_runs = max(int(number_of_runs), 1)
+        self.number_of_runs = min(max(int(number_of_runs), 0), 15)
         self.delay_between_runs = max(int(delay_between_runs), 0)
         self.timeout_seconds = max(int(timeout_seconds), 1)
 
@@ -194,39 +194,6 @@ class AutomatedTestRunner:
                 "metrics_error": str(error),
             }
 
-    @staticmethod
-    def determine_result(
-        download_mbps: float | None,
-        upload_mbps: float | None,
-        packet_loss_percent: float | None = None,
-    ) -> str:
-        """
-        Determine pass or fail using temporary thresholds.
-
-        Replace these values with the team's official requirements.
-        """
-        minimum_download_mbps = 100.0
-        minimum_upload_mbps = 20.0
-        maximum_packet_loss_percent = 2.0
-
-        if download_mbps is None or upload_mbps is None:
-            return "ERROR"
-
-        throughput_passed = (
-            download_mbps >= minimum_download_mbps
-            and upload_mbps >= minimum_upload_mbps
-        )
-
-        packet_loss_passed = (
-            packet_loss_percent is None
-            or packet_loss_percent <= maximum_packet_loss_percent
-        )
-
-        if throughput_passed and packet_loss_passed:
-            return "PASS"
-
-        return "FAIL"
-
     # ------------------------------------------------------------------
     # THROUGHPUT WORKFLOW
     # ------------------------------------------------------------------
@@ -255,7 +222,6 @@ class AutomatedTestRunner:
         speedtest_results: dict[str, Any] = {}
         radio_metrics: dict[str, Any] = {}
 
-        overall_result = "ERROR"
         notes = ""
 
         try:
@@ -319,12 +285,6 @@ class AutomatedTestRunner:
 
             radio_metrics = self.get_radio_metrics()
 
-            overall_result = self.determine_result(
-                download_mbps=download_mbps,
-                upload_mbps=upload_mbps,
-                packet_loss_percent=packet_loss,
-            )
-
         except Exception as error:
             notes = str(error)
 
@@ -377,7 +337,6 @@ class AutomatedTestRunner:
                 "result_url"
             ),
             **radio_metrics,
-            "overall_result": overall_result,
             "run_folder": None,
             "notes": notes,
         }
@@ -416,10 +375,15 @@ class AutomatedTestRunner:
 
             self.excel.append_result(result)
 
-            print(
-                f"\nRun {run_number} result: "
-                f"{result['overall_result']}"
-            )
+            if result.get("notes"):
+                print(
+                    f"\nRun {run_number} completed with an error: "
+                    f"{result['notes']}"
+                )
+            else:
+                print(
+                    f"\nRun {run_number} completed successfully."
+                )
 
             print(
                 f"Run {run_number} saved to Excel."
@@ -440,9 +404,103 @@ class AutomatedTestRunner:
             "\nAll throughput test runs are complete."
         )
 
+        summary = self.calculate_throughput_summary(
+            all_results
+        )
+
+        self.print_throughput_summary(
+            summary
+        )
+
+        self.excel.write_summary(
+            summary
+        )
+
         self.open_results()
 
         return all_results
+
+    @staticmethod
+    def _summarize_metric(
+        results: list[dict[str, Any]],
+        field: str,
+    ) -> dict[str, float | None]:
+        """Return minimum, maximum, and average for one metric."""
+        values: list[float] = []
+
+        for result in results:
+            value = result.get(field)
+
+            if value is None:
+                continue
+
+            try:
+                values.append(float(value))
+            except (TypeError, ValueError):
+                continue
+
+        if not values:
+            return {
+                "minimum": None,
+                "maximum": None,
+                "average": None,
+            }
+
+        return {
+            "minimum": round(min(values), 2),
+            "maximum": round(max(values), 2),
+            "average": round(sum(values) / len(values), 2),
+        }
+
+    def calculate_throughput_summary(
+        self,
+        results: list[dict[str, Any]],
+    ) -> dict[str, dict[str, float | None]]:
+        """Calculate min, max, and average throughput statistics."""
+        metric_fields = {
+            "Download Mbps": "download_mbps",
+            "Upload Mbps": "upload_mbps",
+            "Ping ms": "ping_ms",
+            "Jitter ms": "ping_jitter_ms",
+            "Packet Loss %": "packet_loss_percent",
+            "Test Duration Seconds": "test_duration_seconds",
+        }
+
+        return {
+            label: self._summarize_metric(results, field)
+            for label, field in metric_fields.items()
+        }
+
+    @staticmethod
+    def print_throughput_summary(
+        summary: dict[str, dict[str, float | None]],
+    ) -> None:
+        """Print the throughput summary to the terminal."""
+        print("\n" + "=" * 66)
+        print("THROUGHPUT SUMMARY")
+        print("=" * 66)
+        print(
+            f"{'Metric':<24}"
+            f"{'Minimum':>14}"
+            f"{'Maximum':>14}"
+            f"{'Average':>14}"
+        )
+        print("-" * 66)
+
+        for metric, values in summary.items():
+            minimum = values.get("minimum")
+            maximum = values.get("maximum")
+            average = values.get("average")
+
+            def display(value: float | None) -> str:
+                return "N/A" if value is None else f"{value:.2f}"
+
+            print(
+                f"{metric:<24}"
+                f"{display(minimum):>14}"
+                f"{display(maximum):>14}"
+                f"{display(average):>14}"
+            )
 
     def open_results(self) -> None:
         """Open the reports folder and Excel workbook on Windows."""

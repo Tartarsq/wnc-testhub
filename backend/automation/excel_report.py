@@ -1,178 +1,158 @@
-from datetime import datetime
+from __future__ import annotations
+
 from pathlib import Path
 from typing import Any
 
 from openpyxl import Workbook, load_workbook
-from openpyxl.styles import Font
+from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 
-HEADERS = [
-    "Timestamp",
-    "Run",
-    "Titan IP",
-    "Connection",
-    "Firmware",
-    "Carrier",
-    "Technology",
-    "Mode",
-    "Band",
-    "RSRP dBm",
-    "RSSI dBm",
-    "SINR dB",
-    "Download Mbps",
-    "Upload Mbps",
-    "Ping ms",
-    "Jitter ms",
-    "Packet Loss %",
-    "Test Duration (s)",
-    "ISP",
-    "External IP",
-    "Interface",
-    "Server Name",
-    "Server Location",
-    "Result URL",
-    "Overall Result",
-    "Run Folder",
-    "Notes",
-]
-
-
 class ExcelResultWriter:
-    """Append automated test results to an Excel workbook."""
+    """Write individual throughput runs and summary statistics to Excel."""
 
-    def __init__(
-        self,
-        workbook_path: Path,
-    ) ->None:
-        self.workbook_path = Path(workbook_path)
+    RESULT_HEADERS = [
+        "Timestamp",
+        "Run Number",
+        "Titan IP",
+        "Connection Status",
+        "Download Mbps",
+        "Upload Mbps",
+        "Ping ms",
+        "Jitter ms",
+        "Packet Loss %",
+        "Test Duration Seconds",
+        "ISP",
+        "External IP",
+        "Interface Name",
+        "Server Name",
+        "Server Location",
+        "Result URL",
+        "Firmware Version",
+        "Carrier",
+        "Technology",
+        "Mode",
+        "Serving Band",
+        "RSRP dBm",
+        "RSSI dBm",
+        "SINR dB",
+        "Metrics Error",
+        "Notes",
+    ]
 
-        self.workbook_path.parent.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
+    RESULT_FIELDS = [
+        "timestamp",
+        "run_number",
+        "titan_ip",
+        "connection_status",
+        "download_mbps",
+        "upload_mbps",
+        "ping_ms",
+        "ping_jitter_ms",
+        "packet_loss_percent",
+        "test_duration_seconds",
+        "isp",
+        "external_ip",
+        "interface_name",
+        "server_name",
+        "server_location",
+        "result_url",
+        "firmware_version",
+        "carrier",
+        "technology",
+        "mode",
+        "serving_band",
+        "rsrp_dbm",
+        "rssi_dbm",
+        "sinr_db",
+        "metrics_error",
+        "notes",
+    ]
 
-    def _update_filter(
-        self,
-        worksheet,
-    ) -> None:
-        """Automatically size the filter range."""
-        last_column = get_column_letter(
-            len(HEADERS)
-        )
+    def __init__(self, output_path: Path) -> None:
+        self.output_path = Path(output_path).resolve()
+        self.output_path.parent.mkdir(parents=True, exist_ok=True)
+        self._ensure_workbook()
 
-        worksheet.auto_filter.ref = (
-            f"A1:{last_column}{worksheet.max_row}"
-        )
+    def _ensure_workbook(self) -> None:
+        if self.output_path.exists():
+            return
 
-    def _create_workbook(self) -> None:
-        """Create the workbook and header row."""
         workbook = Workbook()
-        worksheet = workbook.active
-        worksheet.title = "Test Results"
+        results_sheet = workbook.active
+        results_sheet.title = "Throughput Results"
+        results_sheet.append(self.RESULT_HEADERS)
+        self._format_header(results_sheet)
+        self._autosize(results_sheet)
 
-        worksheet.append(HEADERS)
+        summary_sheet = workbook.create_sheet("Summary")
+        summary_sheet.append(["Metric", "Minimum", "Maximum", "Average"])
+        self._format_header(summary_sheet)
 
-        for cell in worksheet[1]:
-            cell.font = Font(bold=True)
+        workbook.save(self.output_path)
 
-        worksheet.freeze_panes = "A2"
+    @staticmethod
+    def _format_header(sheet) -> None:
+        fill = PatternFill(fill_type="solid", fgColor="1F4E78")
+        font = Font(color="FFFFFF", bold=True)
 
-        self._update_filter(
-            worksheet
-        )
+        for cell in sheet[1]:
+            cell.fill = fill
+            cell.font = font
+            cell.alignment = Alignment(horizontal="center")
 
-        workbook.save(self.workbook_path)
+        sheet.freeze_panes = "A2"
+        sheet.auto_filter.ref = sheet.dimensions
 
-    def _adjust_column_widths(
+    @staticmethod
+    def _autosize(sheet) -> None:
+        for column_cells in sheet.columns:
+            max_length = 0
+            column_letter = get_column_letter(column_cells[0].column)
+
+            for cell in column_cells:
+                value = "" if cell.value is None else str(cell.value)
+                max_length = max(max_length, len(value))
+
+            sheet.column_dimensions[column_letter].width = min(
+                max(max_length + 2, 12),
+                40,
+            )
+
+    def append_result(self, result: dict[str, Any]) -> None:
+        workbook = load_workbook(self.output_path)
+        sheet = workbook["Throughput Results"]
+
+        sheet.append([result.get(field) for field in self.RESULT_FIELDS])
+        self._autosize(sheet)
+        workbook.save(self.output_path)
+
+    def write_summary(
         self,
-        worksheet,
+        summary: dict[str, dict[str, float | None]],
     ) -> None:
-        """Resize columns so values are easier to read."""
-        for column_cells in worksheet.columns:
-            column_letter = (
-                column_cells[0].column_letter
-            )
+        workbook = load_workbook(self.output_path)
 
-            maximum_length = max(
-                (
-                    len(str(cell.value))
-                    for cell in column_cells
-                    if cell.value is not None
-                ),
-                default=0,
-            )
+        if "Summary" in workbook.sheetnames:
+            sheet = workbook["Summary"]
+            workbook.remove(sheet)
 
-            worksheet.column_dimensions[
-                column_letter
-            ].width = min(
-                maximum_length + 2,
-                45,
-            )
+        sheet = workbook.create_sheet("Summary")
+        sheet.append(["Metric", "Minimum", "Maximum", "Average"])
 
-    def append_result(
-        self,
-        result: dict[str, Any],
-    ) -> None:
-        """Append one automated test result to the workbook."""
-        if not self.workbook_path.exists():
-            self._create_workbook()
+        for metric, values in summary.items():
+            sheet.append([
+                metric,
+                values.get("minimum"),
+                values.get("maximum"),
+                values.get("average"),
+            ])
 
-        workbook = load_workbook(
-            self.workbook_path
-        )
+        self._format_header(sheet)
+        self._autosize(sheet)
 
-        worksheet = workbook["Test Results"]
+        for row in sheet.iter_rows(min_row=2, min_col=2, max_col=4):
+            for cell in row:
+                cell.number_format = "0.00"
 
-        worksheet.append(
-            [
-                result.get(
-                    "timestamp",
-                    datetime.now().strftime(
-                        "%Y-%m-%d %H:%M:%S"
-                    ),
-                ),
-                result.get("run_number"),
-                result.get("titan_ip"),
-                result.get("connection_status"),
-                result.get("firmware_version"),
-                result.get("carrier"),
-                result.get("technology"),
-                result.get("mode"),
-                result.get("serving_band"),
-                result.get("rsrp_dbm"),
-                result.get("rssi_dbm"),
-                result.get("sinr_db"),
-                result.get("download_mbps"),
-                result.get("upload_mbps"),
-                result.get("ping_ms"),
-                result.get("ping_jitter_ms"),
-                result.get(
-                    "packet_loss_percent"
-                ),
-                result.get(
-                    "test_duration_seconds"
-                ),
-                result.get("isp"),
-                result.get("external_ip"),
-                result.get("interface_name"),
-                result.get("server_name"),
-                result.get("server_location"),
-                result.get("result_url"),
-                result.get("overall_result"),
-                result.get("run_folder"),
-                result.get("notes"),
-            ]
-        )
-
-        self._update_filter(
-            worksheet
-        )
-
-        self._adjust_column_widths(
-            worksheet
-        )
-
-        workbook.save(
-            self.workbook_path
-        )
+        workbook.save(self.output_path)
