@@ -30,7 +30,7 @@ class ThroughputTester:
         maximum_retries: int = 1,
         retry_delay_seconds: int = 2,
         refresh_server_every: int = 10,
-        server_id: str | int | None = None,
+        server_id: str | int | None = "29624",
     ) -> None:
         self.timeout_seconds = timeout_seconds
         self.maximum_retries = maximum_retries
