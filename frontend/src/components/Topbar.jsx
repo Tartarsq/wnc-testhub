@@ -1,8 +1,8 @@
 function Topbar() {
   return (
-    <header>
+    <header className="topbar">
       <h1>Dashboard</h1>
-      <p>System Status: Online</p>
+      <p className="status-online">System Status: Online</p>
     </header>
   )
 }

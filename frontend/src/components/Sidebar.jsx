@@ -1,16 +1,16 @@
 function Sidebar() {
   return (
-    <aside>
-      <h2>WNC TestHub</h2>
+    <aside className="sidebar">
+      <h2 className="sidebar-title">WNC TestHub</h2>
 
-      <nav>
-        <p>Dashboard</p>
-        <p>Devices</p>
-        <p>QXDM Logs</p>
-        <p>Throughput</p>
-        <p>Test Cases</p>
-        <p>Analytics</p>
-        <p>Settings</p>
+      <nav className="sidebar-nav">
+        <div className="sidebar-link active">Dashboard</div>
+        <div className="sidebar-link">Devices</div>
+        <div className="sidebar-link">QXDM Logs</div>
+        <div className="sidebar-link">Throughput</div>
+        <div className="sidebar-link">Test Cases</div>
+        <div className="sidebar-link">Analytics</div>
+        <div className="sidebar-link">Settings</div>
       </nav>
     </aside>
   )
