@@ -24,6 +24,9 @@
 }
 
 .sidebar-link {
+  display: block;
+  color: white;
+  text-decoration: none;
   padding: 12px;
   border-radius: 8px;
   cursor: pointer;
