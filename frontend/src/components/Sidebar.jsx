@@ -1,12 +1,20 @@
-import { NavLink } from 'react-router-dom'
+import { NavLink } from "react-router-dom";
+import logo from "../assets/wnc-logo.png";
 
 function Sidebar() {
   const getLinkClass = ({ isActive }) =>
-    `sidebar-link ${isActive ? 'active' : ''}`
+    `sidebar-link ${isActive ? "active" : ""}`;
 
   return (
     <aside className="sidebar">
-      <h2 className="sidebar-title">WNC TestHub</h2>
+      <div className="sidebar-brand">
+        <img src={logo} alt="WNC Logo" className="sidebar-logo" />
+
+        <div>
+          <h2 className="sidebar-title">WNC</h2>
+          <p className="sidebar-subtitle">TestHub</p>
+        </div>
+      </div>
 
       <nav className="sidebar-nav">
         <NavLink to="/" end className={getLinkClass}>
@@ -38,7 +46,7 @@ function Sidebar() {
         </NavLink>
       </nav>
     </aside>
-  )
+  );
 }
 
-export default Sidebar
+export default Sidebar;
