@@ -25,6 +25,7 @@ class AutomatedTestRunner:
         number_of_runs: int = 5,
         delay_between_runs: int = 10,
         timeout_seconds: int = 180,
+        open_results_after_run: bool = True,
     ) -> None:
         """Initialize the automated test runner."""
         self.titan = titan
@@ -33,6 +34,7 @@ class AutomatedTestRunner:
         self.number_of_runs = min(max(int(number_of_runs), 0), 15)
         self.delay_between_runs = max(int(delay_between_runs), 0)
         self.timeout_seconds = max(int(timeout_seconds), 1)
+        self.open_results_after_run = open_results_after_run
 
         self.throughput = ThroughputTester(
             timeout_seconds=self.timeout_seconds
@@ -416,7 +418,8 @@ class AutomatedTestRunner:
             summary
         )
 
-        self.open_results()
+        if self.open_results_after_run:
+            self.open_results()
 
         return all_results
 
