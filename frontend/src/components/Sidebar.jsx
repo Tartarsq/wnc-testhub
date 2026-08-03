@@ -1,4 +1,13 @@
 import { NavLink } from "react-router-dom";
+import {
+  FiHome,
+  FiCpu,
+  FiFileText,
+  FiActivity,
+  FiCheckSquare,
+  FiBarChart2,
+  FiSettings,
+} from "react-icons/fi";
 import logo from "../assets/wnc-logo.png";
 
 function Sidebar() {
@@ -18,31 +27,38 @@ function Sidebar() {
 
       <nav className="sidebar-nav">
         <NavLink to="/" end className={getLinkClass}>
-          Dashboard
+          <FiHome className="sidebar-icon" />
+          <span>Dashboard</span>
         </NavLink>
 
         <NavLink to="/devices" className={getLinkClass}>
-          Devices
+          <FiCpu className="sidebar-icon" />
+          <span>Devices</span>
         </NavLink>
 
         <NavLink to="/qxdm-logs" className={getLinkClass}>
-          QXDM Logs
+          <FiFileText className="sidebar-icon" />
+          <span>QXDM Logs</span>
         </NavLink>
 
         <NavLink to="/throughput" className={getLinkClass}>
-          Throughput
+          <FiActivity className="sidebar-icon" />
+          <span>Throughput</span>
         </NavLink>
 
         <NavLink to="/test-cases" className={getLinkClass}>
-          Test Cases
+          <FiCheckSquare className="sidebar-icon" />
+          <span>Test Cases</span>
         </NavLink>
 
         <NavLink to="/analytics" className={getLinkClass}>
-          Analytics
+          <FiBarChart2 className="sidebar-icon" />
+          <span>Analytics</span>
         </NavLink>
 
         <NavLink to="/settings" className={getLinkClass}>
-          Settings
+          <FiSettings className="sidebar-icon" />
+          <span>Settings</span>
         </NavLink>
       </nav>
     </aside>
