@@ -13,6 +13,15 @@ from config import (
 )
 
 
+# Preferred nearby Verizon Ookla servers. The tester tries these in order
+# and falls back to Ookla automatic selection if none are available.
+PREFERRED_VERIZON_SERVERS = [
+    ("30542", "Verizon - Long Branch, NJ"),
+    ("30411", "Verizon - New York, NY"),
+    ("29589", "Verizon - Philadelphia, PA"),
+]
+
+
 class ThroughputTester:
     """
     Run throughput tests using the official Ookla Speedtest CLI.
@@ -30,7 +39,7 @@ class ThroughputTester:
         maximum_retries: int = 1,
         retry_delay_seconds: int = 2,
         refresh_server_every: int = 10,
-        server_id: str | int | None = "29624",
+        server_id: str | int | None = None,
     ) -> None:
         self.timeout_seconds = timeout_seconds
         self.maximum_retries = maximum_retries
@@ -41,8 +50,9 @@ class ThroughputTester:
         # does not reuse a persistent Speedtest connection.
         self.refresh_server_every = refresh_server_every
 
-        # This will later allow us to lock testing to the
-        # Verizon Bridgewater Speedtest server.
+        # A supplied server ID is used directly. When no server ID is
+        # supplied, nearby Verizon servers are tried before falling back
+        # to Ookla automatic server selection.
         self.server_id = (
             str(server_id)
             if server_id is not None
@@ -140,7 +150,10 @@ class ThroughputTester:
 
         return parsed_output
 
-    def _build_command(self) -> list[str]:
+    def _build_command(
+        self,
+        server_id: str | None = None,
+    ) -> list[str]:
         """
         Create the command used to run the official Ookla CLI.
         """
@@ -151,11 +164,11 @@ class ThroughputTester:
             "--format=json",
         ]
 
-        if self.server_id:
+        if server_id:
             command.extend(
                 [
                     "--server-id",
-                    self.server_id,
+                    server_id,
                 ]
             )
 
@@ -174,22 +187,19 @@ class ThroughputTester:
         self,
     ) -> dict[str, Any]:
         """Run the official Ookla CLI and return its JSON output."""
-        command = self._build_command()
-
         print(
             f"Using Speedtest CLI: {self.speedtest_path}"
         )
 
         if self.server_id:
-            print(
-                f"Using Speedtest server ID: "
-                f"{self.server_id}"
-            )
+            server_candidates = [
+                (self.server_id, f"Configured server {self.server_id}"),
+            ]
         else:
-            print(
-                "Using the automatically selected "
-                "Speedtest server..."
-            )
+            server_candidates = [
+                *PREFERRED_VERIZON_SERVERS,
+                (None, "Ookla automatic selection"),
+            ]
 
         # A full download/upload test normally needs much longer than
         # the network timeout value supplied to the constructor.
@@ -198,40 +208,63 @@ class ThroughputTester:
             self.timeout_seconds,
         )
 
-        completed_process = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=process_timeout_seconds,
-            encoding="utf-8",
-            errors="replace",
-        )
+        failure_messages: list[str] = []
 
-        standard_output = (
-            completed_process.stdout.strip()
-        )
+        for candidate_id, candidate_name in server_candidates:
+            command = self._build_command(candidate_id)
 
-        standard_error = (
-            completed_process.stderr.strip()
-        )
+            if candidate_id:
+                print(
+                    f"Trying {candidate_name} "
+                    f"(server ID {candidate_id})..."
+                )
+            else:
+                print(
+                    "Nearby Verizon servers were unavailable. "
+                    "Using Ookla automatic server selection..."
+                )
 
-        if completed_process.returncode != 0:
+            completed_process = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=process_timeout_seconds,
+                encoding="utf-8",
+                errors="replace",
+            )
+
+            standard_output = (
+                completed_process.stdout.strip()
+            )
+
+            standard_error = (
+                completed_process.stderr.strip()
+            )
+
+            if completed_process.returncode == 0:
+                return self._extract_json(
+                    standard_output
+                )
+
             error_output = (
                 standard_error
                 or standard_output
                 or "No error details were returned."
             )
 
-            raise RuntimeError(
-                "Ookla Speedtest failed.\n"
-                f"Exit code: "
-                f"{completed_process.returncode}\n"
-                f"Details:\n{error_output}"
+            failure_messages.append(
+                f"{candidate_name}: {error_output}"
             )
 
-        return self._extract_json(
-            standard_output
+            print(
+                f"{candidate_name} was unavailable."
+            )
+
+        raise RuntimeError(
+            "Ookla Speedtest failed for every preferred server and "
+            "automatic selection.\n"
+            + "\n".join(failure_messages)
         )
 
     def _run_test_once(
