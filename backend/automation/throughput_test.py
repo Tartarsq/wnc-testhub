@@ -13,23 +13,6 @@ from config import (
 )
 
 
-# Nearby Ookla servers returned by the official CLI on the test PC.
-# The tester measures latency to every reachable candidate and runs the
-# full throughput test against the server with the lowest latency.
-PREFERRED_NEARBY_SERVERS = [
-    ("62092", "Optimum Online - Parsippany, NJ"),
-    ("69477", "Whitesky Communications - Newark, NJ"),
-    ("72127", "Planet Networks, Inc. - Newark, NJ"),
-    ("72800", "RippleFiber - Newark, NJ"),
-    ("73509", "Contabo - Carlstadt, NJ"),
-    ("68146", "Planet Networks, Inc. - Sparta, NJ"),
-    ("56485", "Frontier - Secaucus, NJ"),
-    ("52743", "Interserver.Net - Secaucus, NJ"),
-    ("32494", "Rackdog - Secaucus, NJ"),
-    ("51171", "WebNX Inc - New York, NY"),
-]
-
-
 class ThroughputTester:
     """
     Run throughput tests using the official Ookla Speedtest CLI.
@@ -58,9 +41,8 @@ class ThroughputTester:
         # does not reuse a persistent Speedtest connection.
         self.refresh_server_every = refresh_server_every
 
-        # A supplied server ID is used directly. When no server ID is
-        # supplied, nearby Verizon servers are tried before falling back
-        # to Ookla automatic server selection.
+        # This will later allow us to lock testing to the
+        # Verizon Bridgewater Speedtest server.
         self.server_id = (
             str(server_id)
             if server_id is not None
@@ -158,12 +140,10 @@ class ThroughputTester:
 
         return parsed_output
 
-    def _build_command(
-        self,
-        server_id: str | None = None,
-        latency_only: bool = False,
-    ) -> list[str]:
-        """Create the command used to run the official Ookla CLI."""
+    def _build_command(self) -> list[str]:
+        """
+        Create the command used to run the official Ookla CLI.
+        """
         command = [
             str(self.speedtest_path),
             "--accept-license",
@@ -171,130 +151,15 @@ class ThroughputTester:
             "--format=json",
         ]
 
-        if server_id:
+        if self.server_id:
             command.extend(
                 [
                     "--server-id",
-                    server_id,
-                ]
-            )
-
-        if latency_only:
-            command.extend(
-                [
-                    "--no-download",
-                    "--no-upload",
+                    self.server_id,
                 ]
             )
 
         return command
-
-    def _probe_server_latency(
-        self,
-        server_id: str,
-        server_name: str,
-    ) -> float | None:
-        """Return the server ping latency without running transfer tests."""
-        command = self._build_command(
-            server_id=server_id,
-            latency_only=True,
-        )
-
-        try:
-            completed_process = subprocess.run(
-                command,
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=max(30, self.timeout_seconds),
-                encoding="utf-8",
-                errors="replace",
-            )
-        except (subprocess.TimeoutExpired, OSError) as error:
-            print(
-                f"Latency probe failed for {server_name}: {error}"
-            )
-            return None
-
-        if completed_process.returncode != 0:
-            error_output = (
-                completed_process.stderr.strip()
-                or completed_process.stdout.strip()
-                or "No error details were returned."
-            )
-            print(
-                f"Latency probe failed for {server_name}: "
-                f"{error_output}"
-            )
-            return None
-
-        try:
-            probe_result = self._extract_json(
-                completed_process.stdout
-            )
-        except RuntimeError as error:
-            print(
-                f"Latency probe returned invalid data for "
-                f"{server_name}: {error}"
-            )
-            return None
-
-        ping = probe_result.get("ping") or {}
-        latency = self._to_float(
-            ping.get("latency")
-        )
-
-        if latency is None:
-            print(
-                f"Latency was unavailable for {server_name}."
-            )
-            return None
-
-        print(
-            f"{server_name}: {latency} ms"
-        )
-        return latency
-
-    def _select_best_server(
-        self,
-    ) -> tuple[str, str] | None:
-        """Choose the reachable nearby server with the lowest latency."""
-        print("Measuring latency to nearby Ookla servers...")
-
-        measured_servers: list[tuple[float, str, str]] = []
-
-        for server_id, server_name in PREFERRED_NEARBY_SERVERS:
-            latency = self._probe_server_latency(
-                server_id=server_id,
-                server_name=server_name,
-            )
-
-            if latency is None:
-                continue
-
-            measured_servers.append(
-                (
-                    latency,
-                    server_id,
-                    server_name,
-                )
-            )
-
-        if not measured_servers:
-            return None
-
-        measured_servers.sort(
-            key=lambda item: item[0]
-        )
-
-        best_latency, best_id, best_name = measured_servers[0]
-
-        print(
-            f"Selected {best_name} "
-            f"(server ID {best_id}) at {best_latency} ms."
-        )
-
-        return best_id, best_name
 
     def reset_connection(self) -> None:
         """
@@ -309,48 +174,25 @@ class ThroughputTester:
         self,
     ) -> dict[str, Any]:
         """Run the official Ookla CLI and return its JSON output."""
+        command = self._build_command()
+
         print(
             f"Using Speedtest CLI: {self.speedtest_path}"
         )
 
-        selected_server_id: str | None = self.server_id
-        selected_server_name = (
-            f"Configured server {self.server_id}"
-            if self.server_id
-            else None
-        )
-
-        if selected_server_id is None:
-            selected_server = self._select_best_server()
-
-            if selected_server is not None:
-                (
-                    selected_server_id,
-                    selected_server_name,
-                ) = selected_server
-            else:
-                print(
-                    "No candidate server completed the latency probe. "
-                    "Using Ookla automatic server selection..."
-                )
-
-        command = self._build_command(
-            server_id=selected_server_id,
-            latency_only=False,
-        )
-
-        if selected_server_id:
+        if self.server_id:
             print(
-                f"Running the full throughput test with "
-                f"{selected_server_name} "
-                f"(server ID {selected_server_id})..."
+                f"Using Speedtest server ID: "
+                f"{self.server_id}"
             )
         else:
             print(
-                "Running the full throughput test with "
-                "Ookla automatic server selection..."
+                "Using the automatically selected "
+                "Speedtest server..."
             )
 
+        # A full download/upload test normally needs much longer than
+        # the network timeout value supplied to the constructor.
         process_timeout_seconds = max(
             180,
             self.timeout_seconds,
