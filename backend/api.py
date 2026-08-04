@@ -93,7 +93,13 @@ def run_throughput_job(
         update_job(
             job_id,
             status="running",
-            message="Throughput testing is running.",
+            message=(
+                f"Running throughput test 1 of "
+                f"{request.number_of_runs}."
+            ),
+            completed_runs=0,
+            results=[],
+            error=None,
         )
 
         titan = Titan3(
@@ -109,6 +115,30 @@ def run_throughput_job(
             session_folder
         )
 
+        def report_progress(
+            completed_runs: int,
+            total_runs: int,
+            partial_results: list[dict[str, Any]],
+        ) -> None:
+            if completed_runs >= total_runs:
+                progress_message = (
+                    "All throughput test runs are complete."
+                )
+            else:
+                next_run = completed_runs + 1
+                progress_message = (
+                    f"Completed {completed_runs} of {total_runs} runs. "
+                    f"Preparing run {next_run}."
+                )
+
+            update_job(
+                job_id,
+                status="running",
+                message=progress_message,
+                completed_runs=completed_runs,
+                results=partial_results,
+            )
+
         runner = AutomatedTestRunner(
             titan=titan,
             qxdm=None,
@@ -117,6 +147,7 @@ def run_throughput_job(
             delay_between_runs=request.delay_between_runs,
             timeout_seconds=request.timeout_seconds,
             open_results_after_run=False,
+            progress_callback=report_progress,
         )
 
         results = runner.run()

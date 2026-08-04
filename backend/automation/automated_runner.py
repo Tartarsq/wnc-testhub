@@ -2,7 +2,7 @@ import os
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from .excel_report import ExcelResultWriter
 from .throughput_test import ThroughputTester
@@ -26,6 +26,10 @@ class AutomatedTestRunner:
         delay_between_runs: int = 10,
         timeout_seconds: int = 180,
         open_results_after_run: bool = True,
+        progress_callback: Callable[
+            [int, int, list[dict[str, Any]]],
+            None,
+        ] | None = None,
     ) -> None:
         """Initialize the automated test runner."""
         self.titan = titan
@@ -35,6 +39,7 @@ class AutomatedTestRunner:
         self.delay_between_runs = max(int(delay_between_runs), 0)
         self.timeout_seconds = max(int(timeout_seconds), 1)
         self.open_results_after_run = open_results_after_run
+        self.progress_callback = progress_callback
 
         self.throughput = ThroughputTester(
             timeout_seconds=self.timeout_seconds
@@ -49,6 +54,27 @@ class AutomatedTestRunner:
         self.excel = ExcelResultWriter(self.excel_path)
 
         self.active_qxdm_log_path: Optional[Path] = None
+
+    def _report_progress(
+        self,
+        completed_runs: int,
+        results: list[dict[str, Any]],
+    ) -> None:
+        """Report live throughput progress when a callback is provided."""
+        if self.progress_callback is None:
+            return
+
+        try:
+            self.progress_callback(
+                completed_runs,
+                self.number_of_runs,
+                list(results),
+            )
+        except Exception as error:
+            print(
+                "Progress callback failed: "
+                f"{error}"
+            )
 
     # ------------------------------------------------------------------
     # QXDM WORKFLOW
@@ -351,6 +377,11 @@ class AutomatedTestRunner:
         """
         all_results: list[dict[str, Any]] = []
 
+        self._report_progress(
+            completed_runs=0,
+            results=all_results,
+        )
+
         print(
             f"\nStarting {self.number_of_runs} "
             "independent throughput test runs."
@@ -389,6 +420,11 @@ class AutomatedTestRunner:
 
             print(
                 f"Run {run_number} saved to Excel."
+            )
+
+            self._report_progress(
+                completed_runs=run_number,
+                results=all_results,
             )
 
             if run_number < self.number_of_runs:

@@ -25,8 +25,11 @@ function Throughput() {
   )
   const [results, setResults] = useState([])
   const [error, setError] = useState('')
+  const [completedRuns, setCompletedRuns] = useState(0)
+  const [elapsedSeconds, setElapsedSeconds] = useState(0)
 
   const pollingRef = useRef(null)
+  const timerRef = useRef(null)
 
   const isRunning =
     jobStatus === 'queued' || jobStatus === 'running'
@@ -41,9 +44,25 @@ function Throughput() {
     }
   }
 
+  const stopTimer = () => {
+    if (timerRef.current) {
+      window.clearInterval(timerRef.current)
+      timerRef.current = null
+    }
+  }
+
+  const startTimer = () => {
+    stopTimer()
+
+    timerRef.current = window.setInterval(() => {
+      setElapsedSeconds((currentValue) => currentValue + 1)
+    }, 1000)
+  }
+
   useEffect(() => {
     return () => {
       stopPolling()
+      stopTimer()
     }
   }, [])
 
@@ -63,6 +82,7 @@ function Throughput() {
         setJobStatus(job.status)
         setMessage(job.message)
         setResults(updatedResults)
+        setCompletedRuns(job.completed_runs ?? updatedResults.length)
 
         window.localStorage.setItem(
           'wncThroughputStatus',
@@ -85,9 +105,11 @@ function Throughput() {
 
         if (job.status === 'completed' || job.status === 'failed') {
           stopPolling()
+          stopTimer()
         }
       } catch (requestError) {
         stopPolling()
+        stopTimer()
         setJobStatus('failed')
         setMessage('Unable to retrieve throughput status.')
 
@@ -112,8 +134,11 @@ function Throughput() {
 
     setError('')
     setResults([])
+    setCompletedRuns(0)
+    setElapsedSeconds(0)
     setJobStatus('queued')
     setMessage('Submitting throughput test...')
+    startTimer()
 
     window.localStorage.setItem(
       'wncThroughputStatus',
@@ -141,6 +166,7 @@ function Throughput() {
 
       pollJobStatus(job.job_id)
     } catch (requestError) {
+      stopTimer()
       setJobStatus('failed')
       setMessage('Unable to start throughput testing.')
 
@@ -156,6 +182,32 @@ function Throughput() {
       )
     }
   }
+
+  const progressPercent =
+    numberOfRuns > 0
+      ? Math.min(
+          100,
+          Math.round((completedRuns / numberOfRuns) * 100)
+        )
+      : 0
+
+  const formatElapsedTime = (totalSeconds) => {
+    const minutes = Math.floor(totalSeconds / 60)
+    const seconds = totalSeconds % 60
+
+    return `${String(minutes).padStart(2, '0')}:${String(
+      seconds
+    ).padStart(2, '0')}`
+  }
+
+  const statusBadgeClass =
+    jobStatus === 'running'
+      ? 'running'
+      : jobStatus === 'queued'
+        ? 'queued'
+        : jobStatus === 'failed'
+          ? 'failed'
+          : 'idle'
 
   return (
     <div className="dashboard-layout">
@@ -173,9 +225,7 @@ function Throughput() {
           </div>
 
           <span
-            className={`status-badge ${
-              isRunning ? 'running' : 'idle'
-            }`}
+            className={`status-badge ${statusBadgeClass}`}
           >
             {jobStatus}
           </span>
@@ -253,6 +303,49 @@ function Throughput() {
                 <span>sec</span>
               </div>
             </label>
+          </div>
+
+          <div className="throughput-progress-panel">
+            <div className="throughput-progress-header">
+              <div>
+                <span>Test Progress</span>
+                <strong>
+                  {completedRuns} of {numberOfRuns} runs completed
+                </strong>
+              </div>
+
+              <div className="throughput-progress-time">
+                <FiClock />
+                <span>{formatElapsedTime(elapsedSeconds)}</span>
+              </div>
+            </div>
+
+            <div
+              className="throughput-progress-track"
+              role="progressbar"
+              aria-valuemin="0"
+              aria-valuemax="100"
+              aria-valuenow={progressPercent}
+            >
+              <div
+                className="throughput-progress-fill"
+                style={{ width: `${progressPercent}%` }}
+              />
+            </div>
+
+            <div className="throughput-progress-footer">
+              <span>{progressPercent}% complete</span>
+              <span>
+                {isRunning
+                  ? `Current run: ${Math.min(
+                      completedRuns + 1,
+                      numberOfRuns
+                    )}`
+                  : jobStatus === 'completed'
+                    ? 'All runs completed'
+                    : 'Ready to begin'}
+              </span>
+            </div>
           </div>
 
           <div className="configuration-footer">
@@ -338,7 +431,7 @@ function Throughput() {
             <div>
               <p>Completed Runs</p>
               <h3>
-                {results.length}
+                {completedRuns}
                 <span> / {numberOfRuns}</span>
               </h3>
             </div>
