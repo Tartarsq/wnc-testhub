@@ -16,7 +16,7 @@ RESULTS_FOLDER = PROJECT_ROOT / "results"
 # Titan 3 defaults
 # ==========================================================
 
-DEFAULT_TITAN_IP = "192.168.1.1"
+DEFAULT_TITAN_IP = "192.168.100.1"
 DEFAULT_TITAN_PORT = 80
 DEFAULT_TITAN_PROTOCOL = "http"
 
