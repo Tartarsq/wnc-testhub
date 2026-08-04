@@ -21,7 +21,13 @@ from config import (
 )
 from controllers.qxdm_controller import QXDMController
 from titan3 import Titan3
-from utils import create_session_folder, create_session_folders
+from utils import (
+    create_session_folder,
+    create_session_folders,
+    create_session_record,
+    find_session_record,
+    list_session_records,
+)
 
 
 app = FastAPI(
@@ -80,6 +86,42 @@ class ThroughputJob(BaseModel):
     error: str | None = None
     session_folder: str | None = None
     excel_path: str | None = None
+
+
+class SessionCreateRequest(BaseModel):
+    session_name: str = Field(
+        min_length=1,
+        max_length=120,
+    )
+    titan_ip: str = Field(
+        default=DEFAULT_TITAN_IP,
+        min_length=7,
+        max_length=45,
+    )
+    notes: str = Field(
+        default="",
+        max_length=2000,
+    )
+
+
+class TestSession(BaseModel):
+    session_id: str
+    session_name: str
+    titan_ip: str
+    notes: str = ""
+    status: str
+    created_at: str
+    updated_at: str
+    session_folder: str
+    throughput_jobs: list[dict[str, Any]] = Field(
+        default_factory=list
+    )
+    qxdm_logs: list[dict[str, Any]] = Field(
+        default_factory=list
+    )
+    reports: list[dict[str, Any]] = Field(
+        default_factory=list
+    )
 
 
 jobs: dict[str, dict[str, Any]] = {}
@@ -507,6 +549,66 @@ def get_device_status(
         device_status["metrics_error"] = str(error)
 
     return device_status
+
+
+
+
+# ==========================================================
+# Session endpoints
+# ==========================================================
+
+@app.post(
+    "/api/sessions",
+    response_model=TestSession,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_test_session(
+    request: SessionCreateRequest,
+) -> TestSession:
+    session = create_session_record(
+        results_folder=RESULTS_FOLDER,
+        session_name=request.session_name,
+        titan_ip=request.titan_ip,
+        notes=request.notes,
+    )
+
+    return TestSession(**session)
+
+
+@app.get(
+    "/api/sessions",
+    response_model=list[TestSession],
+)
+def get_test_sessions() -> list[TestSession]:
+    sessions = list_session_records(
+        RESULTS_FOLDER
+    )
+
+    return [
+        TestSession(**session)
+        for session in sessions
+    ]
+
+
+@app.get(
+    "/api/sessions/{session_id}",
+    response_model=TestSession,
+)
+def get_test_session(
+    session_id: str,
+) -> TestSession:
+    session = find_session_record(
+        results_folder=RESULTS_FOLDER,
+        session_id=session_id,
+    )
+
+    if session is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Test session was not found.",
+        )
+
+    return TestSession(**session)
 
 
 # ==========================================================
