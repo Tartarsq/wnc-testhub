@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import {
   FiExternalLink,
   FiRefreshCw,
-  FiRouter,
+  FiServer,
   FiWifi,
 } from 'react-icons/fi'
 import Sidebar from '../components/Sidebar'
@@ -139,7 +139,7 @@ function Devices() {
           <article className="device-primary-card">
             <div className="device-card-header">
               <div className="device-icon">
-                <FiRouter />
+                <FiServer />
               </div>
 
               <div>
@@ -155,6 +155,7 @@ function Devices() {
                 }`}
               >
                 <FiWifi />
+
                 {device?.reachable
                   ? 'Connected'
                   : 'Disconnected'}
