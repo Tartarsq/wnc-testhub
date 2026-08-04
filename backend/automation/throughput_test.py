@@ -13,6 +13,10 @@ from config import (
 )
 
 
+DEFAULT_SERVER_ID = "62092"
+DEFAULT_SERVER_NAME = "Optimum Online - Parsippany, NJ"
+
+
 class ThroughputTester:
     """
     Run throughput tests using the official Ookla Speedtest CLI.
@@ -30,7 +34,7 @@ class ThroughputTester:
         maximum_retries: int = 1,
         retry_delay_seconds: int = 2,
         refresh_server_every: int = 10,
-        server_id: str | int | None = None,
+        server_id: str | int | None = DEFAULT_SERVER_ID,
     ) -> None:
         self.timeout_seconds = timeout_seconds
         self.maximum_retries = maximum_retries
@@ -41,8 +45,8 @@ class ThroughputTester:
         # does not reuse a persistent Speedtest connection.
         self.refresh_server_every = refresh_server_every
 
-        # This will later allow us to lock testing to the
-        # Verizon Bridgewater Speedtest server.
+        # Use the configured server consistently for comparable results.
+        # Pass server_id=None to use Ookla automatic server selection only.
         self.server_id = (
             str(server_id)
             if server_id is not None
@@ -140,7 +144,10 @@ class ThroughputTester:
 
         return parsed_output
 
-    def _build_command(self) -> list[str]:
+    def _build_command(
+        self,
+        server_id: str | None = None,
+    ) -> list[str]:
         """
         Create the command used to run the official Ookla CLI.
         """
@@ -151,11 +158,11 @@ class ThroughputTester:
             "--format=json",
         ]
 
-        if self.server_id:
+        if server_id:
             command.extend(
                 [
                     "--server-id",
-                    self.server_id,
+                    server_id,
                 ]
             )
 
@@ -174,22 +181,9 @@ class ThroughputTester:
         self,
     ) -> dict[str, Any]:
         """Run the official Ookla CLI and return its JSON output."""
-        command = self._build_command()
-
         print(
             f"Using Speedtest CLI: {self.speedtest_path}"
         )
-
-        if self.server_id:
-            print(
-                f"Using Speedtest server ID: "
-                f"{self.server_id}"
-            )
-        else:
-            print(
-                "Using the automatically selected "
-                "Speedtest server..."
-            )
 
         # A full download/upload test normally needs much longer than
         # the network timeout value supplied to the constructor.
@@ -198,14 +192,60 @@ class ThroughputTester:
             self.timeout_seconds,
         )
 
-        completed_process = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=process_timeout_seconds,
-            encoding="utf-8",
-            errors="replace",
+        def run_command(
+            server_id: str | None,
+        ) -> subprocess.CompletedProcess[str]:
+            command = self._build_command(
+                server_id
+            )
+
+            return subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=process_timeout_seconds,
+                encoding="utf-8",
+                errors="replace",
+            )
+
+        if self.server_id:
+            print(
+                f"Using preferred Speedtest server: "
+                f"{DEFAULT_SERVER_NAME} "
+                f"(ID {self.server_id})"
+            )
+
+            completed_process = run_command(
+                self.server_id
+            )
+
+            if completed_process.returncode == 0:
+                return self._extract_json(
+                    completed_process.stdout.strip()
+                )
+
+            preferred_error = (
+                completed_process.stderr.strip()
+                or completed_process.stdout.strip()
+                or "No error details were returned."
+            )
+
+            print(
+                "Preferred server was unavailable. "
+                "Falling back to Ookla automatic server selection..."
+            )
+            print(
+                f"Preferred server error: {preferred_error}"
+            )
+
+        else:
+            print(
+                "Using Ookla automatic server selection..."
+            )
+
+        completed_process = run_command(
+            None
         )
 
         standard_output = (
