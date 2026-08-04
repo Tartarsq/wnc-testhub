@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+from pathlib import Path
 from threading import Lock
 from typing import Any
 from uuid import uuid4
@@ -9,7 +11,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from automation.automated_runner import AutomatedTestRunner
-from config import DEFAULT_TITAN_IP, RESULTS_FOLDER
+from config import (
+    DEFAULT_TITAN_IP,
+    QXDM_DEFAULT_LOG_FILENAME,
+    QXDM_DEFAULT_MASK,
+    QXDM_EXECUTABLE,
+    QXDM_MAX_LOG_SIZE_MB,
+    RESULTS_FOLDER,
+)
+from qxdm_controller import QXDMController
 from titan3 import Titan3
 from utils import create_session_folder, create_session_folders
 
@@ -31,6 +41,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# ==========================================================
+# Throughput models and state
+# ==========================================================
 
 class ThroughputRequest(BaseModel):
     titan_ip: str = Field(
@@ -171,6 +185,269 @@ def run_throughput_job(
         )
 
 
+# ==========================================================
+# QXDM models and state
+# ==========================================================
+
+class QXDMStartRequest(BaseModel):
+    log_filename: str = Field(
+        default=QXDM_DEFAULT_LOG_FILENAME,
+        min_length=1,
+        max_length=180,
+    )
+    output_folder: str | None = Field(
+        default=None,
+        max_length=500,
+    )
+    max_log_size_mb: int = Field(
+        default=QXDM_MAX_LOG_SIZE_MB,
+        ge=1,
+        le=1024,
+    )
+    load_mask: bool = True
+
+
+class QXDMStatus(BaseModel):
+    status: str
+    message: str
+    installed: bool
+    process_running: bool
+    logging_active: bool
+    executable_path: str
+    mask_path: str | None = None
+    current_log_path: str | None = None
+    current_log_size_bytes: int = 0
+    current_log_size_mb: float = 0.0
+    max_log_size_mb: int
+    started_at: str | None = None
+    stopped_at: str | None = None
+    error: str | None = None
+
+
+qxdm_controller = QXDMController()
+qxdm_lock = Lock()
+
+qxdm_state: dict[str, Any] = {
+    "status": "idle",
+    "message": "QXDM logging is idle.",
+    "logging_active": False,
+    "current_log_path": None,
+    "started_at": None,
+    "stopped_at": None,
+    "error": None,
+}
+
+
+def update_qxdm_state(
+    **changes: Any,
+) -> None:
+    with qxdm_lock:
+        qxdm_state.update(changes)
+
+
+def find_current_qxdm_log() -> Path | None:
+    configured_path = qxdm_controller.current_log_path
+
+    if configured_path is None:
+        return None
+
+    configured_path = Path(configured_path)
+
+    if configured_path.exists() and configured_path.is_file():
+        return configured_path
+
+    try:
+        candidates = [
+            candidate
+            for candidate in configured_path.parent.glob(
+                f"{configured_path.stem}*"
+            )
+            if candidate.is_file()
+        ]
+    except OSError:
+        return None
+
+    if not candidates:
+        return None
+
+    try:
+        return max(
+            candidates,
+            key=lambda candidate: candidate.stat().st_mtime,
+        )
+    except OSError:
+        return None
+
+
+def build_qxdm_status() -> QXDMStatus:
+    with qxdm_lock:
+        state_snapshot = dict(qxdm_state)
+
+    current_log = find_current_qxdm_log()
+    current_size_bytes = 0
+
+    if current_log is not None:
+        try:
+            current_size_bytes = current_log.stat().st_size
+        except OSError:
+            current_size_bytes = 0
+
+    configured_mask = qxdm_controller.resolve_default_mask()
+
+    return QXDMStatus(
+        status=state_snapshot["status"],
+        message=state_snapshot["message"],
+        installed=qxdm_controller.executable_exists(),
+        process_running=qxdm_controller.is_running(),
+        logging_active=state_snapshot["logging_active"],
+        executable_path=str(QXDM_EXECUTABLE),
+        mask_path=(
+            str(configured_mask)
+            if configured_mask is not None
+            else None
+        ),
+        current_log_path=(
+            str(current_log.resolve())
+            if current_log is not None
+            else state_snapshot["current_log_path"]
+        ),
+        current_log_size_bytes=current_size_bytes,
+        current_log_size_mb=round(
+            current_size_bytes / (1024 * 1024),
+            2,
+        ),
+        max_log_size_mb=qxdm_controller.max_log_size_mb,
+        started_at=state_snapshot["started_at"],
+        stopped_at=state_snapshot["stopped_at"],
+        error=state_snapshot["error"],
+    )
+
+
+def run_qxdm_start(
+    request: QXDMStartRequest,
+) -> None:
+    try:
+        output_folder = (
+            Path(request.output_folder).expanduser()
+            if request.output_folder
+            else RESULTS_FOLDER / "qxdm_logs"
+        )
+
+        output_folder = output_folder.resolve()
+        output_folder.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        safe_filename = Path(
+            request.log_filename
+        ).name.strip()
+
+        if not safe_filename:
+            raise ValueError(
+                "A QXDM log filename is required."
+            )
+
+        if Path(safe_filename).suffix == "":
+            safe_filename = f"{safe_filename}.isf"
+
+        timestamp = datetime.now().strftime(
+            "%Y%m%d_%H%M%S"
+        )
+
+        filename_path = Path(safe_filename)
+        timestamped_filename = (
+            f"{filename_path.stem}_{timestamp}"
+            f"{filename_path.suffix}"
+        )
+
+        log_path = (
+            output_folder / timestamped_filename
+        ).resolve()
+
+        qxdm_controller.max_log_size_mb = min(
+            max(int(request.max_log_size_mb), 1),
+            1024,
+        )
+
+        update_qxdm_state(
+            status="starting",
+            message="Launching QXDM and preparing logging.",
+            logging_active=False,
+            current_log_path=str(log_path),
+            started_at=None,
+            stopped_at=None,
+            error=None,
+        )
+
+        qxdm_controller.start_logging(
+            log_path=log_path,
+            load_mask=request.load_mask,
+        )
+
+        update_qxdm_state(
+            status="logging",
+            message="QXDM logging is active.",
+            logging_active=True,
+            current_log_path=str(log_path),
+            started_at=datetime.now().isoformat(
+                timespec="seconds"
+            ),
+            stopped_at=None,
+            error=None,
+        )
+
+    except Exception as error:
+        update_qxdm_state(
+            status="failed",
+            message="QXDM logging failed to start.",
+            logging_active=False,
+            error=str(error),
+        )
+
+
+def run_qxdm_stop() -> None:
+    try:
+        update_qxdm_state(
+            status="stopping",
+            message="Stopping and finalizing the QXDM log.",
+            error=None,
+        )
+
+        qxdm_controller.stop_logging(
+            load_saved_log=True,
+        )
+
+        completed_log = find_current_qxdm_log()
+
+        update_qxdm_state(
+            status="completed",
+            message="QXDM logging stopped and the log was finalized.",
+            logging_active=False,
+            current_log_path=(
+                str(completed_log.resolve())
+                if completed_log is not None
+                else qxdm_state.get("current_log_path")
+            ),
+            stopped_at=datetime.now().isoformat(
+                timespec="seconds"
+            ),
+            error=None,
+        )
+
+    except Exception as error:
+        update_qxdm_state(
+            status="failed",
+            message="QXDM logging failed to stop cleanly.",
+            logging_active=False,
+            error=str(error),
+        )
+
+
+# ==========================================================
+# General and device endpoints
+# ==========================================================
+
 @app.get("/api/health")
 def health_check() -> dict[str, str]:
     return {
@@ -231,6 +508,10 @@ def get_device_status(
 
     return device_status
 
+
+# ==========================================================
+# Throughput endpoints
+# ==========================================================
 
 @app.post(
     "/api/throughput/start",
@@ -310,3 +591,96 @@ def get_throughput_results(
             )
 
         return ThroughputJob(**job)
+
+
+# ==========================================================
+# QXDM endpoints
+# ==========================================================
+
+@app.get(
+    "/api/qxdm/status",
+    response_model=QXDMStatus,
+)
+def get_qxdm_status() -> QXDMStatus:
+    return build_qxdm_status()
+
+
+@app.post(
+    "/api/qxdm/start",
+    response_model=QXDMStatus,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def start_qxdm_logging(
+    request: QXDMStartRequest,
+    background_tasks: BackgroundTasks,
+) -> QXDMStatus:
+    with qxdm_lock:
+        if qxdm_state["status"] in {
+            "starting",
+            "logging",
+            "stopping",
+        }:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "QXDM is already starting, logging, "
+                    "or stopping."
+                ),
+            )
+
+    if not qxdm_controller.executable_exists():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "QXDM executable was not found at "
+                f"{QXDM_EXECUTABLE}."
+            ),
+        )
+
+    update_qxdm_state(
+        status="starting",
+        message="QXDM logging start has been queued.",
+        logging_active=False,
+        error=None,
+    )
+
+    background_tasks.add_task(
+        run_qxdm_start,
+        request,
+    )
+
+    return build_qxdm_status()
+
+
+@app.post(
+    "/api/qxdm/stop",
+    response_model=QXDMStatus,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def stop_qxdm_logging(
+    background_tasks: BackgroundTasks,
+) -> QXDMStatus:
+    with qxdm_lock:
+        if not qxdm_state["logging_active"]:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="QXDM logging is not currently active.",
+            )
+
+        if qxdm_state["status"] == "stopping":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="QXDM logging is already stopping.",
+            )
+
+    update_qxdm_state(
+        status="stopping",
+        message="QXDM logging stop has been queued.",
+        error=None,
+    )
+
+    background_tasks.add_task(
+        run_qxdm_stop,
+    )
+
+    return build_qxdm_status()
