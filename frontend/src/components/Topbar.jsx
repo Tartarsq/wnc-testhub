@@ -5,45 +5,39 @@ function Topbar({ title = 'Dashboard' }) {
   const [systemStatus, setSystemStatus] = useState('checking')
 
   useEffect(() => {
-    let isMounted = true
-
     const checkBackendHealth = async () => {
       try {
         const response = await api.get('/health')
 
-        if (
-          isMounted &&
+        setSystemStatus(
           response.data?.status === 'online'
-        ) {
-          setSystemStatus('online')
-        } else if (isMounted) {
-          setSystemStatus('offline')
-        }
-      } catch {
-        if (isMounted) {
-          setSystemStatus('offline')
-        }
+            ? 'online'
+            : 'offline'
+        )
+      } catch (error) {
+        console.error('Health check failed:', error)
+        setSystemStatus('offline')
       }
     }
 
     checkBackendHealth()
 
-    const healthInterval = window.setInterval(
+    const interval = window.setInterval(
       checkBackendHealth,
       10000
     )
 
     return () => {
-      isMounted = false
-      window.clearInterval(healthInterval)
+      window.clearInterval(interval)
     }
   }, [])
 
-  const statusLabel = {
-    checking: 'Checking',
-    online: 'Online',
-    offline: 'Offline',
-  }[systemStatus]
+  const statusLabel =
+    systemStatus === 'checking'
+      ? 'Checking'
+      : systemStatus === 'online'
+        ? 'Online'
+        : 'Offline'
 
   return (
     <header className="topbar">
