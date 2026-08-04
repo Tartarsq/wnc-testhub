@@ -86,8 +86,7 @@ class Titan3:
         """
         Send an HTTP request to Titan and return JSON data.
 
-        The endpoint should begin with a slash, for example:
-        /api/status
+        The endpoint should begin with a slash.
         """
         if not endpoint.startswith("/"):
             endpoint = f"/{endpoint}"
@@ -120,20 +119,16 @@ class Titan3:
 
     def get_radio_metrics(self) -> dict[str, Any]:
         """
-        Retrieve Titan RF and device metrics.
-
-        Replace '/api/status' and the field names below with
-        Titan's real endpoint and JSON structure.
+        Return empty RF and device metrics until the real Titan API
+        endpoint and response field names are confirmed.
         """
-        data = self.request_json("/api/status")
-
         return {
-            "firmware_version": data.get("firmware_version"),
-            "carrier": data.get("carrier"),
-            "technology": data.get("technology"),
-            "mode": data.get("mode"),
-            "serving_band": data.get("serving_band"),
-            "rsrp_dbm": data.get("rsrp"),
-            "rssi_dbm": data.get("rssi"),
-            "sinr_db": data.get("sinr"),
+            "firmware_version": None,
+            "carrier": None,
+            "technology": None,
+            "mode": None,
+            "serving_band": None,
+            "rsrp_dbm": None,
+            "rssi_dbm": None,
+            "sinr_db": None,
         }
