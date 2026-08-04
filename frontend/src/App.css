@@ -96,9 +96,43 @@
   font-size: 28px;
 }
 
-.status-online {
-  color: #16a34a;
+.system-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
   font-weight: 600;
+}
+
+.status-dot {
+  width: 10px;
+  height: 10px;
+  flex-shrink: 0;
+  border-radius: 50%;
+}
+
+.system-status.checking {
+  color: #d97706;
+}
+
+.system-status.checking .status-dot {
+  background: #f59e0b;
+}
+
+.system-status.online {
+  color: #16a34a;
+}
+
+.system-status.online .status-dot {
+  background: #22c55e;
+}
+
+.system-status.offline {
+  color: #dc2626;
+}
+
+.system-status.offline .status-dot {
+  background: #ef4444;
 }
 
 .dashboard-header {
