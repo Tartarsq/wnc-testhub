@@ -19,7 +19,7 @@ from config import (
     QXDM_MAX_LOG_SIZE_MB,
     RESULTS_FOLDER,
 )
-from controller.qxdm_controller import QXDMController
+from controllers.qxdm_controller import QXDMController
 from titan3 import Titan3
 from utils import create_session_folder, create_session_folders
 
