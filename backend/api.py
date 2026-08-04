@@ -148,6 +148,59 @@ def health_check() -> dict[str, str]:
     }
 
 
+@app.get("/api/device/status")
+def get_device_status(
+    titan_ip: str = DEFAULT_TITAN_IP,
+) -> dict[str, Any]:
+    titan = Titan3(
+        ip_address=titan_ip,
+    )
+
+    reachable = titan.ping()
+
+    device_status: dict[str, Any] = {
+        "ip_address": titan.ip_address,
+        "gui_url": titan.gui_url,
+        "reachable": reachable,
+        "status": (
+            "connected"
+            if reachable
+            else "disconnected"
+        ),
+        "firmware_version": None,
+        "carrier": None,
+        "technology": None,
+        "mode": None,
+        "serving_band": None,
+        "rsrp_dbm": None,
+        "rssi_dbm": None,
+        "sinr_db": None,
+        "metrics_error": None,
+    }
+
+    if not reachable:
+        device_status["metrics_error"] = (
+            "Titan is not reachable."
+        )
+
+        return device_status
+
+    try:
+        metrics = titan.get_radio_metrics()
+
+        if not isinstance(metrics, dict):
+            raise TypeError(
+                "Titan radio metrics must be returned as a dictionary."
+            )
+
+        device_status.update(metrics)
+
+    except Exception as error:
+        device_status["metrics_error"] = str(error)
+
+    return device_status
+
+
 @app.post(
     "/api/throughput/start",
     response_model=ThroughputJob,
