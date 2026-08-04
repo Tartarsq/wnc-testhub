@@ -58,9 +58,26 @@ function Throughput() {
 
         const job = response.data
 
+        const updatedResults = job.results ?? []
+
         setJobStatus(job.status)
         setMessage(job.message)
-        setResults(job.results ?? [])
+        setResults(updatedResults)
+
+        window.localStorage.setItem(
+          'wncThroughputStatus',
+          job.status
+        )
+
+        if (updatedResults.length > 0) {
+          const newestResult =
+            updatedResults[updatedResults.length - 1]
+
+          window.localStorage.setItem(
+            'wncLatestThroughputResult',
+            JSON.stringify(newestResult)
+          )
+        }
 
         if (job.error) {
           setError(job.error)
@@ -73,6 +90,12 @@ function Throughput() {
         stopPolling()
         setJobStatus('failed')
         setMessage('Unable to retrieve throughput status.')
+
+        window.localStorage.setItem(
+          'wncThroughputStatus',
+          'failed'
+        )
+
         setError(
           requestError.response?.data?.detail ||
             requestError.message ||
@@ -92,6 +115,11 @@ function Throughput() {
     setJobStatus('queued')
     setMessage('Submitting throughput test...')
 
+    window.localStorage.setItem(
+      'wncThroughputStatus',
+      'queued'
+    )
+
     try {
       const response = await api.post('/throughput/start', {
         titan_ip: titanIp,
@@ -106,10 +134,21 @@ function Throughput() {
       setJobStatus(job.status)
       setMessage(job.message)
 
+      window.localStorage.setItem(
+        'wncThroughputStatus',
+        job.status
+      )
+
       pollJobStatus(job.job_id)
     } catch (requestError) {
       setJobStatus('failed')
       setMessage('Unable to start throughput testing.')
+
+      window.localStorage.setItem(
+        'wncThroughputStatus',
+        'failed'
+      )
+
       setError(
         requestError.response?.data?.detail ||
           requestError.message ||
