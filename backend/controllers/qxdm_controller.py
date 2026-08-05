@@ -170,17 +170,89 @@ class QXDMController:
         return True
 
     def get_window(self):
-        """Locate and return the main QXDM window."""
-        window = Desktop(backend="uia").window(
-            title_re=self.WINDOW_TITLE_PATTERN
+        """
+        Locate and return the main QXDM window.
+
+        This QXDM build uses older Win32 controls, so the win32 backend
+        is used instead of UI Automation. The method first searches by
+        title and then falls back to the QXDM process ID.
+        """
+        desktop = Desktop(
+            backend="win32"
         )
 
-        window.wait(
-            "visible enabled ready",
-            timeout=20,
-        )
+        try:
+            window = desktop.window(
+                title_re=self.WINDOW_TITLE_PATTERN
+            )
 
-        return window
+            window.wait(
+                "visible enabled",
+                timeout=10,
+            )
+
+            return window
+
+        except Exception as title_error:
+            qxdm_process_ids = []
+
+            for process in psutil.process_iter(
+                ["pid", "name"]
+            ):
+                try:
+                    process_name = (
+                        process.info.get("name")
+                        or ""
+                    )
+
+                    if (
+                        process_name.lower()
+                        == self.PROCESS_NAME.lower()
+                    ):
+                        qxdm_process_ids.append(
+                            process.info["pid"]
+                        )
+
+                except (
+                    psutil.NoSuchProcess,
+                    psutil.AccessDenied,
+                    psutil.ZombieProcess,
+                ):
+                    continue
+
+            for process_id in qxdm_process_ids:
+                try:
+                    windows = desktop.windows(
+                        process=process_id,
+                        visible_only=True,
+                    )
+
+                    for candidate in windows:
+                        title = (
+                            candidate.window_text()
+                            or ""
+                        )
+
+                        if "qxdm" not in title.lower():
+                            continue
+
+                        candidate.wait(
+                            "visible enabled",
+                            timeout=10,
+                        )
+
+                        return candidate
+
+                except Exception:
+                    continue
+
+            raise RuntimeError(
+                "QXDM is running, but its main window could not be "
+                "located with the win32 backend. Make sure QXDM is "
+                "open, not minimized to the notification area, and "
+                "running under the same Windows user account as "
+                "the backend."
+            ) from title_error
 
     def focus_qxdm(self):
         """Bring the main QXDM window to the front."""
@@ -209,13 +281,13 @@ class QXDMController:
             f"Opened QXDM settings using: {selected_menu}"
         )
 
-        settings_dialog = Desktop(backend="uia").window(
+        settings_dialog = Desktop(backend="win32").window(
             title_re=r".*Settings.*",
             top_level_only=True,
         )
 
         settings_dialog.wait(
-            "visible enabled ready",
+            "visible enabled",
             timeout=15,
         )
 
@@ -255,13 +327,13 @@ class QXDMController:
 
     def find_dialog(self, title_pattern: str = r".*"):
 
-        dialog = Desktop(backend="uia").window(
+        dialog = Desktop(backend="win32").window(
             title_re=title_pattern,
             top_level_only=True,
         )
 
         dialog.wait(
-            "visible enabled ready",
+            "visible enabled",
             timeout=10,
         )
 
@@ -348,13 +420,13 @@ class QXDMController:
         """Fill in a standard Windows Open/Save dialog."""
         file_path = Path(file_path).resolve()
 
-        dialog = Desktop(backend="uia").window(
+        dialog = Desktop(backend="win32").window(
             title_re=r".*(Open|Save|Browse|Select).*",
             top_level_only=True,
         )
 
         dialog.wait(
-            "visible enabled ready",
+            "visible enabled",
             timeout=10,
         )
 
