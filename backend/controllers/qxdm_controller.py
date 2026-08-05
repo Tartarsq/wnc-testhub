@@ -443,98 +443,51 @@ class QXDMController:
             float(maximum_score),
         )
 
-    def click_main_menu(
+    def open_main_menu(
         self,
         menu_name: str,
     ) -> None:
         """
-        Locate QXDM's top menu bar with OpenCV and click File or Options.
+        Open a QXDM top-level menu using keyboard access keys.
+
+        This avoids OpenCV matching for the menu bar, which can vary
+        with DPI scaling, theme, and window size.
         """
-        (
-            left,
-            top,
-            right,
-            bottom,
-            score,
-        ) = self.locate_template_on_screen(
-            self.MENU_BAR_TEMPLATE_PATH,
-            self.SETTINGS_TEMPLATE_THRESHOLD,
-        )
+        self.focus_qxdm()
 
         normalized_name = menu_name.strip().lower()
 
         if normalized_name == "file":
-            click_x = (
-                left
-                + self.FILE_MENU_CLICK_X_OFFSET
-            )
+            send_keys("%f")
         elif normalized_name == "options":
-            click_x = (
-                left
-                + self.OPTIONS_MENU_CLICK_X_OFFSET
-            )
+            send_keys("%o")
         else:
             raise ValueError(
                 "Unsupported QXDM main menu: "
                 f"{menu_name}"
             )
 
-        click_y = int(
-            top
-            + (bottom - top)
-            * self.MENU_BAR_CLICK_Y_RATIO
-        )
+        time.sleep(0.8)
 
-        mouse.click(
-            button="left",
-            coords=(click_x, click_y),
-        )
-
-        print(
-            f"OpenCV clicked QXDM {menu_name} menu "
-            f"with score {score:.3f}."
-        )
-
-        time.sleep(1)
 
     def open_qxdm_settings(
         self,
     ) -> tuple[int, int, int, int]:
         """
-        Use OpenCV for the complete path:
+        Open QXDM Settings using:
 
-            Options -> Settings...
+            Alt+O -> Down -> Enter
+
+        Settings is the second item in the Options menu in QXDM 5.2.640.
+        OpenCV is then used only to locate the Settings dialog itself.
         """
-        self.focus_qxdm()
-
-        self.click_main_menu(
+        self.open_main_menu(
             "Options"
         )
 
-        (
-            menu_left,
-            menu_top,
-            menu_right,
-            menu_bottom,
-            menu_score,
-        ) = self.locate_template_on_screen(
-            self.SETTINGS_MENU_TEMPLATE_PATH,
-            self.SETTINGS_TEMPLATE_THRESHOLD,
-        )
-
-        mouse.click(
-            button="left",
-            coords=(
-                (menu_left + menu_right) // 2,
-                (menu_top + menu_bottom) // 2,
-            ),
-        )
-
-        print(
-            "OpenCV clicked Options -> Settings... "
-            f"with score {menu_score:.3f}."
-        )
-
+        send_keys("{DOWN}")
+        time.sleep(0.2)
+        send_keys("{ENTER}")
         time.sleep(2)
 
         deadline = time.monotonic() + 20.0
@@ -570,8 +523,8 @@ class QXDMController:
                 time.sleep(0.5)
 
         raise RuntimeError(
-            "Options -> Settings... was clicked, but OpenCV could "
-            "not locate the Settings dialog within 20 seconds."
+            "QXDM Settings was opened, but OpenCV could not "
+            "locate the Settings dialog within 20 seconds."
         ) from last_error
 
     def select_first_available_menu(
@@ -1018,11 +971,10 @@ class QXDMController:
 
     def load_default_mask(self) -> bool:
         """
-        Use OpenCV for the complete path:
+        Load the selected .dmc configuration using QXDM's built-in
+        shortcut for File -> Load Configuration...:
 
-            File -> Load Configuration...
-
-        Then enter the selected .dmc path in the Windows file dialog.
+            Ctrl+O
         """
         if self.default_mask is None:
             print(
@@ -1038,41 +990,14 @@ class QXDMController:
 
         self.focus_qxdm()
 
-        self.click_main_menu(
-            "File"
-        )
-
-        (
-            item_left,
-            item_top,
-            item_right,
-            item_bottom,
-            item_score,
-        ) = self.locate_template_on_screen(
-            self.LOAD_CONFIGURATION_TEMPLATE_PATH,
-            self.SETTINGS_TEMPLATE_THRESHOLD,
-        )
-
-        mouse.click(
-            button="left",
-            coords=(
-                (item_left + item_right) // 2,
-                (item_top + item_bottom) // 2,
-            ),
-        )
-
-        print(
-            "OpenCV clicked File -> Load Configuration... "
-            f"with score {item_score:.3f}."
-        )
-
+        send_keys("^o")
         time.sleep(1.5)
 
         self.handle_file_dialog(
             self.default_mask
         )
 
-        # Give QXDM time to apply the DMC configuration.
+        # Allow time for QXDM to apply the DMC configuration.
         time.sleep(4)
 
         print(
