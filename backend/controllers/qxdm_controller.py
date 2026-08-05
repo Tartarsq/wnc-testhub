@@ -343,13 +343,12 @@ class QXDMController:
 
     def open_qxdm_settings(self):
         """
-        Open QXDM using the exact path:
+        Open QXDM using:
 
             Options -> Settings...
 
-        QXDM 5.2.640 is a Qt application, so this uses mouse positions
-        relative to the main window instead of relying on hidden menu
-        controls.
+        Then locate the Settings window by enumerating visible Win32
+        top-level windows instead of using unsupported lookup arguments.
         """
         window = self.focus_qxdm()
 
@@ -362,7 +361,7 @@ class QXDMController:
 
         rectangle = window.rectangle()
 
-        # Click the Options menu in the top menu bar.
+        # Open the Options menu.
         options_x = rectangle.left + 105
         options_y = rectangle.top + 40
 
@@ -372,8 +371,8 @@ class QXDMController:
         )
         time.sleep(0.8)
 
-        # Click Settings..., the second selectable entry in Options.
-        settings_x = rectangle.left + 120
+        # Click Settings..., the second menu entry.
+        settings_x = rectangle.left + 125
         settings_y = rectangle.top + 83
 
         mouse.click(
@@ -382,28 +381,51 @@ class QXDMController:
         )
         time.sleep(1.5)
 
-        desktop = Desktop(
-            backend="win32"
-        )
-
-        deadline = time.monotonic() + 15.0
+        deadline = time.monotonic() + 20.0
         last_error = None
 
         while time.monotonic() < deadline:
             try:
-                settings_dialog = desktop.window(
-                    title_re=r".*Settings.*",
-                    top_level_only=True,
+                desktop = Desktop(
+                    backend="win32"
                 )
 
-                if settings_dialog.exists(timeout=1):
-                    settings_dialog.wait(
-                        "visible enabled",
-                        timeout=5,
-                    )
-                    settings_dialog.set_focus()
-                    time.sleep(1)
-                    return settings_dialog
+                for candidate in desktop.windows(
+                    visible_only=False,
+                    enabled_only=False,
+                ):
+                    try:
+                        title = (
+                            candidate.window_text()
+                            or ""
+                        ).strip()
+
+                        if "settings" not in title.lower():
+                            continue
+
+                        if not candidate.is_visible():
+                            continue
+
+                        candidate.wait(
+                            "visible",
+                            timeout=3,
+                        )
+
+                        try:
+                            candidate.set_focus()
+                        except Exception:
+                            pass
+
+                        print(
+                            "Located QXDM Settings window: "
+                            f"{title}"
+                        )
+
+                        time.sleep(1)
+                        return candidate
+
+                    except Exception:
+                        continue
 
             except Exception as error:
                 last_error = error
@@ -411,8 +433,8 @@ class QXDMController:
             time.sleep(0.5)
 
         raise RuntimeError(
-            "QXDM Options -> Settings opened, but the Settings "
-            "window could not be located."
+            "QXDM Options -> Settings was clicked, but no visible "
+            "Settings window was found within 20 seconds."
         ) from last_error
 
     def select_first_available_menu(
