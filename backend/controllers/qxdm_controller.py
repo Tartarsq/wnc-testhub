@@ -196,27 +196,33 @@ class QXDMController:
         """
         Locate and return the main QXDM window.
 
-        This QXDM build uses older Win32 controls, so the win32 backend
-        is used instead of UI Automation. The method first searches by
-        title and then falls back to the QXDM process ID.
+        QXDM may launch before its Qt main window is fully registered.
+        Retry for up to 30 seconds before reporting a failure.
         """
         desktop = Desktop(
             backend="win32"
         )
 
-        try:
-            window = desktop.window(
-                title_re=self.WINDOW_TITLE_PATTERN
-            )
+        deadline = time.monotonic() + 30.0
+        last_error = None
 
-            window.wait(
-                "visible enabled",
-                timeout=10,
-            )
+        while time.monotonic() < deadline:
+            try:
+                window = desktop.window(
+                    title_re=self.WINDOW_TITLE_PATTERN
+                )
 
-            return window
+                if window.exists(timeout=1):
+                    window.wait(
+                        "visible enabled",
+                        timeout=5,
+                    )
 
-        except Exception as title_error:
+                    return window
+
+            except Exception as error:
+                last_error = error
+
             qxdm_process_ids = []
 
             for process in psutil.process_iter(
@@ -261,21 +267,22 @@ class QXDMController:
 
                         candidate.wait(
                             "visible enabled",
-                            timeout=10,
+                            timeout=5,
                         )
 
                         return candidate
 
-                except Exception:
-                    continue
+                except Exception as error:
+                    last_error = error
 
-            raise RuntimeError(
-                "QXDM is running, but its main window could not be "
-                "located with the win32 backend. Make sure QXDM is "
-                "open, not minimized to the notification area, and "
-                "running under the same Windows user account as "
-                "the backend."
-            ) from title_error
+            time.sleep(1)
+
+        raise RuntimeError(
+            "QXDM opened, but its main window was not ready "
+            "within 30 seconds. Make sure QXDM is visible and "
+            "running under the same Windows user account as "
+            "the backend."
+        ) from last_error
 
     def focus_qxdm(self):
         """Bring the main QXDM window to the front."""
