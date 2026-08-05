@@ -60,6 +60,7 @@ class QXDMController:
     ]
 
     SETTINGS_MENU_PATHS = [
+        "Options->Settings...",
         "Options->Settings",
         "Tools->Settings",
         "View->Settings",
@@ -193,10 +194,9 @@ class QXDMController:
 
         return window
 
-    def open_qxdm_settings(self) -> bool:
+    def open_qxdm_settings(self):
         """
-        Open QXDM Options > Settings and leave the dialog open
-        so the user can configure log-saving options manually.
+        Open QXDM Options > Settings and return the Settings dialog.
         """
         window = self.focus_qxdm()
 
@@ -216,13 +216,13 @@ class QXDMController:
 
         settings_dialog.wait(
             "visible enabled ready",
-            timeout=10,
+            timeout=15,
         )
 
         settings_dialog.set_focus()
         time.sleep(1)
 
-        return True
+        return settings_dialog
 
     def select_first_available_menu(
         self,
@@ -705,126 +705,301 @@ class QXDMController:
 
         return True
 
-    def open_start_logging_dialog(self):
-        """Open QXDM's Start Logging dialog."""
-        window = self.focus_qxdm()
-
-        selected_menu = self.select_first_available_menu(
-            window,
-            self.START_LOGGING_MENU_PATHS,
+    def select_item_store_file_page(
+        self,
+        dialog,
+    ) -> None:
+        """Select the Item Store File page in QXDM Settings."""
+        controls = (
+            dialog.descendants(control_type="TreeItem")
+            + dialog.descendants(control_type="ListItem")
+            + dialog.descendants(control_type="Text")
         )
 
-        print(
-            f"Opened QXDM logging menu: {selected_menu}"
+        for control in controls:
+            try:
+                label = control.window_text().strip().lower()
+
+                if "item store file" in label:
+                    control.click_input()
+                    time.sleep(1)
+                    return
+            except Exception:
+                continue
+
+        raise RuntimeError(
+            "Could not select the 'Item Store File' page "
+            "inside QXDM Settings."
         )
 
-        time.sleep(1)
-
-        return self.find_dialog(
-            title_pattern=r".*(Log|Logging|Save|Capture).*"
+    def find_control_by_keywords(
+        self,
+        dialog,
+        control_type: str,
+        keywords: list[str],
+    ):
+        """
+        Find a control whose own or nearby text contains a keyword.
+        """
+        controls = dialog.descendants(
+            control_type=control_type
         )
+
+        for control in controls:
+            try:
+                own_text = control.window_text().strip().lower()
+                parent_text = " ".join(
+                    control.parent().texts()
+                ).lower()
+                combined_text = f"{own_text} {parent_text}"
+
+                if any(
+                    keyword.lower() in combined_text
+                    for keyword in keywords
+                ):
+                    return control
+            except Exception:
+                continue
+
+        return None
+
+    def set_checkbox_state(
+        self,
+        dialog,
+        keywords: list[str],
+        checked: bool = True,
+    ) -> bool:
+        """Set a checkbox using its own or nearby label text."""
+        checkboxes = dialog.descendants(
+            control_type="CheckBox"
+        )
+
+        for checkbox in checkboxes:
+            try:
+                combined_text = " ".join(
+                    [
+                        checkbox.window_text(),
+                        *checkbox.parent().texts(),
+                    ]
+                ).lower()
+
+                if not any(
+                    keyword.lower() in combined_text
+                    for keyword in keywords
+                ):
+                    continue
+
+                current_state = bool(
+                    checkbox.get_toggle_state()
+                )
+
+                if current_state != checked:
+                    checkbox.click_input()
+                    time.sleep(0.5)
+
+                return True
+            except Exception:
+                continue
+
+        return False
+
+    def set_log_size_setting(
+        self,
+        dialog,
+    ) -> None:
+        """
+        Set Maximum Log File Size in QXDM Settings.
+
+        This QXDM build displays values such as '1.0 Gigabytes'.
+        """
+        size_control = self.find_control_by_keywords(
+            dialog,
+            "ComboBox",
+            [
+                "maximum log file size",
+                "maximum file size",
+                "log file size",
+            ],
+        )
+
+        if size_control is None:
+            size_control = self.find_control_by_keywords(
+                dialog,
+                "Edit",
+                [
+                    "maximum log file size",
+                    "maximum file size",
+                    "log file size",
+                ],
+            )
+
+        if size_control is None:
+            raise RuntimeError(
+                "Could not locate Maximum Log File Size "
+                "inside QXDM Settings."
+            )
+
+        requested_mb = min(
+            max(int(self.max_log_size_mb), 1),
+            1024,
+        )
+
+        display_value = (
+            "1.0 Gigabytes"
+            if requested_mb >= 1024
+            else f"{requested_mb} Megabytes"
+        )
+
+        try:
+            if (
+                size_control.element_info.control_type
+                == "ComboBox"
+            ):
+                try:
+                    size_control.select(
+                        display_value
+                    )
+                except Exception:
+                    size_control.click_input()
+                    time.sleep(0.3)
+                    send_keys("^a")
+                    send_keys(
+                        display_value,
+                        with_spaces=True,
+                    )
+                    send_keys("{ENTER}")
+            else:
+                self.set_edit_value(
+                    size_control,
+                    display_value,
+                )
+
+        except Exception as error:
+            raise RuntimeError(
+                "Could not set Maximum Log File Size "
+                f"to {display_value}."
+            ) from error
 
     def configure_logging(
         self,
         log_path: Path,
     ) -> bool:
         """
-        Set the QXDM log destination and maximum file size.
+        Configure QXDM saving through:
 
-        The destination directory is created before the dialog opens.
+            Options > Settings... > Item Store File
+
+        This QXDM build does not expose Start Logging or Stop Logging
+        menu items. Quick Saving handles writing the log file, while
+        mode lpm and mode online perform the modem transition.
         """
         log_path = self.prepare_log_path(
             log_path
         )
 
-        dialog = self.open_start_logging_dialog()
+        dialog = self.open_qxdm_settings()
+        self.select_item_store_file_page(
+            dialog
+        )
 
-        path_edit = self.find_edit_by_keywords(
+        base_filename_edit = self.find_control_by_keywords(
             dialog,
+            "Edit",
+            ["base file name"],
+        )
+
+        log_directory_edit = self.find_control_by_keywords(
+            dialog,
+            "Edit",
             [
-                "file",
-                "path",
-                "location",
-                "output",
-                "destination",
-                "log name",
+                "log file directory",
+                "log directory",
             ],
         )
 
-        if path_edit is not None:
-            self.set_edit_value(
-                path_edit,
-                str(log_path),
-            )
-
-        else:
-            browse_clicked = self.click_button_by_keywords(
-                dialog,
-                [
-                    "browse",
-                    "select",
-                    "choose",
-                ],
-            )
-
-            if not browse_clicked:
-                raise RuntimeError(
-                    "Could not locate the QXDM log file "
-                    "location field or Browse button."
-                )
-
-            self.handle_file_dialog(
-                log_path
-            )
-
-            # The logging dialog may still be active.
-            dialog = self.find_dialog(
-                title_pattern=r".*(Log|Logging|Save|Capture).*"
-            )
-
-        size_edit = self.find_edit_by_keywords(
+        log_file_path_edit = self.find_control_by_keywords(
             dialog,
-            [
-                "maximum size",
-                "max size",
-                "file size",
-                "log size",
-                "size limit",
-            ],
+            "Edit",
+            ["log file path"],
         )
 
-        if size_edit is None:
+        if base_filename_edit is None:
             raise RuntimeError(
-                "Could not locate the QXDM maximum "
-                "log-size field."
+                "Could not locate Base File Name "
+                "inside QXDM Settings."
+            )
+
+        if (
+            log_directory_edit is None
+            and log_file_path_edit is None
+        ):
+            raise RuntimeError(
+                "Could not locate Log File Directory "
+                "or Log File Path inside QXDM Settings."
             )
 
         self.set_edit_value(
-            size_edit,
-            str(self.max_log_size_mb),
+            base_filename_edit,
+            log_path.name,
+        )
+
+        if log_directory_edit is not None:
+            self.set_edit_value(
+                log_directory_edit,
+                str(log_path.parent),
+            )
+
+        if log_file_path_edit is not None:
+            self.set_edit_value(
+                log_file_path_edit,
+                str(log_path),
+            )
+
+        if not self.set_checkbox_state(
+            dialog,
+            ["enable quick saving"],
+            checked=True,
+        ):
+            raise RuntimeError(
+                "Could not locate Enable Quick Saving "
+                "inside QXDM Settings."
+            )
+
+        self.set_checkbox_state(
+            dialog,
+            [
+                "automatic file saving when limits reached",
+                "automatic file saving",
+            ],
+            checked=True,
+        )
+
+        self.set_log_size_setting(
+            dialog
         )
 
         print(
-            f"QXDM log destination: {log_path}"
+            f"QXDM base filename: {log_path.name}"
+        )
+        print(
+            f"QXDM log directory: {log_path.parent}"
         )
         print(
             "QXDM maximum log size: "
             f"{self.max_log_size_mb} MB"
         )
 
+        self.click_button_by_keywords(
+            dialog,
+            ["apply"],
+        )
+
         if not self.click_button_by_keywords(
             dialog,
-            [
-                "start",
-                "begin",
-                "ok",
-                "apply",
-            ],
+            ["ok", "close"],
         ):
-            raise RuntimeError(
-                "Could not locate the QXDM Start "
-                "Logging button."
-            )
+            send_keys("{ENTER}")
+            time.sleep(1)
 
         time.sleep(2)
         return True
@@ -920,9 +1095,7 @@ class QXDMController:
             Create output directory
             Launch QXDM
             Load mask
-            Set destination
-            Set maximum size
-            Start QXDM logging
+            Configure Quick Saving destination and maximum size
             mode lpm
             mode online
         """
@@ -1072,22 +1245,31 @@ class QXDMController:
     def stop_logging(
         self,
         wait_seconds: float = 2.0,
-        load_saved_log: bool = True,
+        load_saved_log: bool = False,
         save_timeout_seconds: float = 20.0,
     ) -> bool:
-        """Stop capture, finalize the log, and optionally reopen it in QXDM."""
+        """
+        End the modem test transition and wait for Quick Saving.
+
+        This QXDM build does not expose a Stop Logging menu. Quick
+        Saving writes the configured log file automatically.
+        """
         self.mode_lpm()
         time.sleep(wait_seconds)
 
-        self.stop_qxdm_capture()
         completed_log = self.wait_for_saved_log(
             timeout_seconds=save_timeout_seconds,
         )
 
         if load_saved_log:
-            self.load_saved_log(completed_log)
+            self.load_saved_log(
+                completed_log
+            )
 
-        print("QXDM logging stopped and finalized.")
+        print(
+            "QXDM test transition stopped and "
+            "the Quick Save log was finalized."
+        )
         return True
 
     def print_controls(self) -> None:
