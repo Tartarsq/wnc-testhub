@@ -42,7 +42,9 @@ class QXDMController:
     # user and can be adjusted later if the toolbar layout changes.
     # In the maximized 1708px-wide window, this lands near x=734, which
     # is inside the editable Command field rather than the toolbar buttons.
-    COMMAND_BOX_X_RATIO = 0.43
+    # QXDM 5.2.640 toolbar geometry after maximizing the window.
+    # The editable command area begins just after the "Command:" label.
+    COMMAND_BOX_X_OFFSET = 650
     COMMAND_BOX_Y_OFFSET = 74
 
     # QXDM menu names may differ by version.
@@ -1005,12 +1007,17 @@ class QXDMController:
         QXDM's Qt controls are not individually visible to pywinauto,
         so the field is addressed relative to the main window.
         """
+        try:
+            window.maximize()
+            time.sleep(1)
+        except Exception:
+            pass
+
         rectangle = window.rectangle()
 
         x = int(
             rectangle.left
-            + rectangle.width()
-            * self.COMMAND_BOX_X_RATIO
+            + self.COMMAND_BOX_X_OFFSET
         )
 
         y = int(
@@ -1022,42 +1029,55 @@ class QXDMController:
 
     def send_command(self, command: str) -> bool:
         """
-        Click QXDM's Command field, type a command, and press Enter.
+        Automatically enter and execute a QXDM modem command.
 
-        Used for:
-            mode lpm
-            mode online
+        QXDM is a Qt application, so the Command field is clicked using
+        a stable location in the maximized QXDM 5.2.640 toolbar.
         """
         if not self.is_running():
             self.launch()
 
         window = self.focus_qxdm()
+
+        try:
+            window.maximize()
+            time.sleep(1)
+            window.set_focus()
+        except Exception:
+            pass
+
         x, y = self.get_command_box_coordinates(
             window
         )
 
+        # Click well inside the editable section of the Command field.
         mouse.click(
             button="left",
             coords=(x, y),
         )
-        time.sleep(0.5)
+        time.sleep(0.75)
 
-        # Clear any existing command, type the requested command, and run it.
+        # Clear the current command/history value.
         send_keys("^a")
+        time.sleep(0.15)
         send_keys("{BACKSPACE}")
+        time.sleep(0.15)
+
+        # Type and submit the modem command.
         send_keys(
             command,
             with_spaces=True,
-            pause=0.08,
+            pause=0.12,
         )
+        time.sleep(0.25)
         send_keys("{ENTER}")
 
         print(
-            f"Sent QXDM command: {command} "
-            f"at screen coordinates ({x}, {y})."
+            f"Executed QXDM command: {command} "
+            f"at ({x}, {y})."
         )
 
-        time.sleep(2)
+        time.sleep(3)
         return True
 
 
@@ -1256,12 +1276,19 @@ class QXDMController:
 
     def test_command_coordinates(self) -> tuple[int, int]:
         """
-        Click the calculated QXDM Command field and type TEST_ONLY.
+        Type mode lpm into QXDM's Command field without pressing Enter.
 
-        The text is not submitted. This confirms the click lands inside
-        the Command field before mode commands are executed.
+        This confirms that the automatic click lands in the correct field.
         """
         window = self.focus_qxdm()
+
+        try:
+            window.maximize()
+            time.sleep(1)
+            window.set_focus()
+        except Exception:
+            pass
+
         x, y = self.get_command_box_coordinates(
             window
         )
@@ -1270,18 +1297,18 @@ class QXDMController:
             button="left",
             coords=(x, y),
         )
-        time.sleep(0.5)
+        time.sleep(0.75)
 
         send_keys("^a")
         send_keys("{BACKSPACE}")
         send_keys(
-            "TEST_ONLY",
+            "mode lpm",
             with_spaces=True,
-            pause=0.08,
+            pause=0.12,
         )
 
         print(
-            "Typed TEST_ONLY into the calculated QXDM Command "
+            "Typed mode lpm into the calculated QXDM Command "
             f"field at ({x}, {y}) without pressing Enter."
         )
 
