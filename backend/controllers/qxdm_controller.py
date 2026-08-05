@@ -54,6 +54,7 @@ class QXDMController:
 
     # Only search the top toolbar region so OpenCV cannot match another box.
     COMMAND_SEARCH_HEIGHT = 140
+    COMMAND_SEARCH_WIDTH_RATIO = 0.58
 
     MENU_BAR_TEMPLATE_PATH = (
         Path(__file__).resolve().parent
@@ -1199,11 +1200,19 @@ class QXDMController:
             rectangle.top + self.COMMAND_SEARCH_HEIGHT,
         )
 
+        # Search only the left side of the toolbar. The View Finder input
+        # is on the right and is visually similar to the Command input.
+        search_right = int(
+            rectangle.left
+            + rectangle.width()
+            * self.COMMAND_SEARCH_WIDTH_RATIO
+        )
+
         screenshot = ImageGrab.grab(
             bbox=(
                 rectangle.left,
                 rectangle.top,
-                rectangle.right,
+                search_right,
                 search_bottom,
             )
         )
@@ -1309,6 +1318,7 @@ class QXDMController:
             "OpenCV located the QXDM Command bar with "
             f"score {maximum_score:.3f}. "
             f"Clicking the large input box at ({click_x}, {click_y}). "
+            "Search was restricted to the left side of the toolbar. "
             f"Debug image: {debug_path}"
         )
 
