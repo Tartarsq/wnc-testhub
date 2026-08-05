@@ -2611,3 +2611,17 @@ input {
   font-size: 12px;
   line-height: 1.45;
 }
+
+/* ==========================================================
+   Optional QXDM Mask
+========================================================== */
+
+.qxdm-optional-mask-row {
+  margin-top: 12px;
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+
+.qxdm-optional-mask-row span {
+  color: #1e3a8a;
+}

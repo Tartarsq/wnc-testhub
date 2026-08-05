@@ -457,17 +457,27 @@ class QXDMController:
             f"{mask_path}"
         )
 
-    def prompt_for_default_mask(self) -> Path:
+    def prompt_for_default_mask(
+        self,
+        allow_cancel: bool = False,
+    ) -> Optional[Path]:
         """
         Ask the user to select a QXDM mask or configuration file.
 
-        The selected path is stored in self.default_mask and remembered for
-        future test runs. Cancelling the dialog stops the test safely.
+        When allow_cancel is True, cancelling the picker returns None so
+        logging can continue without loading a mask.
         """
         try:
             from tkinter import Tk
             from tkinter.filedialog import askopenfilename
         except ImportError as error:
+            if allow_cancel:
+                print(
+                    "Tkinter is unavailable. Continuing without "
+                    "loading a QXDM mask."
+                )
+                return None
+
             raise RuntimeError(
                 "The QXDM mask could not be loaded automatically, "
                 "and the Tkinter file picker is unavailable."
@@ -493,6 +503,13 @@ class QXDMController:
             root.destroy()
 
         if not selected_file:
+            if allow_cancel:
+                print(
+                    "No QXDM mask was selected. "
+                    "Continuing without a mask."
+                )
+                return None
+
             raise RuntimeError(
                 "No QXDM mask was selected. "
                 "The test was not started."
@@ -501,6 +518,13 @@ class QXDMController:
         selected_mask = Path(selected_file).resolve()
 
         if not selected_mask.exists() or not selected_mask.is_file():
+            if allow_cancel:
+                print(
+                    "The selected QXDM mask was not available. "
+                    "Continuing without a mask."
+                )
+                return None
+
             raise FileNotFoundError(
                 "The selected QXDM mask was not found:\n"
                 f"{selected_mask}"
@@ -555,29 +579,52 @@ class QXDMController:
     def ensure_default_mask_loaded(
         self,
         retry_with_picker: bool = True,
+        continue_without_mask: bool = False,
     ) -> bool:
         """
         Load the configured or remembered mask.
 
-        If no usable mask exists, or automatic loading fails, prompt the user
-        to select a mask and retry before allowing the test to continue.
+        If continue_without_mask is True, cancelling the picker or failing
+        to load a selected mask does not stop logging.
         """
         resolved_mask = self.resolve_default_mask()
 
         if resolved_mask is None:
-            self.prompt_for_default_mask()
-            return self.load_default_mask()
+            selected_mask = self.prompt_for_default_mask(
+                allow_cancel=continue_without_mask,
+            )
+
+            if selected_mask is None:
+                return False
+
+            try:
+                return self.load_default_mask()
+            except Exception as error:
+                if continue_without_mask:
+                    print(
+                        "The selected QXDM mask could not be loaded. "
+                        "Continuing without a mask. "
+                        f"Details: {error}"
+                    )
+                    return False
+                raise
 
         try:
             loaded = self.load_default_mask()
 
             if loaded:
-                # Also remember a valid configured mask so later runs can use it.
                 self.save_mask_preference(self.default_mask)
                 return True
 
         except Exception as error:
             if not retry_with_picker:
+                if continue_without_mask:
+                    print(
+                        "Automatic QXDM mask loading failed. "
+                        "Continuing without a mask. "
+                        f"Details: {error}"
+                    )
+                    return False
                 raise
 
             print(
@@ -589,15 +636,31 @@ class QXDMController:
             )
 
         if not retry_with_picker:
+            if continue_without_mask:
+                return False
+
             raise RuntimeError(
                 "The QXDM mask could not be loaded."
             )
 
-        self.prompt_for_default_mask()
+        selected_mask = self.prompt_for_default_mask(
+            allow_cancel=continue_without_mask,
+        )
+
+        if selected_mask is None:
+            return False
 
         try:
             return self.load_default_mask()
         except Exception as error:
+            if continue_without_mask:
+                print(
+                    "The manually selected QXDM mask could not be "
+                    "loaded. Continuing without a mask. "
+                    f"Details: {error}"
+                )
+                return False
+
             raise RuntimeError(
                 "The manually selected QXDM mask could not be loaded. "
                 "The test was not started."
@@ -848,6 +911,7 @@ class QXDMController:
         log_path: Path,
         transition_delay: float = 2.0,
         load_mask: bool = True,
+        continue_without_mask: bool = False,
     ) -> bool:
         """
         Run the complete QXDM startup sequence.
@@ -868,6 +932,7 @@ class QXDMController:
         if load_mask:
             self.ensure_default_mask_loaded(
                 retry_with_picker=True,
+                continue_without_mask=continue_without_mask,
             )
 
         self.configure_logging(log_path)

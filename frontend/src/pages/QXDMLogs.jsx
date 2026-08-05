@@ -20,6 +20,8 @@ function QXDMLogs() {
   const [outputFolder, setOutputFolder] = useState('')
   const [maxLogSizeMb, setMaxLogSizeMb] = useState(1024)
   const [loadMask, setLoadMask] = useState(true)
+  const [continueWithoutMask, setContinueWithoutMask] =
+    useState(true)
   const [sessions, setSessions] = useState([])
   const [selectedSessionId, setSelectedSessionId] = useState('')
 
@@ -99,6 +101,7 @@ function QXDMLogs() {
         output_folder: outputFolder.trim() || null,
         max_log_size_mb: Number(maxLogSizeMb),
         load_mask: loadMask,
+        continue_without_mask: continueWithoutMask,
         session_id: selectedSessionId || null,
       }
 
@@ -415,6 +418,26 @@ function QXDMLogs() {
                 mask before logging
               </span>
             </label>
+
+            {loadMask && (
+              <label className="qxdm-checkbox-row qxdm-optional-mask-row">
+                <input
+                  type="checkbox"
+                  checked={continueWithoutMask}
+                  onChange={(event) =>
+                    setContinueWithoutMask(event.target.checked)
+                  }
+                  disabled={
+                    loggingActive || isSubmitting
+                  }
+                />
+
+                <span>
+                  Continue logging without a mask if no mask is
+                  selected or the mask cannot be loaded
+                </span>
+              </label>
+            )}
 
             <div className="qxdm-action-row">
               <button

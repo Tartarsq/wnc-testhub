@@ -265,6 +265,7 @@ class QXDMStartRequest(BaseModel):
         le=1024,
     )
     load_mask: bool = True
+    continue_without_mask: bool = True
     session_id: str | None = Field(
         default=None,
         max_length=64,
@@ -565,6 +566,7 @@ def run_qxdm_start(
         qxdm_controller.start_logging(
             log_path=log_path,
             load_mask=request.load_mask,
+            continue_without_mask=request.continue_without_mask,
         )
 
         update_qxdm_state(
