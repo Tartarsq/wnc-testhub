@@ -9,6 +9,7 @@ from uuid import uuid4
 from fastapi import BackgroundTasks, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from openpyxl import load_workbook
 
 from automation.automated_runner import AutomatedTestRunner
 from config import (
@@ -122,6 +123,23 @@ class TestSession(BaseModel):
     reports: list[dict[str, Any]] = Field(
         default_factory=list
     )
+
+
+class AnalyticsSummary(BaseModel):
+    total_runs: int = 0
+    average_download_mbps: float | None = None
+    minimum_download_mbps: float | None = None
+    maximum_download_mbps: float | None = None
+    average_upload_mbps: float | None = None
+    minimum_upload_mbps: float | None = None
+    maximum_upload_mbps: float | None = None
+    average_ping_ms: float | None = None
+    average_jitter_ms: float | None = None
+
+
+class AnalyticsResponse(BaseModel):
+    summary: AnalyticsSummary
+    history: list[dict[str, Any]] = Field(default_factory=list)
 
 
 jobs: dict[str, dict[str, Any]] = {}
@@ -487,6 +505,53 @@ def run_qxdm_stop() -> None:
 
 
 # ==========================================================
+# Analytics helpers
+# ==========================================================
+
+ANALYTICS_FIELDS = [
+    "timestamp", "run_number", "titan_ip", "connection_status",
+    "download_mbps", "upload_mbps", "ping_ms", "ping_jitter_ms",
+    "packet_loss_percent", "test_duration_seconds", "isp",
+    "external_ip", "interface_name", "server_name", "server_location",
+    "result_url", "firmware_version", "carrier", "technology", "mode",
+    "serving_band", "rsrp_dbm", "rssi_dbm", "sinr_db",
+    "metrics_error", "notes",
+]
+
+def _to_float(value: Any) -> float | None:
+    if value is None or value == "": return None
+    try: return float(value)
+    except (TypeError, ValueError): return None
+
+def load_analytics_history() -> list[dict[str, Any]]:
+    history=[]
+    if not RESULTS_FOLDER.exists(): return history
+    for workbook_path in RESULTS_FOLDER.rglob("*.xlsx"):
+        try: wb=load_workbook(workbook_path,read_only=True,data_only=True)
+        except Exception: continue
+        try:
+            if "Throughput Results" not in wb.sheetnames: continue
+            for row in wb["Throughput Results"].iter_rows(min_row=2,values_only=True):
+                if not any(v is not None for v in row): continue
+                rec={f:(row[i] if i < len(row) else None) for i,f in enumerate(ANALYTICS_FIELDS)}
+                ts=rec.get("timestamp")
+                if isinstance(ts,datetime): rec["timestamp"]=ts.isoformat(timespec="seconds")
+                elif ts is not None: rec["timestamp"]=str(ts)
+                rec["workbook_path"]=str(workbook_path.resolve())
+                rec["session_folder"]=str(workbook_path.parent.parent.resolve())
+                history.append(rec)
+        finally: wb.close()
+    history.sort(key=lambda x:str(x.get("timestamp") or ""),reverse=True)
+    return history
+
+def build_analytics_summary(history: list[dict[str, Any]]) -> AnalyticsSummary:
+    def vals(k): return [v for x in history if (v:=_to_float(x.get(k))) is not None]
+    d,u,p,j=vals("download_mbps"),vals("upload_mbps"),vals("ping_ms"),vals("ping_jitter_ms")
+    avg=lambda x: round(sum(x)/len(x),2) if x else None
+    return AnalyticsSummary(total_runs=len(history),average_download_mbps=avg(d),minimum_download_mbps=round(min(d),2) if d else None,maximum_download_mbps=round(max(d),2) if d else None,average_upload_mbps=avg(u),minimum_upload_mbps=round(min(u),2) if u else None,maximum_upload_mbps=round(max(u),2) if u else None,average_ping_ms=avg(p),average_jitter_ms=avg(j))
+
+
+# ==========================================================
 # General and device endpoints
 # ==========================================================
 
@@ -551,6 +616,24 @@ def get_device_status(
     return device_status
 
 
+
+
+# ==========================================================
+# Analytics endpoints
+# ==========================================================
+
+@app.get("/api/analytics/history", response_model=list[dict[str, Any]])
+def get_analytics_history() -> list[dict[str, Any]]:
+    return load_analytics_history()
+
+@app.get("/api/analytics/summary", response_model=AnalyticsSummary)
+def get_analytics_summary() -> AnalyticsSummary:
+    return build_analytics_summary(load_analytics_history())
+
+@app.get("/api/analytics", response_model=AnalyticsResponse)
+def get_analytics() -> AnalyticsResponse:
+    history=load_analytics_history()
+    return AnalyticsResponse(summary=build_analytics_summary(history),history=history)
 
 
 # ==========================================================
