@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Optional
 
 import psutil
-from pywinauto import Desktop, mouse
+from pywinauto import Application, Desktop, mouse
 from pywinauto.keyboard import send_keys
 
 from config import (
@@ -94,11 +94,8 @@ class QXDMController:
     ]
 
     LOAD_MASK_MENU_PATHS = [
+        "File->Load Configuration...",
         "File->Load Configuration",
-        "File->Load Log Mask",
-        "File->Open Configuration",
-        "Logging->Load Log Mask",
-        "Tools->Load Log Mask",
     ]
 
     SETTINGS_MENU_PATHS = [
@@ -185,7 +182,7 @@ class QXDMController:
 
         return log_path
 
-    def launch(self, wait_seconds: float = 8.0) -> bool:
+    def launch(self, wait_seconds: float = 12.0) -> bool:
         """Launch QXDM if it is not already running."""
         if not self.executable_exists():
             raise FileNotFoundError(
@@ -215,35 +212,58 @@ class QXDMController:
         """
         Locate and return the main QXDM window.
 
-        QXDM may launch before its Qt main window is fully registered.
-        Retry for up to 30 seconds before reporting a failure.
+        QXDM can launch its Qt window several seconds after QXDM.exe
+        starts, and the final window may not be owned by the first PID.
+        This method retries for 60 seconds and searches all top-level
+        Win32 windows before falling back to process-based connection.
         """
-        desktop = Desktop(
-            backend="win32"
-        )
-
-        deadline = time.monotonic() + 30.0
+        deadline = time.monotonic() + 60.0
         last_error = None
 
         while time.monotonic() < deadline:
+            desktop = Desktop(
+                backend="win32"
+            )
+
+            # Most reliable path for this Qt build: enumerate every
+            # top-level window and select a visible title containing QXDM.
             try:
-                window = desktop.window(
-                    title_re=self.WINDOW_TITLE_PATTERN
-                )
+                for candidate in desktop.windows(
+                    visible_only=False,
+                    enabled_only=False,
+                ):
+                    try:
+                        title = (
+                            candidate.window_text()
+                            or ""
+                        ).strip()
 
-                if window.exists(timeout=1):
-                    window.wait(
-                        "visible enabled",
-                        timeout=5,
-                    )
+                        if "qxdm" not in title.lower():
+                            continue
 
-                    return window
+                        if not candidate.is_visible():
+                            continue
+
+                        candidate.wait(
+                            "visible",
+                            timeout=3,
+                        )
+
+                        print(
+                            "Located QXDM main window: "
+                            f"{title}"
+                        )
+
+                        return candidate
+
+                    except Exception:
+                        continue
 
             except Exception as error:
                 last_error = error
 
-            qxdm_process_ids = []
-
+            # Fallback: connect to every running QXDM process and inspect
+            # all windows owned by that process.
             for process in psutil.process_iter(
                 ["pid", "name"]
             ):
@@ -255,52 +275,58 @@ class QXDMController:
 
                     if (
                         process_name.lower()
-                        == self.PROCESS_NAME.lower()
+                        != self.PROCESS_NAME.lower()
                     ):
-                        qxdm_process_ids.append(
-                            process.info["pid"]
+                        continue
+
+                    process_id = int(
+                        process.info["pid"]
+                    )
+
+                    try:
+                        application = Application(
+                            backend="win32"
+                        ).connect(
+                            process=process_id,
+                            timeout=3,
                         )
+
+                        for candidate in application.windows():
+                            title = (
+                                candidate.window_text()
+                                or ""
+                            ).strip()
+
+                            if "qxdm" not in title.lower():
+                                continue
+
+                            if not candidate.is_visible():
+                                continue
+
+                            print(
+                                "Located QXDM window through process "
+                                f"{process_id}: {title}"
+                            )
+
+                            return candidate
+
+                    except Exception as error:
+                        last_error = error
 
                 except (
                     psutil.NoSuchProcess,
                     psutil.AccessDenied,
                     psutil.ZombieProcess,
+                    ValueError,
                 ):
                     continue
-
-            for process_id in qxdm_process_ids:
-                try:
-                    windows = desktop.windows(
-                        process=process_id,
-                        visible_only=True,
-                    )
-
-                    for candidate in windows:
-                        title = (
-                            candidate.window_text()
-                            or ""
-                        )
-
-                        if "qxdm" not in title.lower():
-                            continue
-
-                        candidate.wait(
-                            "visible enabled",
-                            timeout=5,
-                        )
-
-                        return candidate
-
-                except Exception as error:
-                    last_error = error
 
             time.sleep(1)
 
         raise RuntimeError(
-            "QXDM opened, but its main window was not ready "
-            "within 30 seconds. Make sure QXDM is visible and "
-            "running under the same Windows user account as "
-            "the backend."
+            "QXDM opened, but no visible QXDM window could be found "
+            "within 60 seconds. Make sure the backend terminal and QXDM "
+            "are both running normally or both running as administrator."
         ) from last_error
 
     def focus_qxdm(self):
@@ -317,33 +343,77 @@ class QXDMController:
 
     def open_qxdm_settings(self):
         """
-        Open QXDM Options > Settings and return the Settings dialog.
+        Open QXDM using the exact path:
+
+            Options -> Settings...
+
+        QXDM 5.2.640 is a Qt application, so this uses mouse positions
+        relative to the main window instead of relying on hidden menu
+        controls.
         """
         window = self.focus_qxdm()
 
-        selected_menu = self.select_first_available_menu(
-            window,
-            self.SETTINGS_MENU_PATHS,
+        try:
+            window.maximize()
+            time.sleep(1)
+            window.set_focus()
+        except Exception:
+            pass
+
+        rectangle = window.rectangle()
+
+        # Click the Options menu in the top menu bar.
+        options_x = rectangle.left + 105
+        options_y = rectangle.top + 40
+
+        mouse.click(
+            button="left",
+            coords=(options_x, options_y),
+        )
+        time.sleep(0.8)
+
+        # Click Settings..., the second selectable entry in Options.
+        settings_x = rectangle.left + 120
+        settings_y = rectangle.top + 83
+
+        mouse.click(
+            button="left",
+            coords=(settings_x, settings_y),
+        )
+        time.sleep(1.5)
+
+        desktop = Desktop(
+            backend="win32"
         )
 
-        print(
-            f"Opened QXDM settings using: {selected_menu}"
-        )
+        deadline = time.monotonic() + 15.0
+        last_error = None
 
-        settings_dialog = Desktop(backend="win32").window(
-            title_re=r".*Settings.*",
-            top_level_only=True,
-        )
+        while time.monotonic() < deadline:
+            try:
+                settings_dialog = desktop.window(
+                    title_re=r".*Settings.*",
+                    top_level_only=True,
+                )
 
-        settings_dialog.wait(
-            "visible enabled",
-            timeout=15,
-        )
+                if settings_dialog.exists(timeout=1):
+                    settings_dialog.wait(
+                        "visible enabled",
+                        timeout=5,
+                    )
+                    settings_dialog.set_focus()
+                    time.sleep(1)
+                    return settings_dialog
 
-        settings_dialog.set_focus()
-        time.sleep(1)
+            except Exception as error:
+                last_error = error
 
-        return settings_dialog
+            time.sleep(0.5)
+
+        raise RuntimeError(
+            "QXDM Options -> Settings opened, but the Settings "
+            "window could not be located."
+        ) from last_error
 
     def select_first_available_menu(
         self,
@@ -789,217 +859,48 @@ class QXDMController:
 
     def load_default_mask(self) -> bool:
         """
-        Load the configured QXDM log mask.
+        Load the configured .dmc file using QXDM's exact command:
 
-        Returns False when no default mask was configured.
+            File -> Load Configuration...  (Ctrl+O)
         """
         if self.default_mask is None:
             print(
-                "No default QXDM mask was configured."
+                "No default QXDM configuration was selected."
             )
             return False
 
         if not self.default_mask.exists():
             raise FileNotFoundError(
-                "The default QXDM mask was not found:\n"
+                "The default QXDM configuration was not found:\n"
                 f"{self.default_mask}"
             )
 
         window = self.focus_qxdm()
 
-        selected_menu = self.select_first_available_menu(
-            window,
-            self.LOAD_MASK_MENU_PATHS,
-        )
+        try:
+            window.maximize()
+            time.sleep(1)
+            window.set_focus()
+        except Exception:
+            pass
 
-        print(
-            f"Opened QXDM mask menu: {selected_menu}"
-        )
+        # QXDM's File menu shows Ctrl+O for Load Configuration...
+        send_keys("^o")
+        time.sleep(1.5)
 
         self.handle_file_dialog(
             self.default_mask
         )
 
+        # Give QXDM time to apply the DMC configuration.
+        time.sleep(4)
+
         print(
-            f"Loaded QXDM mask: {self.default_mask}"
+            "Loaded QXDM configuration: "
+            f"{self.default_mask}"
         )
 
         return True
-
-    def select_item_store_file_page(
-        self,
-        dialog,
-    ) -> None:
-        """Select the Item Store File page in QXDM Settings."""
-        controls = (
-            dialog.descendants(control_type="TreeItem")
-            + dialog.descendants(control_type="ListItem")
-            + dialog.descendants(control_type="Text")
-        )
-
-        for control in controls:
-            try:
-                label = control.window_text().strip().lower()
-
-                if "item store file" in label:
-                    control.click_input()
-                    time.sleep(1)
-                    return
-            except Exception:
-                continue
-
-        raise RuntimeError(
-            "Could not select the 'Item Store File' page "
-            "inside QXDM Settings."
-        )
-
-    def find_control_by_keywords(
-        self,
-        dialog,
-        control_type: str,
-        keywords: list[str],
-    ):
-        """
-        Find a control whose own or nearby text contains a keyword.
-        """
-        controls = dialog.descendants(
-            control_type=control_type
-        )
-
-        for control in controls:
-            try:
-                own_text = control.window_text().strip().lower()
-                parent_text = " ".join(
-                    control.parent().texts()
-                ).lower()
-                combined_text = f"{own_text} {parent_text}"
-
-                if any(
-                    keyword.lower() in combined_text
-                    for keyword in keywords
-                ):
-                    return control
-            except Exception:
-                continue
-
-        return None
-
-    def set_checkbox_state(
-        self,
-        dialog,
-        keywords: list[str],
-        checked: bool = True,
-    ) -> bool:
-        """Set a checkbox using its own or nearby label text."""
-        checkboxes = dialog.descendants(
-            control_type="CheckBox"
-        )
-
-        for checkbox in checkboxes:
-            try:
-                combined_text = " ".join(
-                    [
-                        checkbox.window_text(),
-                        *checkbox.parent().texts(),
-                    ]
-                ).lower()
-
-                if not any(
-                    keyword.lower() in combined_text
-                    for keyword in keywords
-                ):
-                    continue
-
-                current_state = bool(
-                    checkbox.get_toggle_state()
-                )
-
-                if current_state != checked:
-                    checkbox.click_input()
-                    time.sleep(0.5)
-
-                return True
-            except Exception:
-                continue
-
-        return False
-
-    def set_log_size_setting(
-        self,
-        dialog,
-    ) -> None:
-        """
-        Set Maximum Log File Size in QXDM Settings.
-
-        This QXDM build displays values such as '1.0 Gigabytes'.
-        """
-        size_control = self.find_control_by_keywords(
-            dialog,
-            "ComboBox",
-            [
-                "maximum log file size",
-                "maximum file size",
-                "log file size",
-            ],
-        )
-
-        if size_control is None:
-            size_control = self.find_control_by_keywords(
-                dialog,
-                "Edit",
-                [
-                    "maximum log file size",
-                    "maximum file size",
-                    "log file size",
-                ],
-            )
-
-        if size_control is None:
-            raise RuntimeError(
-                "Could not locate Maximum Log File Size "
-                "inside QXDM Settings."
-            )
-
-        requested_mb = min(
-            max(int(self.max_log_size_mb), 1),
-            1024,
-        )
-
-        display_value = (
-            "1.0 Gigabytes"
-            if requested_mb >= 1024
-            else f"{requested_mb} Megabytes"
-        )
-
-        try:
-            if (
-                size_control.element_info.control_type
-                == "ComboBox"
-            ):
-                try:
-                    size_control.select(
-                        display_value
-                    )
-                except Exception:
-                    size_control.click_input()
-                    time.sleep(0.3)
-                    send_keys("^a")
-                    send_keys(
-                        display_value,
-                        with_spaces=True,
-                    )
-                    send_keys("{ENTER}")
-            else:
-                self.set_edit_value(
-                    size_control,
-                    display_value,
-                )
-
-        except Exception as error:
-            raise RuntimeError(
-                "Could not set Maximum Log File Size "
-                f"to {display_value}."
-            ) from error
 
     def _settings_point(
         self,
@@ -1407,18 +1308,21 @@ class QXDMController:
 
         # Allow QXDM time to attach to the Qualcomm diagnostic USB port.
         self.wait_for_usb_connection(
-            timeout_seconds=30.0,
+            timeout_seconds=45.0,
             poll_interval=1.0,
         )
-        time.sleep(3)
+        # Allow the diagnostic connection and QXDM toolbar to settle.
+        time.sleep(5)
 
         if load_mask:
             self.ensure_default_mask_loaded(
                 retry_with_picker=True,
                 continue_without_mask=continue_without_mask,
             )
+            time.sleep(3)
 
         self.configure_logging(log_path)
+        time.sleep(3)
 
         self.mode_lpm()
         time.sleep(max(transition_delay, 5.0))
