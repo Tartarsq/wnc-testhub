@@ -40,8 +40,10 @@ class QXDMController:
     # through pywinauto. These ratios point to the Command field relative
     # to the QXDM window. They match the QXDM 5.2.640 layout shown by the
     # user and can be adjusted later if the toolbar layout changes.
-    COMMAND_BOX_X_RATIO = 0.20
-    COMMAND_BOX_Y_OFFSET = 78
+    # In the maximized 1708px-wide window, this lands near x=734, which
+    # is inside the editable Command field rather than the toolbar buttons.
+    COMMAND_BOX_X_RATIO = 0.43
+    COMMAND_BOX_Y_OFFSET = 74
 
     # QXDM menu names may differ by version.
     START_LOGGING_MENU_PATHS = [
@@ -1254,10 +1256,10 @@ class QXDMController:
 
     def test_command_coordinates(self) -> tuple[int, int]:
         """
-        Focus QXDM and click the calculated Command field location.
+        Click the calculated QXDM Command field and type TEST_ONLY.
 
-        This does not type or execute a command. It is useful for confirming
-        that the coordinate points to the correct field.
+        The text is not submitted. This confirms the click lands inside
+        the Command field before mode commands are executed.
         """
         window = self.focus_qxdm()
         x, y = self.get_command_box_coordinates(
@@ -1268,13 +1270,23 @@ class QXDMController:
             button="left",
             coords=(x, y),
         )
+        time.sleep(0.5)
+
+        send_keys("^a")
+        send_keys("{BACKSPACE}")
+        send_keys(
+            "TEST_ONLY",
+            with_spaces=True,
+            pause=0.08,
+        )
 
         print(
-            "Clicked the calculated QXDM Command field at "
-            f"({x}, {y})."
+            "Typed TEST_ONLY into the calculated QXDM Command "
+            f"field at ({x}, {y}) without pressing Enter."
         )
 
         return x, y
+
 
     def print_controls(self) -> None:
         """
