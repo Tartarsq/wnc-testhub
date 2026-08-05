@@ -5,6 +5,7 @@ import QXDMLogs from './pages/QXDMLogs'
 import Throughput from './pages/Throughput'
 import TestCases from './pages/TestCases'
 import Analytics from './pages/Analytics'
+import TestResultDetails from './pages/TestResultDetails'
 import Settings from './pages/Settings'
 
 function App() {
@@ -17,6 +18,10 @@ function App() {
         <Route path="/throughput" element={<Throughput />} />
         <Route path="/test-cases" element={<TestCases />} />
         <Route path="/analytics" element={<Analytics />} />
+        <Route
+          path="/analytics/results/:resultIndex"
+          element={<TestResultDetails />}
+        />
         <Route path="/settings" element={<Settings />} />
       </Routes>
     </BrowserRouter>

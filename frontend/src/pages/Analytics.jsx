@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   FiActivity,
   FiBarChart2,
@@ -9,7 +10,6 @@ import {
   FiRefreshCw,
   FiSearch,
   FiUpload,
-  FiX,
   FiZap,
 } from 'react-icons/fi'
 import {
@@ -28,6 +28,7 @@ import api from '../services/api'
 import '../App.css'
 
 function Analytics() {
+  const navigate = useNavigate()
   const [summary, setSummary] = useState(null)
   const [history, setHistory] = useState([])
   const [isLoading, setIsLoading] = useState(true)
@@ -40,7 +41,6 @@ function Analytics() {
   const [titanFilter, setTitanFilter] = useState('all')
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
-  const [selectedResult, setSelectedResult] = useState(null)
 
   const loadAnalytics = async () => {
     setIsLoading(true)
@@ -706,7 +706,12 @@ function Analytics() {
                         <button
                           type="button"
                           className="analytics-details-button"
-                          onClick={() => setSelectedResult(item)}
+                          onClick={() => {
+                            const resultIndex = history.indexOf(item)
+                            navigate(
+                              `/analytics/results/${resultIndex}`
+                            )
+                          }}
                         >
                           <FiEye />
                           View
@@ -719,47 +724,6 @@ function Analytics() {
             </table>
           </div>
         </section>
-
-        {selectedResult && (
-          <div
-            className="analytics-modal-backdrop"
-            onClick={() => setSelectedResult(null)}
-          >
-            <section
-              className="analytics-details-modal"
-              onClick={(event) => event.stopPropagation()}
-            >
-              <div className="analytics-modal-header">
-                <div>
-                  <h3>Throughput Run Details</h3>
-                  <p>{formatDate(selectedResult.timestamp)}</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setSelectedResult(null)}
-                  aria-label="Close details"
-                >
-                  <FiX />
-                </button>
-              </div>
-
-              <dl className="analytics-details-grid">
-                <div><dt>Run</dt><dd>{selectedResult.run_number ?? '—'}</dd></div>
-                <div><dt>Titan IP</dt><dd>{selectedResult.titan_ip ?? '—'}</dd></div>
-                <div><dt>Download</dt><dd>{displayMetric(selectedResult.download_mbps, ' Mbps')}</dd></div>
-                <div><dt>Upload</dt><dd>{displayMetric(selectedResult.upload_mbps, ' Mbps')}</dd></div>
-                <div><dt>Ping</dt><dd>{displayMetric(selectedResult.ping_ms, ' ms')}</dd></div>
-                <div><dt>Jitter</dt><dd>{displayMetric(selectedResult.ping_jitter_ms, ' ms')}</dd></div>
-                <div><dt>Server</dt><dd>{selectedResult.server_name ?? '—'}</dd></div>
-                <div><dt>Carrier</dt><dd>{selectedResult.carrier ?? '—'}</dd></div>
-                <div><dt>Technology</dt><dd>{selectedResult.technology ?? '—'}</dd></div>
-                <div><dt>Mode</dt><dd>{selectedResult.mode ?? '—'}</dd></div>
-                <div className="analytics-details-wide"><dt>Workbook</dt><dd>{selectedResult.workbook_path ?? '—'}</dd></div>
-                <div className="analytics-details-wide"><dt>Notes</dt><dd>{selectedResult.notes || 'No notes saved.'}</dd></div>
-              </dl>
-            </section>
-          </div>
-        )}
       </main>
     </div>
   )
