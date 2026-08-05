@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Optional
 
 import psutil
-from pywinauto import Desktop
+from pywinauto import Desktop, mouse
 from pywinauto.keyboard import send_keys
 
 from config import (
@@ -35,6 +35,13 @@ class QXDMController:
 
     PROCESS_NAME = "QXDM.exe"
     WINDOW_TITLE_PATTERN = r".*QXDM.*"
+
+    # QXDM is a Qt application and does not expose its internal controls
+    # through pywinauto. These ratios point to the Command field relative
+    # to the QXDM window. They match the QXDM 5.2.640 layout shown by the
+    # user and can be adjusted later if the toolbar layout changes.
+    COMMAND_BOX_X_RATIO = 0.20
+    COMMAND_BOX_Y_OFFSET = 78
 
     # QXDM menu names may differ by version.
     START_LOGGING_MENU_PATHS = [
@@ -957,211 +964,65 @@ class QXDMController:
         log_path: Path,
     ) -> bool:
         """
-        Configure QXDM saving through:
+        Prepare the intended log path without automating QXDM Settings.
+
+        QXDM 5.2.640 uses Qt controls that are not exposed to pywinauto.
+        Therefore, Quick Saving must already be configured manually under:
 
             Options > Settings... > Item Store File
 
-        This QXDM build does not expose Start Logging or Stop Logging
-        menu items. Quick Saving handles writing the log file, while
-        mode lpm and mode online perform the modem transition.
+        The controller still remembers the requested path for status and
+        session metadata, but QXDM will physically save according to its
+        currently configured Quick Saving settings.
         """
         log_path = self.prepare_log_path(
             log_path
         )
 
-        dialog = self.open_qxdm_settings()
-        self.select_item_store_file_page(
-            dialog
-        )
-
-        base_filename_edit = self.find_control_by_keywords(
-            dialog,
-            "Edit",
-            ["base file name"],
-        )
-
-        log_directory_edit = self.find_control_by_keywords(
-            dialog,
-            "Edit",
-            [
-                "log file directory",
-                "log directory",
-            ],
-        )
-
-        log_file_path_edit = self.find_control_by_keywords(
-            dialog,
-            "Edit",
-            ["log file path"],
-        )
-
-        if base_filename_edit is None:
-            raise RuntimeError(
-                "Could not locate Base File Name "
-                "inside QXDM Settings."
-            )
-
-        if (
-            log_directory_edit is None
-            and log_file_path_edit is None
-        ):
-            raise RuntimeError(
-                "Could not locate Log File Directory "
-                "or Log File Path inside QXDM Settings."
-            )
-
-        self.set_edit_value(
-            base_filename_edit,
-            log_path.name,
-        )
-
-        if log_directory_edit is not None:
-            self.set_edit_value(
-                log_directory_edit,
-                str(log_path.parent),
-            )
-
-        if log_file_path_edit is not None:
-            self.set_edit_value(
-                log_file_path_edit,
-                str(log_path),
-            )
-
-        if not self.set_checkbox_state(
-            dialog,
-            ["enable quick saving"],
-            checked=True,
-        ):
-            raise RuntimeError(
-                "Could not locate Enable Quick Saving "
-                "inside QXDM Settings."
-            )
-
-        self.set_checkbox_state(
-            dialog,
-            [
-                "automatic file saving when limits reached",
-                "automatic file saving",
-            ],
-            checked=True,
-        )
-
-        self.set_log_size_setting(
-            dialog
-        )
-
         print(
-            f"QXDM base filename: {log_path.name}"
+            "QXDM Quick Saving settings cannot be edited reliably "
+            "through pywinauto because this QXDM build uses hidden "
+            "Qt controls."
         )
         print(
-            f"QXDM log directory: {log_path.parent}"
+            "Using the existing QXDM Item Store File settings."
         )
         print(
-            "QXDM maximum log size: "
-            f"{self.max_log_size_mb} MB"
+            f"Requested TestHub log path: {log_path}"
         )
 
-        self.click_button_by_keywords(
-            dialog,
-            ["apply"],
-        )
-
-        if not self.click_button_by_keywords(
-            dialog,
-            ["ok", "close"],
-        ):
-            send_keys("{ENTER}")
-            time.sleep(1)
-
-        time.sleep(2)
         return True
 
-    def get_command_box(self, window):
+    def get_command_box_coordinates(
+        self,
+        window,
+    ) -> tuple[int, int]:
         """
-        Locate QXDM's command entry field.
+        Return screen coordinates for QXDM's Command field.
 
-        Depending on the QXDM build, the field may appear to UI
-        Automation as either a ComboBox or an Edit control.
+        QXDM's Qt controls are not individually visible to pywinauto,
+        so the field is addressed relative to the main window.
         """
-        candidates = []
+        rectangle = window.rectangle()
 
-        for control_type in ["ComboBox", "Edit"]:
-            for control in window.descendants(
-                control_type=control_type
-            ):
-                try:
-                    rectangle = control.rectangle()
-                    window_rectangle = window.rectangle()
-
-                    distance_from_top = (
-                        rectangle.top
-                        - window_rectangle.top
-                    )
-
-                    if not (
-                        0 <= distance_from_top <= 140
-                    ):
-                        continue
-
-                    own_text = (
-                        control.window_text()
-                        .strip()
-                        .lower()
-                    )
-
-                    parent_text = " ".join(
-                        control.parent().texts()
-                    ).lower()
-
-                    automation_id = (
-                        control.element_info.automation_id
-                        or ""
-                    ).lower()
-
-                    combined_text = (
-                        f"{own_text} "
-                        f"{parent_text} "
-                        f"{automation_id}"
-                    )
-
-                    command_score = 0
-
-                    if "command" in combined_text:
-                        command_score += 100
-
-                    if "mode" in combined_text:
-                        command_score += 20
-
-                    command_score += rectangle.width()
-
-                    candidates.append(
-                        (
-                            command_score,
-                            control,
-                        )
-                    )
-
-                except Exception:
-                    continue
-
-        if not candidates:
-            raise RuntimeError(
-                "Could not locate the QXDM Command field. "
-                "Run print_controls() to inspect this QXDM build."
-            )
-
-        candidates.sort(
-            key=lambda candidate: candidate[0],
-            reverse=True,
+        x = int(
+            rectangle.left
+            + rectangle.width()
+            * self.COMMAND_BOX_X_RATIO
         )
 
-        return candidates[0][1]
+        y = int(
+            rectangle.top
+            + self.COMMAND_BOX_Y_OFFSET
+        )
+
+        return x, y
 
     def send_command(self, command: str) -> bool:
         """
-        Enter a command in QXDM's Command field.
+        Click QXDM's Command field, type a command, and press Enter.
 
-        This is used for the modem transition:
+        Used for:
             mode lpm
             mode online
         """
@@ -1169,50 +1030,32 @@ class QXDMController:
             self.launch()
 
         window = self.focus_qxdm()
-        command_box = self.get_command_box(
+        x, y = self.get_command_box_coordinates(
             window
         )
 
-        try:
-            command_box.set_focus()
-        except Exception:
-            pass
-
-        command_box.click_input()
+        mouse.click(
+            button="left",
+            coords=(x, y),
+        )
         time.sleep(0.5)
 
-        try:
-            command_box.type_keys(
-                "^a{BACKSPACE}",
-                set_foreground=True,
-            )
-            command_box.type_keys(
-                command,
-                with_spaces=True,
-                set_foreground=True,
-                pause=0.05,
-            )
-            command_box.type_keys(
-                "{ENTER}",
-                set_foreground=True,
-            )
-
-        except Exception:
-            send_keys("^a")
-            send_keys("{BACKSPACE}")
-            send_keys(
-                command,
-                with_spaces=True,
-                pause=0.05,
-            )
-            send_keys("{ENTER}")
-
-        time.sleep(2)
+        # Clear any existing command, type the requested command, and run it.
+        send_keys("^a")
+        send_keys("{BACKSPACE}")
+        send_keys(
+            command,
+            with_spaces=True,
+            pause=0.08,
+        )
+        send_keys("{ENTER}")
 
         print(
-            f"Sent QXDM command: {command}"
+            f"Sent QXDM command: {command} "
+            f"at screen coordinates ({x}, {y})."
         )
 
+        time.sleep(2)
         return True
 
 
@@ -1394,28 +1237,44 @@ class QXDMController:
         save_timeout_seconds: float = 20.0,
     ) -> bool:
         """
-        End the modem test transition and wait for Quick Saving.
+        Put the modem into low-power mode and allow Quick Saving to flush.
 
-        This QXDM build does not expose a Stop Logging menu. Quick
-        Saving writes the configured log file automatically.
+        The QXDM file is saved according to the existing Item Store File
+        settings configured inside QXDM.
         """
         self.mode_lpm()
         time.sleep(wait_seconds)
 
-        completed_log = self.wait_for_saved_log(
-            timeout_seconds=save_timeout_seconds,
+        print(
+            "QXDM test stopped. Check the Quick Saving directory "
+            "configured under Options > Settings > Item Store File."
         )
 
-        if load_saved_log:
-            self.load_saved_log(
-                completed_log
-            )
+        return True
+
+    def test_command_coordinates(self) -> tuple[int, int]:
+        """
+        Focus QXDM and click the calculated Command field location.
+
+        This does not type or execute a command. It is useful for confirming
+        that the coordinate points to the correct field.
+        """
+        window = self.focus_qxdm()
+        x, y = self.get_command_box_coordinates(
+            window
+        )
+
+        mouse.click(
+            button="left",
+            coords=(x, y),
+        )
 
         print(
-            "QXDM test transition stopped and "
-            "the Quick Save log was finalized."
+            "Clicked the calculated QXDM Command field at "
+            f"({x}, {y})."
         )
-        return True
+
+        return x, y
 
     def print_controls(self) -> None:
         """
