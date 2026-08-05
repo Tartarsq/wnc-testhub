@@ -1006,39 +1006,76 @@ class QXDMController:
 
     def get_command_box(self, window):
         """
-        Locate QXDM's Command combo box.
+        Locate QXDM's command entry field.
 
-        QXDM has multiple combo boxes, so this selects the widest one
-        near the top of the main window.
+        Depending on the QXDM build, the field may appear to UI
+        Automation as either a ComboBox or an Edit control.
         """
-        combo_boxes = window.descendants(
-            control_type="ComboBox"
-        )
-
-        if not combo_boxes:
-            raise RuntimeError(
-                "Could not locate any QXDM combo boxes."
-            )
-
-        window_top = window.rectangle().top
         candidates = []
 
-        for combo_box in combo_boxes:
-            rectangle = combo_box.rectangle()
-            width = rectangle.width()
+        for control_type in ["ComboBox", "Edit"]:
+            for control in window.descendants(
+                control_type=control_type
+            ):
+                try:
+                    rectangle = control.rectangle()
+                    window_rectangle = window.rectangle()
 
-            distance_from_top = (
-                rectangle.top - window_top
-            )
+                    distance_from_top = (
+                        rectangle.top
+                        - window_rectangle.top
+                    )
 
-            if 0 <= distance_from_top <= 180:
-                candidates.append(
-                    (width, combo_box)
-                )
+                    if not (
+                        0 <= distance_from_top <= 140
+                    ):
+                        continue
+
+                    own_text = (
+                        control.window_text()
+                        .strip()
+                        .lower()
+                    )
+
+                    parent_text = " ".join(
+                        control.parent().texts()
+                    ).lower()
+
+                    automation_id = (
+                        control.element_info.automation_id
+                        or ""
+                    ).lower()
+
+                    combined_text = (
+                        f"{own_text} "
+                        f"{parent_text} "
+                        f"{automation_id}"
+                    )
+
+                    command_score = 0
+
+                    if "command" in combined_text:
+                        command_score += 100
+
+                    if "mode" in combined_text:
+                        command_score += 20
+
+                    command_score += rectangle.width()
+
+                    candidates.append(
+                        (
+                            command_score,
+                            control,
+                        )
+                    )
+
+                except Exception:
+                    continue
 
         if not candidates:
             raise RuntimeError(
-                "Could not locate the QXDM Command box."
+                "Could not locate the QXDM Command field. "
+                "Run print_controls() to inspect this QXDM build."
             )
 
         candidates.sort(
@@ -1049,7 +1086,13 @@ class QXDMController:
         return candidates[0][1]
 
     def send_command(self, command: str) -> bool:
-        """Enter a command in QXDM's Command box."""
+        """
+        Enter a command in QXDM's Command field.
+
+        This is used for the modem transition:
+            mode lpm
+            mode online
+        """
         if not self.is_running():
             self.launch()
 
@@ -1058,18 +1101,48 @@ class QXDMController:
             window
         )
 
+        try:
+            command_box.set_focus()
+        except Exception:
+            pass
+
         command_box.click_input()
         time.sleep(0.5)
 
-        send_keys("^a")
-        send_keys(
-            command,
-            with_spaces=True,
-        )
-        send_keys("{ENTER}")
+        try:
+            command_box.type_keys(
+                "^a{BACKSPACE}",
+                set_foreground=True,
+            )
+            command_box.type_keys(
+                command,
+                with_spaces=True,
+                set_foreground=True,
+                pause=0.05,
+            )
+            command_box.type_keys(
+                "{ENTER}",
+                set_foreground=True,
+            )
+
+        except Exception:
+            send_keys("^a")
+            send_keys("{BACKSPACE}")
+            send_keys(
+                command,
+                with_spaces=True,
+                pause=0.05,
+            )
+            send_keys("{ENTER}")
 
         time.sleep(2)
+
+        print(
+            f"Sent QXDM command: {command}"
+        )
+
         return True
+
 
     def mode_lpm(self) -> bool:
         """Place the modem into low-power mode."""
