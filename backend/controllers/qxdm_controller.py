@@ -46,9 +46,14 @@ class QXDMController:
         Path(__file__).resolve().parent
         / "qxdm_command_bar.png"
     )
-    COMMAND_TEMPLATE_THRESHOLD = 0.78
-    COMMAND_INPUT_X_RATIO = 0.56
-    COMMAND_INPUT_Y_RATIO = 0.52
+    COMMAND_TEMPLATE_THRESHOLD = 0.72
+
+    # Exact point inside the large white input box in qxdm_command_bar.png.
+    COMMAND_INPUT_X_OFFSET = 260
+    COMMAND_INPUT_Y_OFFSET = 21
+
+    # Only search the top toolbar region so OpenCV cannot match another box.
+    COMMAND_SEARCH_HEIGHT = 140
 
     MENU_BAR_TEMPLATE_PATH = (
         Path(__file__).resolve().parent
@@ -1167,13 +1172,10 @@ class QXDMController:
         window,
     ) -> tuple[int, int]:
         """
-        Locate the complete QXDM Command widget using OpenCV.
+        Locate QXDM's complete Command bar within the top toolbar only.
 
-        The template contains:
-            Command: [large input box] [drop-down arrow]
-
-        After matching the full widget, the click point is calculated
-        proportionally so it lands inside the large editable input box.
+        Restricting the search to the top 140 pixels prevents OpenCV from
+        matching another text box elsewhere in QXDM.
         """
         template_path = self.COMMAND_TEMPLATE_PATH
 
@@ -1192,12 +1194,17 @@ class QXDMController:
 
         rectangle = window.rectangle()
 
+        search_bottom = min(
+            rectangle.bottom,
+            rectangle.top + self.COMMAND_SEARCH_HEIGHT,
+        )
+
         screenshot = ImageGrab.grab(
             bbox=(
                 rectangle.left,
                 rectangle.top,
                 rectangle.right,
-                rectangle.bottom,
+                search_bottom,
             )
         )
 
@@ -1213,7 +1220,7 @@ class QXDMController:
 
         if template is None:
             raise RuntimeError(
-                "OpenCV could not read the QXDM command-bar template."
+                "OpenCV could not read qxdm_command_bar.png."
             )
 
         screenshot_gray = cv2.cvtColor(
@@ -1237,13 +1244,10 @@ class QXDMController:
 
         if maximum_score < self.COMMAND_TEMPLATE_THRESHOLD:
             raise RuntimeError(
-                "OpenCV could not confidently locate the complete "
-                f"QXDM Command bar. Match score: {maximum_score:.3f}"
+                "OpenCV could not confidently locate the QXDM "
+                f"Command bar in the toolbar. Match score: "
+                f"{maximum_score:.3f}"
             )
-
-        template_height, template_width = (
-            template_gray.shape
-        )
 
         matched_left = (
             rectangle.left
@@ -1254,29 +1258,66 @@ class QXDMController:
             + maximum_location[1]
         )
 
-        click_x = int(
+        click_x = (
             matched_left
-            + template_width
-            * self.COMMAND_INPUT_X_RATIO
+            + self.COMMAND_INPUT_X_OFFSET
         )
-        click_y = int(
+        click_y = (
             matched_top
-            + template_height
-            * self.COMMAND_INPUT_Y_RATIO
+            + self.COMMAND_INPUT_Y_OFFSET
+        )
+
+        # Save a debug image showing exactly what OpenCV matched.
+        template_height, template_width = template_gray.shape
+        debug_image = screenshot_bgr.copy()
+
+        cv2.rectangle(
+            debug_image,
+            maximum_location,
+            (
+                maximum_location[0] + template_width,
+                maximum_location[1] + template_height,
+            ),
+            (0, 0, 255),
+            2,
+        )
+
+        local_click = (
+            maximum_location[0] + self.COMMAND_INPUT_X_OFFSET,
+            maximum_location[1] + self.COMMAND_INPUT_Y_OFFSET,
+        )
+
+        cv2.circle(
+            debug_image,
+            local_click,
+            6,
+            (0, 255, 0),
+            -1,
+        )
+
+        debug_path = (
+            Path(__file__).resolve().parent
+            / "qxdm_command_debug.png"
+        )
+
+        cv2.imwrite(
+            str(debug_path),
+            debug_image,
         )
 
         print(
-            "OpenCV located the complete QXDM Command bar with "
+            "OpenCV located the QXDM Command bar with "
             f"score {maximum_score:.3f}. "
-            f"Clicking inside the large input box at ({click_x}, {click_y})."
+            f"Clicking the large input box at ({click_x}, {click_y}). "
+            f"Debug image: {debug_path}"
         )
 
         return click_x, click_y
 
     def send_command(self, command: str) -> bool:
         """
-        Locate QXDM's full Command bar with OpenCV, click inside the
-        large input box, type the command, and execute it.
+        Find the Command bar, click the large input box, and execute a
+        modem command.
         """
         if not self.is_running():
             self.launch()
@@ -1290,10 +1331,10 @@ class QXDMController:
             button="left",
             coords=(x, y),
         )
-        time.sleep(0.7)
+        time.sleep(0.8)
 
         send_keys("^a")
-        time.sleep(0.15)
+        time.sleep(0.2)
         send_keys("{BACKSPACE}")
         time.sleep(0.2)
 
@@ -1302,9 +1343,9 @@ class QXDMController:
         send_keys(
             normalized_command,
             with_spaces=True,
-            pause=0.10,
+            pause=0.12,
         )
-        time.sleep(0.4)
+        time.sleep(0.5)
         send_keys("{ENTER}")
 
         print(
@@ -1403,7 +1444,11 @@ class QXDMController:
         time.sleep(3)
 
         self.mode_lpm()
-        time.sleep(max(transition_delay, 5.0))
+        time.sleep(max(transition_delay, 10.0))
+
+        # QXDM may lose focus while the modem changes state.
+        self.focus_qxdm()
+        time.sleep(2)
 
         self.mode_online()
         time.sleep(max(transition_delay, 5.0))
