@@ -480,10 +480,20 @@ class QXDMController:
 
             Alt+O -> Down -> Enter
 
-        After the dialog opens, use the active foreground-window handle
-        to obtain its screen rectangle. This avoids OpenCV matching for
-        the Settings window.
+        In this QXDM build, Settings is a Qt child dialog inside the
+        main QXDM window, so Windows continues to report the main QXDM
+        title as the active window. Use the main-window rectangle and
+        derive the Settings dialog position from it.
         """
+        window = self.focus_qxdm()
+
+        try:
+            window.maximize()
+            time.sleep(1)
+            window.set_focus()
+        except Exception:
+            pass
+
         self.open_main_menu(
             "Options"
         )
@@ -493,59 +503,39 @@ class QXDMController:
         send_keys("{ENTER}")
         time.sleep(2)
 
-        user32 = ctypes.windll.user32
-        deadline = time.monotonic() + 20.0
-        last_title = ""
+        rectangle = window.rectangle()
 
-        while time.monotonic() < deadline:
-            hwnd = user32.GetForegroundWindow()
+        # QXDM 5.2.640 displays Settings as a centered Qt child dialog.
+        # These ratios match the layout shown in the user's screenshots.
+        settings_left = int(
+            rectangle.left
+            + rectangle.width() * 0.12
+        )
+        settings_top = int(
+            rectangle.top
+            + rectangle.height() * 0.07
+        )
+        settings_right = int(
+            rectangle.left
+            + rectangle.width() * 0.88
+        )
+        settings_bottom = int(
+            rectangle.top
+            + rectangle.height() * 0.96
+        )
 
-            if hwnd:
-                title_length = user32.GetWindowTextLengthW(
-                    hwnd
-                )
-                title_buffer = ctypes.create_unicode_buffer(
-                    title_length + 1
-                )
-                user32.GetWindowTextW(
-                    hwnd,
-                    title_buffer,
-                    title_length + 1,
-                )
+        print(
+            "QXDM Settings opened as an embedded Qt dialog. "
+            "Using derived dialog bounds: "
+            f"({settings_left}, {settings_top}, "
+            f"{settings_right}, {settings_bottom})"
+        )
 
-                last_title = title_buffer.value.strip()
-
-                if "settings" in last_title.lower():
-                    rectangle = ctypes.wintypes.RECT()
-
-                    if user32.GetWindowRect(
-                        hwnd,
-                        ctypes.byref(rectangle),
-                    ):
-                        left = int(rectangle.left)
-                        top = int(rectangle.top)
-                        right = int(rectangle.right)
-                        bottom = int(rectangle.bottom)
-
-                        print(
-                            "Located active QXDM Settings window: "
-                            f"{last_title} "
-                            f"({left}, {top}, {right}, {bottom})"
-                        )
-
-                        return (
-                            left,
-                            top,
-                            right,
-                            bottom,
-                        )
-
-            time.sleep(0.5)
-
-        raise RuntimeError(
-            "QXDM Settings opened, but the active Settings window "
-            "could not be identified within 20 seconds. "
-            f"Last active window title: {last_title or 'Unavailable'}"
+        return (
+            settings_left,
+            settings_top,
+            settings_right,
+            settings_bottom,
         )
 
     def select_first_available_menu(
