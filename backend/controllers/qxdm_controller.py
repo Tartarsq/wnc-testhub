@@ -1,3 +1,5 @@
+import ctypes
+import ctypes.wintypes
 import json
 import subprocess
 import time
@@ -478,8 +480,9 @@ class QXDMController:
 
             Alt+O -> Down -> Enter
 
-        Settings is the second item in the Options menu in QXDM 5.2.640.
-        OpenCV is then used only to locate the Settings dialog itself.
+        After the dialog opens, use the active foreground-window handle
+        to obtain its screen rectangle. This avoids OpenCV matching for
+        the Settings window.
         """
         self.open_main_menu(
             "Options"
@@ -490,42 +493,60 @@ class QXDMController:
         send_keys("{ENTER}")
         time.sleep(2)
 
+        user32 = ctypes.windll.user32
         deadline = time.monotonic() + 20.0
-        last_error = None
+        last_title = ""
 
         while time.monotonic() < deadline:
-            try:
-                (
-                    anchor_left,
-                    anchor_top,
-                    anchor_right,
-                    anchor_bottom,
-                    anchor_score,
-                ) = self.locate_template_on_screen(
-                    self.SETTINGS_ANCHOR_TEMPLATE_PATH,
-                    self.SETTINGS_TEMPLATE_THRESHOLD,
+            hwnd = user32.GetForegroundWindow()
+
+            if hwnd:
+                title_length = user32.GetWindowTextLengthW(
+                    hwnd
+                )
+                title_buffer = ctypes.create_unicode_buffer(
+                    title_length + 1
+                )
+                user32.GetWindowTextW(
+                    hwnd,
+                    title_buffer,
+                    title_length + 1,
                 )
 
-                print(
-                    "OpenCV located the QXDM Settings dialog "
-                    f"with score {anchor_score:.3f}."
-                )
+                last_title = title_buffer.value.strip()
 
-                return (
-                    anchor_left,
-                    anchor_top,
-                    anchor_right,
-                    anchor_bottom,
-                )
+                if "settings" in last_title.lower():
+                    rectangle = ctypes.wintypes.RECT()
 
-            except Exception as error:
-                last_error = error
-                time.sleep(0.5)
+                    if user32.GetWindowRect(
+                        hwnd,
+                        ctypes.byref(rectangle),
+                    ):
+                        left = int(rectangle.left)
+                        top = int(rectangle.top)
+                        right = int(rectangle.right)
+                        bottom = int(rectangle.bottom)
+
+                        print(
+                            "Located active QXDM Settings window: "
+                            f"{last_title} "
+                            f"({left}, {top}, {right}, {bottom})"
+                        )
+
+                        return (
+                            left,
+                            top,
+                            right,
+                            bottom,
+                        )
+
+            time.sleep(0.5)
 
         raise RuntimeError(
-            "QXDM Settings was opened, but OpenCV could not "
-            "locate the Settings dialog within 20 seconds."
-        ) from last_error
+            "QXDM Settings opened, but the active Settings window "
+            "could not be identified within 20 seconds. "
+            f"Last active window title: {last_title or 'Unavailable'}"
+        )
 
     def select_first_available_menu(
         self,
