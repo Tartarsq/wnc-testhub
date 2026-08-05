@@ -265,6 +265,10 @@ class QXDMStartRequest(BaseModel):
         le=1024,
     )
     load_mask: bool = True
+    session_id: str | None = Field(
+        default=None,
+        max_length=64,
+    )
 
 
 class QXDMStatus(BaseModel):
@@ -281,6 +285,8 @@ class QXDMStatus(BaseModel):
     max_log_size_mb: int
     started_at: str | None = None
     stopped_at: str | None = None
+    session_id: str | None = None
+    session_name: str | None = None
     error: str | None = None
 
 
@@ -294,6 +300,8 @@ qxdm_state: dict[str, Any] = {
     "current_log_path": None,
     "started_at": None,
     "stopped_at": None,
+    "session_id": None,
+    "session_name": None,
     "error": None,
 }
 
@@ -379,7 +387,104 @@ def build_qxdm_status() -> QXDMStatus:
         max_log_size_mb=qxdm_controller.max_log_size_mb,
         started_at=state_snapshot["started_at"],
         stopped_at=state_snapshot["stopped_at"],
+        session_id=state_snapshot.get("session_id"),
+        session_name=state_snapshot.get("session_name"),
         error=state_snapshot["error"],
+    )
+
+
+
+def resolve_qxdm_session(
+    session_id: str | None,
+) -> dict[str, Any] | None:
+    if not session_id:
+        return None
+
+    session = find_session_record(
+        results_folder=RESULTS_FOLDER,
+        session_id=session_id,
+    )
+
+    if session is None:
+        raise ValueError(
+            "The selected test session was not found."
+        )
+
+    return session
+
+
+def save_qxdm_log_to_session(
+    session_id: str | None,
+    log_path: Path | None,
+    started_at: str | None,
+    stopped_at: str | None,
+) -> None:
+    if not session_id or log_path is None:
+        return
+
+    session = find_session_record(
+        results_folder=RESULTS_FOLDER,
+        session_id=session_id,
+    )
+
+    if session is None:
+        return
+
+    qxdm_logs = list(
+        session.get("qxdm_logs", [])
+    )
+
+    resolved_path = str(
+        Path(log_path).resolve()
+    )
+
+    if not any(
+        item.get("log_path") == resolved_path
+        for item in qxdm_logs
+    ):
+        qxdm_logs.append(
+            {
+                "log_path": resolved_path,
+                "filename": Path(resolved_path).name,
+                "started_at": started_at,
+                "stopped_at": stopped_at,
+                "size_bytes": (
+                    Path(resolved_path).stat().st_size
+                    if Path(resolved_path).exists()
+                    else 0
+                ),
+            }
+        )
+
+    session["qxdm_logs"] = qxdm_logs
+    session["status"] = "completed"
+    session["updated_at"] = datetime.now().isoformat(
+        timespec="seconds"
+    )
+
+    session_folder = Path(
+        session["session_folder"]
+    ).resolve()
+
+    metadata_path = (
+        session_folder
+        / "metadata"
+        / "session.json"
+    )
+
+    metadata_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    import json
+
+    metadata_path.write_text(
+        json.dumps(
+            session,
+            indent=2,
+        ),
+        encoding="utf-8",
     )
 
 
@@ -387,11 +492,22 @@ def run_qxdm_start(
     request: QXDMStartRequest,
 ) -> None:
     try:
-        output_folder = (
-            Path(request.output_folder).expanduser()
-            if request.output_folder
-            else RESULTS_FOLDER / "qxdm_logs"
+        session = resolve_qxdm_session(
+            request.session_id
         )
+
+        if session is not None:
+            output_folder = (
+                Path(session["session_folder"])
+                / "captures"
+                / "qxdm"
+            )
+        else:
+            output_folder = (
+                Path(request.output_folder).expanduser()
+                if request.output_folder
+                else RESULTS_FOLDER / "qxdm_logs"
+            )
 
         output_folder = output_folder.resolve()
         output_folder.mkdir(
@@ -437,6 +553,12 @@ def run_qxdm_start(
             current_log_path=str(log_path),
             started_at=None,
             stopped_at=None,
+            session_id=request.session_id,
+            session_name=(
+                session.get("session_name")
+                if session is not None
+                else None
+            ),
             error=None,
         )
 
@@ -454,6 +576,12 @@ def run_qxdm_start(
                 timespec="seconds"
             ),
             stopped_at=None,
+            session_id=request.session_id,
+            session_name=(
+                session.get("session_name")
+                if session is not None
+                else None
+            ),
             error=None,
         )
 
@@ -468,6 +596,9 @@ def run_qxdm_start(
 
 def run_qxdm_stop() -> None:
     try:
+        with qxdm_lock:
+            state_snapshot = dict(qxdm_state)
+
         update_qxdm_state(
             status="stopping",
             message="Stopping and finalizing the QXDM log.",
@@ -479,19 +610,29 @@ def run_qxdm_stop() -> None:
         )
 
         completed_log = find_current_qxdm_log()
+        stopped_at = datetime.now().isoformat(
+            timespec="seconds"
+        )
+
+        save_qxdm_log_to_session(
+            session_id=state_snapshot.get("session_id"),
+            log_path=completed_log,
+            started_at=state_snapshot.get("started_at"),
+            stopped_at=stopped_at,
+        )
 
         update_qxdm_state(
             status="completed",
-            message="QXDM logging stopped and the log was finalized.",
+            message=(
+                "QXDM logging stopped and the log was finalized."
+            ),
             logging_active=False,
             current_log_path=(
                 str(completed_log.resolve())
                 if completed_log is not None
-                else qxdm_state.get("current_log_path")
+                else state_snapshot.get("current_log_path")
             ),
-            stopped_at=datetime.now().isoformat(
-                timespec="seconds"
-            ),
+            stopped_at=stopped_at,
             error=None,
         )
 

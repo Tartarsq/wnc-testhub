@@ -20,6 +20,8 @@ function QXDMLogs() {
   const [outputFolder, setOutputFolder] = useState('')
   const [maxLogSizeMb, setMaxLogSizeMb] = useState(1024)
   const [loadMask, setLoadMask] = useState(true)
+  const [sessions, setSessions] = useState([])
+  const [selectedSessionId, setSelectedSessionId] = useState('')
 
   const [qxdmStatus, setQxdmStatus] = useState(null)
   const [isLoading, setIsLoading] = useState(true)
@@ -32,6 +34,19 @@ function QXDMLogs() {
     if (pollingRef.current) {
       window.clearInterval(pollingRef.current)
       pollingRef.current = null
+    }
+  }
+
+  const loadSessions = async () => {
+    try {
+      const response = await api.get('/sessions')
+      setSessions(response.data ?? [])
+    } catch (requestError) {
+      setError(
+        requestError.response?.data?.detail ||
+          requestError.message ||
+          'Unable to retrieve test sessions.'
+      )
     }
   }
 
@@ -61,6 +76,7 @@ function QXDMLogs() {
   }
 
   useEffect(() => {
+    loadSessions()
     loadQxdmStatus()
     startPolling()
 
@@ -83,6 +99,7 @@ function QXDMLogs() {
         output_folder: outputFolder.trim() || null,
         max_log_size_mb: Number(maxLogSizeMb),
         load_mask: loadMask,
+        session_id: selectedSessionId || null,
       }
 
       const response = await api.post(
@@ -286,6 +303,36 @@ function QXDMLogs() {
             </div>
 
             <div className="qxdm-form-grid">
+              <label className="form-field qxdm-folder-field">
+                <span>Test Session</span>
+
+                <select
+                  value={selectedSessionId}
+                  onChange={(event) =>
+                    setSelectedSessionId(event.target.value)
+                  }
+                  disabled={loggingActive || isSubmitting}
+                >
+                  <option value="">
+                    No session (save to default QXDM folder)
+                  </option>
+
+                  {sessions.map((session) => (
+                    <option
+                      key={session.session_id}
+                      value={session.session_id}
+                    >
+                      {session.session_name} · {session.titan_ip}
+                    </option>
+                  ))}
+                </select>
+
+                <small className="qxdm-session-help">
+                  Selecting a session saves the log inside that
+                  session&apos;s captures/qxdm folder.
+                </small>
+              </label>
+
               <label className="form-field">
                 <span>Log Filename</span>
 
@@ -336,9 +383,15 @@ function QXDMLogs() {
                     onChange={(event) =>
                       setOutputFolder(event.target.value)
                     }
-                    placeholder="Leave blank to use the default results folder"
+                    placeholder={
+                      selectedSessionId
+                        ? 'Managed automatically by the selected session'
+                        : 'Leave blank to use the default results folder'
+                    }
                     disabled={
-                      loggingActive || isSubmitting
+                      loggingActive ||
+                      isSubmitting ||
+                      Boolean(selectedSessionId)
                     }
                   />
                 </div>
@@ -452,6 +505,15 @@ function QXDMLogs() {
             </div>
 
             <dl className="qxdm-details-list">
+              <div>
+                <dt>Test Session</dt>
+                <dd>
+                  {displayValue(
+                    qxdmStatus?.session_name
+                  )}
+                </dd>
+              </div>
+
               <div>
                 <dt>Current Log</dt>
                 <dd>

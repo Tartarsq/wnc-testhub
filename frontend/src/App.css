@@ -2580,3 +2580,34 @@ input {
     text-align: left;
   }
 }
+
+/* QXDM session integration */
+
+.qxdm-form-grid select {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #0f172a;
+  padding: 0 12px;
+  font: inherit;
+}
+
+.qxdm-form-grid select:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+.qxdm-form-grid select:disabled {
+  background: #f1f5f9;
+  color: #94a3b8;
+  cursor: not-allowed;
+}
+
+.qxdm-session-help {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.45;
+}
