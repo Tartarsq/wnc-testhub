@@ -48,6 +48,29 @@ class QXDMController:
     COMMAND_INPUT_X_RATIO = 0.56
     COMMAND_INPUT_Y_RATIO = 0.52
 
+    MENU_BAR_TEMPLATE_PATH = (
+        Path(__file__).resolve().parent
+        / "qxdm_menu_bar.png"
+    )
+    LOAD_CONFIGURATION_TEMPLATE_PATH = (
+        Path(__file__).resolve().parent
+        / "qxdm_load_configuration_item.png"
+    )
+    SETTINGS_MENU_TEMPLATE_PATH = (
+        Path(__file__).resolve().parent
+        / "qxdm_options_settings_item.png"
+    )
+
+    # Click offsets inside qxdm_menu_bar.png.
+    FILE_MENU_CLICK_X_OFFSET = 20
+    OPTIONS_MENU_CLICK_X_OFFSET = 140
+    MENU_BAR_CLICK_Y_RATIO = 0.50
+    SETTINGS_ANCHOR_TEMPLATE_PATH = (
+        Path(__file__).resolve().parent
+        / "qxdm_settings_anchor.png"
+    )
+    SETTINGS_TEMPLATE_THRESHOLD = 0.72
+
     # QXDM 5.2.640 Settings dialog positions, expressed as ratios
     # of the Settings window. These match the Item Store File layout.
     SETTINGS_ITEM_STORE_X_RATIO = 0.14
@@ -341,100 +364,214 @@ class QXDMController:
 
         return window
 
-    def open_qxdm_settings(self):
+    def locate_template_on_screen(
+        self,
+        template_path: Path,
+        threshold: float,
+    ) -> tuple[int, int, int, int, float]:
         """
-        Open QXDM using:
+        Locate an image template on the current Windows desktop.
+
+        Returns:
+            left, top, right, bottom, match_score
+        """
+        template_path = Path(
+            template_path
+        ).resolve()
+
+        if not template_path.exists():
+            raise FileNotFoundError(
+                "QXDM UI template was not found:\n"
+                f"{template_path}"
+            )
+
+        screenshot = ImageGrab.grab()
+        screenshot_bgr = cv2.cvtColor(
+            np.array(screenshot),
+            cv2.COLOR_RGB2BGR,
+        )
+
+        template = cv2.imread(
+            str(template_path),
+            cv2.IMREAD_COLOR,
+        )
+
+        if template is None:
+            raise RuntimeError(
+                "OpenCV could not read the QXDM UI template:\n"
+                f"{template_path}"
+            )
+
+        screenshot_gray = cv2.cvtColor(
+            screenshot_bgr,
+            cv2.COLOR_BGR2GRAY,
+        )
+        template_gray = cv2.cvtColor(
+            template,
+            cv2.COLOR_BGR2GRAY,
+        )
+
+        result = cv2.matchTemplate(
+            screenshot_gray,
+            template_gray,
+            cv2.TM_CCOEFF_NORMED,
+        )
+
+        _, maximum_score, _, maximum_location = (
+            cv2.minMaxLoc(result)
+        )
+
+        if maximum_score < threshold:
+            raise RuntimeError(
+                "OpenCV could not confidently locate the QXDM UI "
+                f"template '{template_path.name}'. "
+                f"Match score: {maximum_score:.3f}"
+            )
+
+        height, width = template_gray.shape
+
+        left = int(maximum_location[0])
+        top = int(maximum_location[1])
+        right = left + int(width)
+        bottom = top + int(height)
+
+        return (
+            left,
+            top,
+            right,
+            bottom,
+            float(maximum_score),
+        )
+
+    def click_main_menu(
+        self,
+        menu_name: str,
+    ) -> None:
+        """
+        Locate QXDM's top menu bar with OpenCV and click File or Options.
+        """
+        (
+            left,
+            top,
+            right,
+            bottom,
+            score,
+        ) = self.locate_template_on_screen(
+            self.MENU_BAR_TEMPLATE_PATH,
+            self.SETTINGS_TEMPLATE_THRESHOLD,
+        )
+
+        normalized_name = menu_name.strip().lower()
+
+        if normalized_name == "file":
+            click_x = (
+                left
+                + self.FILE_MENU_CLICK_X_OFFSET
+            )
+        elif normalized_name == "options":
+            click_x = (
+                left
+                + self.OPTIONS_MENU_CLICK_X_OFFSET
+            )
+        else:
+            raise ValueError(
+                "Unsupported QXDM main menu: "
+                f"{menu_name}"
+            )
+
+        click_y = int(
+            top
+            + (bottom - top)
+            * self.MENU_BAR_CLICK_Y_RATIO
+        )
+
+        mouse.click(
+            button="left",
+            coords=(click_x, click_y),
+        )
+
+        print(
+            f"OpenCV clicked QXDM {menu_name} menu "
+            f"with score {score:.3f}."
+        )
+
+        time.sleep(1)
+
+    def open_qxdm_settings(
+        self,
+    ) -> tuple[int, int, int, int]:
+        """
+        Use OpenCV for the complete path:
 
             Options -> Settings...
-
-        Then locate the Settings window by enumerating visible Win32
-        top-level windows instead of using unsupported lookup arguments.
         """
-        window = self.focus_qxdm()
+        self.focus_qxdm()
 
-        try:
-            window.maximize()
-            time.sleep(1)
-            window.set_focus()
-        except Exception:
-            pass
+        self.click_main_menu(
+            "Options"
+        )
 
-        rectangle = window.rectangle()
-
-        # Open the Options menu.
-        options_x = rectangle.left + 105
-        options_y = rectangle.top + 40
+        (
+            menu_left,
+            menu_top,
+            menu_right,
+            menu_bottom,
+            menu_score,
+        ) = self.locate_template_on_screen(
+            self.SETTINGS_MENU_TEMPLATE_PATH,
+            self.SETTINGS_TEMPLATE_THRESHOLD,
+        )
 
         mouse.click(
             button="left",
-            coords=(options_x, options_y),
+            coords=(
+                (menu_left + menu_right) // 2,
+                (menu_top + menu_bottom) // 2,
+            ),
         )
-        time.sleep(0.8)
 
-        # Click Settings..., the second menu entry.
-        settings_x = rectangle.left + 125
-        settings_y = rectangle.top + 83
-
-        mouse.click(
-            button="left",
-            coords=(settings_x, settings_y),
+        print(
+            "OpenCV clicked Options -> Settings... "
+            f"with score {menu_score:.3f}."
         )
-        time.sleep(1.5)
+
+        time.sleep(2)
 
         deadline = time.monotonic() + 20.0
         last_error = None
 
         while time.monotonic() < deadline:
             try:
-                desktop = Desktop(
-                    backend="win32"
+                (
+                    anchor_left,
+                    anchor_top,
+                    anchor_right,
+                    anchor_bottom,
+                    anchor_score,
+                ) = self.locate_template_on_screen(
+                    self.SETTINGS_ANCHOR_TEMPLATE_PATH,
+                    self.SETTINGS_TEMPLATE_THRESHOLD,
                 )
 
-                for candidate in desktop.windows(
-                    visible_only=False,
-                    enabled_only=False,
-                ):
-                    try:
-                        title = (
-                            candidate.window_text()
-                            or ""
-                        ).strip()
+                print(
+                    "OpenCV located the QXDM Settings dialog "
+                    f"with score {anchor_score:.3f}."
+                )
 
-                        if "settings" not in title.lower():
-                            continue
-
-                        if not candidate.is_visible():
-                            continue
-
-                        candidate.wait(
-                            "visible",
-                            timeout=3,
-                        )
-
-                        try:
-                            candidate.set_focus()
-                        except Exception:
-                            pass
-
-                        print(
-                            "Located QXDM Settings window: "
-                            f"{title}"
-                        )
-
-                        time.sleep(1)
-                        return candidate
-
-                    except Exception:
-                        continue
+                return (
+                    anchor_left,
+                    anchor_top,
+                    anchor_right,
+                    anchor_bottom,
+                )
 
             except Exception as error:
                 last_error = error
-
-            time.sleep(0.5)
+                time.sleep(0.5)
 
         raise RuntimeError(
-            "QXDM Options -> Settings was clicked, but no visible "
-            "Settings window was found within 20 seconds."
+            "Options -> Settings... was clicked, but OpenCV could "
+            "not locate the Settings dialog within 20 seconds."
         ) from last_error
 
     def select_first_available_menu(
@@ -881,9 +1018,11 @@ class QXDMController:
 
     def load_default_mask(self) -> bool:
         """
-        Load the configured .dmc file using QXDM's exact command:
+        Use OpenCV for the complete path:
 
-            File -> Load Configuration...  (Ctrl+O)
+            File -> Load Configuration...
+
+        Then enter the selected .dmc path in the Windows file dialog.
         """
         if self.default_mask is None:
             print(
@@ -897,17 +1036,36 @@ class QXDMController:
                 f"{self.default_mask}"
             )
 
-        window = self.focus_qxdm()
+        self.focus_qxdm()
 
-        try:
-            window.maximize()
-            time.sleep(1)
-            window.set_focus()
-        except Exception:
-            pass
+        self.click_main_menu(
+            "File"
+        )
 
-        # QXDM's File menu shows Ctrl+O for Load Configuration...
-        send_keys("^o")
+        (
+            item_left,
+            item_top,
+            item_right,
+            item_bottom,
+            item_score,
+        ) = self.locate_template_on_screen(
+            self.LOAD_CONFIGURATION_TEMPLATE_PATH,
+            self.SETTINGS_TEMPLATE_THRESHOLD,
+        )
+
+        mouse.click(
+            button="left",
+            coords=(
+                (item_left + item_right) // 2,
+                (item_top + item_bottom) // 2,
+            ),
+        )
+
+        print(
+            "OpenCV clicked File -> Load Configuration... "
+            f"with score {item_score:.3f}."
+        )
+
         time.sleep(1.5)
 
         self.handle_file_dialog(
@@ -924,50 +1082,21 @@ class QXDMController:
 
         return True
 
-    def _settings_point(
+    def _click_absolute(
         self,
-        dialog,
-        x_ratio: float,
-        y_ratio: float,
-    ) -> tuple[int, int]:
-        """Convert Settings-dialog ratios into screen coordinates."""
-        rectangle = dialog.rectangle()
-
-        x = int(
-            rectangle.left
-            + rectangle.width() * x_ratio
-        )
-        y = int(
-            rectangle.top
-            + rectangle.height() * y_ratio
-        )
-
-        return x, y
-
-    def _click_settings_point(
-        self,
-        dialog,
-        x_ratio: float,
-        y_ratio: float,
+        x: int,
+        y: int,
     ) -> None:
-        """Click a position inside the QXDM Settings dialog."""
-        x, y = self._settings_point(
-            dialog,
-            x_ratio,
-            y_ratio,
-        )
-
         mouse.click(
             button="left",
-            coords=(x, y),
+            coords=(int(x), int(y)),
         )
-        time.sleep(0.5)
+        time.sleep(0.45)
 
     def _replace_active_text(
         self,
         value: str,
     ) -> None:
-        """Replace text in the currently focused Settings field."""
         send_keys("^a")
         time.sleep(0.1)
         send_keys("{BACKSPACE}")
@@ -983,72 +1112,78 @@ class QXDMController:
         log_path: Path,
     ) -> bool:
         """
-        Configure QXDM Quick Saving through:
+        Configure QXDM saving through Options -> Settings... ->
+        Item Store File.
 
-            Options > Settings... > Item Store File
-
-        The Settings dialog is a Qt window, so its fields are addressed
-        using positions relative to the Settings window.
+        Coordinates are anchored to the Settings dialog found by OpenCV.
         """
         log_path = self.prepare_log_path(
             log_path
         )
 
-        dialog = self.open_qxdm_settings()
+        settings_left, settings_top, _, _ = (
+            self.open_qxdm_settings()
+        )
 
-        try:
-            dialog.set_focus()
-        except Exception:
-            pass
-
-        time.sleep(1)
-
-        # Select Item Store File.
-        self._click_settings_point(
-            dialog,
-            self.SETTINGS_ITEM_STORE_X_RATIO,
-            self.SETTINGS_ITEM_STORE_Y_RATIO,
+        # These offsets come from the user's QXDM 5.2.640 Settings layout.
+        quick_save = (
+            settings_left + 140,
+            settings_top + 77,
+        )
+        base_filename = (
+            settings_left + 286,
+            settings_top + 100,
+        )
+        log_directory = (
+            settings_left + 326,
+            settings_top + 129,
+        )
+        advanced_mode = (
+            settings_left + 151,
+            settings_top + 395,
+        )
+        maximum_size = (
+            settings_left + 394,
+            settings_top + 418,
+        )
+        automatic_saving = (
+            settings_left + 165,
+            settings_top + 462,
+        )
+        close_button = (
+            settings_left + 510,
+            settings_top + 14,
         )
 
         # Enable Quick Saving.
-        self._click_settings_point(
-            dialog,
-            self.SETTINGS_QUICK_SAVE_X_RATIO,
-            self.SETTINGS_QUICK_SAVE_Y_RATIO,
+        self._click_absolute(
+            *quick_save
         )
 
-        # Set base filename.
-        self._click_settings_point(
-            dialog,
-            self.SETTINGS_BASE_NAME_X_RATIO,
-            self.SETTINGS_BASE_NAME_Y_RATIO,
+        # Set Base File Name.
+        self._click_absolute(
+            *base_filename
         )
         self._replace_active_text(
             log_path.name
         )
 
-        # Set log directory.
-        self._click_settings_point(
-            dialog,
-            self.SETTINGS_LOG_DIRECTORY_X_RATIO,
-            self.SETTINGS_LOG_DIRECTORY_Y_RATIO,
+        # Set Log File Directory.
+        self._click_absolute(
+            *log_directory
         )
         self._replace_active_text(
             str(log_path.parent)
         )
 
         # Select Advanced Mode.
-        self._click_settings_point(
-            dialog,
-            self.SETTINGS_ADVANCED_MODE_X_RATIO,
-            self.SETTINGS_ADVANCED_MODE_Y_RATIO,
+        self._click_absolute(
+            *advanced_mode
         )
 
-        # Set the maximum log size.
-        self._click_settings_point(
-            dialog,
-            self.SETTINGS_MAX_SIZE_X_RATIO,
-            self.SETTINGS_MAX_SIZE_Y_RATIO,
+        # Set Maximum Log File Size.
+        self._click_absolute(
+            *maximum_size
         )
         send_keys("^a")
         send_keys("{BACKSPACE}")
@@ -1066,21 +1201,9 @@ class QXDMController:
         )
         send_keys("{ENTER}")
 
-        # Enable automatic saving when the size limit is reached.
-        self._click_settings_point(
-            dialog,
-            self.SETTINGS_AUTO_SAVE_X_RATIO,
-            self.SETTINGS_AUTO_SAVE_Y_RATIO,
-        )
-
-        # Set the explicit log-file path.
-        self._click_settings_point(
-            dialog,
-            self.SETTINGS_LOG_PATH_X_RATIO,
-            self.SETTINGS_LOG_PATH_Y_RATIO,
-        )
-        self._replace_active_text(
-            str(log_path)
+        # Enable automatic saving when the limit is reached.
+        self._click_absolute(
+            *automatic_saving
         )
 
         print(
@@ -1090,21 +1213,18 @@ class QXDMController:
             f"QXDM log directory configured: {log_path.parent}"
         )
         print(
-            f"QXDM log path configured: {log_path}"
-        )
-        print(
             "QXDM maximum log size configured: "
             f"{self.max_log_size_mb} MB"
         )
 
-        # Save settings. Alt+A applies when available; Enter closes the
-        # dialog through the default OK button.
-        send_keys("%a")
-        time.sleep(0.5)
-        send_keys("{ENTER}")
+        # Close Settings. QXDM retains these Item Store File values.
+        self._click_absolute(
+            *close_button
+        )
         time.sleep(2)
 
         return True
+
 
     def locate_command_box_with_opencv(
         self,
