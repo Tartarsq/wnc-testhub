@@ -48,6 +48,25 @@ class QXDMController:
     COMMAND_INPUT_X_RATIO = 0.56
     COMMAND_INPUT_Y_RATIO = 0.52
 
+    # QXDM 5.2.640 Settings dialog positions, expressed as ratios
+    # of the Settings window. These match the Item Store File layout.
+    SETTINGS_ITEM_STORE_X_RATIO = 0.14
+    SETTINGS_ITEM_STORE_Y_RATIO = 0.06
+    SETTINGS_QUICK_SAVE_X_RATIO = 0.285
+    SETTINGS_QUICK_SAVE_Y_RATIO = 0.105
+    SETTINGS_BASE_NAME_X_RATIO = 0.55
+    SETTINGS_BASE_NAME_Y_RATIO = 0.145
+    SETTINGS_LOG_DIRECTORY_X_RATIO = 0.55
+    SETTINGS_LOG_DIRECTORY_Y_RATIO = 0.19
+    SETTINGS_ADVANCED_MODE_X_RATIO = 0.305
+    SETTINGS_ADVANCED_MODE_Y_RATIO = 0.625
+    SETTINGS_MAX_SIZE_X_RATIO = 0.74
+    SETTINGS_MAX_SIZE_Y_RATIO = 0.665
+    SETTINGS_AUTO_SAVE_X_RATIO = 0.325
+    SETTINGS_AUTO_SAVE_Y_RATIO = 0.74
+    SETTINGS_LOG_PATH_X_RATIO = 0.55
+    SETTINGS_LOG_PATH_Y_RATIO = 0.945
+
     # QXDM is a Qt application and does not expose its internal controls
     # through pywinauto. These ratios point to the Command field relative
     # to the QXDM window. They match the QXDM 5.2.640 layout shown by the
@@ -982,37 +1001,185 @@ class QXDMController:
                 f"to {display_value}."
             ) from error
 
+    def _settings_point(
+        self,
+        dialog,
+        x_ratio: float,
+        y_ratio: float,
+    ) -> tuple[int, int]:
+        """Convert Settings-dialog ratios into screen coordinates."""
+        rectangle = dialog.rectangle()
+
+        x = int(
+            rectangle.left
+            + rectangle.width() * x_ratio
+        )
+        y = int(
+            rectangle.top
+            + rectangle.height() * y_ratio
+        )
+
+        return x, y
+
+    def _click_settings_point(
+        self,
+        dialog,
+        x_ratio: float,
+        y_ratio: float,
+    ) -> None:
+        """Click a position inside the QXDM Settings dialog."""
+        x, y = self._settings_point(
+            dialog,
+            x_ratio,
+            y_ratio,
+        )
+
+        mouse.click(
+            button="left",
+            coords=(x, y),
+        )
+        time.sleep(0.5)
+
+    def _replace_active_text(
+        self,
+        value: str,
+    ) -> None:
+        """Replace text in the currently focused Settings field."""
+        send_keys("^a")
+        time.sleep(0.1)
+        send_keys("{BACKSPACE}")
+        time.sleep(0.1)
+        send_keys(
+            value,
+            with_spaces=True,
+            pause=0.03,
+        )
+
     def configure_logging(
         self,
         log_path: Path,
     ) -> bool:
         """
-        Prepare the intended log path without automating QXDM Settings.
-
-        QXDM 5.2.640 uses Qt controls that are not exposed to pywinauto.
-        Therefore, Quick Saving must already be configured manually under:
+        Configure QXDM Quick Saving through:
 
             Options > Settings... > Item Store File
 
-        The controller still remembers the requested path for status and
-        session metadata, but QXDM will physically save according to its
-        currently configured Quick Saving settings.
+        The Settings dialog is a Qt window, so its fields are addressed
+        using positions relative to the Settings window.
         """
         log_path = self.prepare_log_path(
             log_path
         )
 
+        dialog = self.open_qxdm_settings()
+
+        try:
+            dialog.set_focus()
+        except Exception:
+            pass
+
+        time.sleep(1)
+
+        # Select Item Store File.
+        self._click_settings_point(
+            dialog,
+            self.SETTINGS_ITEM_STORE_X_RATIO,
+            self.SETTINGS_ITEM_STORE_Y_RATIO,
+        )
+
+        # Enable Quick Saving.
+        self._click_settings_point(
+            dialog,
+            self.SETTINGS_QUICK_SAVE_X_RATIO,
+            self.SETTINGS_QUICK_SAVE_Y_RATIO,
+        )
+
+        # Set base filename.
+        self._click_settings_point(
+            dialog,
+            self.SETTINGS_BASE_NAME_X_RATIO,
+            self.SETTINGS_BASE_NAME_Y_RATIO,
+        )
+        self._replace_active_text(
+            log_path.name
+        )
+
+        # Set log directory.
+        self._click_settings_point(
+            dialog,
+            self.SETTINGS_LOG_DIRECTORY_X_RATIO,
+            self.SETTINGS_LOG_DIRECTORY_Y_RATIO,
+        )
+        self._replace_active_text(
+            str(log_path.parent)
+        )
+
+        # Select Advanced Mode.
+        self._click_settings_point(
+            dialog,
+            self.SETTINGS_ADVANCED_MODE_X_RATIO,
+            self.SETTINGS_ADVANCED_MODE_Y_RATIO,
+        )
+
+        # Set the maximum log size.
+        self._click_settings_point(
+            dialog,
+            self.SETTINGS_MAX_SIZE_X_RATIO,
+            self.SETTINGS_MAX_SIZE_Y_RATIO,
+        )
+        send_keys("^a")
+        send_keys("{BACKSPACE}")
+
+        size_value = (
+            "1.0 Gigabytes"
+            if self.max_log_size_mb >= 1024
+            else f"{self.max_log_size_mb} Megabytes"
+        )
+
+        send_keys(
+            size_value,
+            with_spaces=True,
+            pause=0.03,
+        )
+        send_keys("{ENTER}")
+
+        # Enable automatic saving when the size limit is reached.
+        self._click_settings_point(
+            dialog,
+            self.SETTINGS_AUTO_SAVE_X_RATIO,
+            self.SETTINGS_AUTO_SAVE_Y_RATIO,
+        )
+
+        # Set the explicit log-file path.
+        self._click_settings_point(
+            dialog,
+            self.SETTINGS_LOG_PATH_X_RATIO,
+            self.SETTINGS_LOG_PATH_Y_RATIO,
+        )
+        self._replace_active_text(
+            str(log_path)
+        )
+
         print(
-            "QXDM Quick Saving settings cannot be edited reliably "
-            "through pywinauto because this QXDM build uses hidden "
-            "Qt controls."
+            f"QXDM base filename configured: {log_path.name}"
         )
         print(
-            "Using the existing QXDM Item Store File settings."
+            f"QXDM log directory configured: {log_path.parent}"
         )
         print(
-            f"Requested TestHub log path: {log_path}"
+            f"QXDM log path configured: {log_path}"
         )
+        print(
+            "QXDM maximum log size configured: "
+            f"{self.max_log_size_mb} MB"
+        )
+
+        # Save settings. Alt+A applies when available; Enter closes the
+        # dialog through the default OK button.
+        send_keys("%a")
+        time.sleep(0.5)
+        send_keys("{ENTER}")
+        time.sleep(2)
 
         return True
 
@@ -1179,6 +1346,44 @@ class QXDMController:
         print("Sending mode online...")
         return self.send_command("mode online")
 
+    def wait_for_usb_connection(
+        self,
+        timeout_seconds: float = 30.0,
+        poll_interval: float = 1.0,
+    ) -> bool:
+        """
+        Wait until QXDM's title indicates a diagnostic USB COM port.
+        """
+        deadline = time.monotonic() + timeout_seconds
+        last_title = ""
+
+        while time.monotonic() < deadline:
+            window = self.get_window()
+            last_title = (
+                window.window_text()
+                or ""
+            )
+
+            normalized_title = last_title.lower()
+
+            if (
+                "com" in normalized_title
+                and "disconnected" not in normalized_title
+            ):
+                print(
+                    "QXDM diagnostic USB connection detected: "
+                    f"{last_title}"
+                )
+                return True
+
+            time.sleep(poll_interval)
+
+        raise TimeoutError(
+            "QXDM opened, but the diagnostic USB connection "
+            f"was not detected within {timeout_seconds:.1f} seconds. "
+            f"Last window title: {last_title or 'Unavailable'}"
+        )
+
     def start_logging(
         self,
         log_path: Path,
@@ -1200,6 +1405,13 @@ class QXDMController:
         self.prepare_log_path(log_path)
         self.launch()
 
+        # Allow QXDM time to attach to the Qualcomm diagnostic USB port.
+        self.wait_for_usb_connection(
+            timeout_seconds=30.0,
+            poll_interval=1.0,
+        )
+        time.sleep(3)
+
         if load_mask:
             self.ensure_default_mask_loaded(
                 retry_with_picker=True,
@@ -1209,10 +1421,10 @@ class QXDMController:
         self.configure_logging(log_path)
 
         self.mode_lpm()
-        time.sleep(transition_delay)
+        time.sleep(max(transition_delay, 5.0))
 
         self.mode_online()
-        time.sleep(transition_delay)
+        time.sleep(max(transition_delay, 5.0))
 
         print("QXDM logging sequence started.")
         return True
