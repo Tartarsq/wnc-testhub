@@ -1,6 +1,10 @@
 import json
 import subprocess
 import time
+
+import cv2
+import numpy as np
+from PIL import ImageGrab
 from pathlib import Path
 from typing import Optional
 
@@ -36,6 +40,14 @@ class QXDMController:
     PROCESS_NAME = "QXDM.exe"
     WINDOW_TITLE_PATTERN = r".*QXDM.*"
 
+    COMMAND_TEMPLATE_PATH = (
+        Path(__file__).resolve().parent
+        / "qxdm_command_bar.png"
+    )
+    COMMAND_TEMPLATE_THRESHOLD = 0.78
+    COMMAND_INPUT_X_RATIO = 0.56
+    COMMAND_INPUT_Y_RATIO = 0.52
+
     # QXDM is a Qt application and does not expose its internal controls
     # through pywinauto. These ratios point to the Command field relative
     # to the QXDM window. They match the QXDM 5.2.640 layout shown by the
@@ -44,7 +56,7 @@ class QXDMController:
     # is inside the editable Command field rather than the toolbar buttons.
     # QXDM 5.2.640 toolbar geometry after maximizing the window.
     # The editable command area begins just after the "Command:" label.
-    COMMAND_BOX_X_OFFSET = 650
+    COMMAND_BOX_X_OFFSET = 700
     COMMAND_BOX_Y_OFFSET = 74
 
     # QXDM menu names may differ by version.
@@ -997,47 +1009,26 @@ class QXDMController:
 
         return True
 
-    def get_command_box_coordinates(
+    def locate_command_box_with_opencv(
         self,
         window,
     ) -> tuple[int, int]:
         """
-        Return screen coordinates for QXDM's Command field.
+        Locate the complete QXDM Command widget using OpenCV.
 
-        QXDM's Qt controls are not individually visible to pywinauto,
-        so the field is addressed relative to the main window.
+        The template contains:
+            Command: [large input box] [drop-down arrow]
+
+        After matching the full widget, the click point is calculated
+        proportionally so it lands inside the large editable input box.
         """
-        try:
-            window.maximize()
-            time.sleep(1)
-        except Exception:
-            pass
+        template_path = self.COMMAND_TEMPLATE_PATH
 
-        rectangle = window.rectangle()
-
-        x = int(
-            rectangle.left
-            + self.COMMAND_BOX_X_OFFSET
-        )
-
-        y = int(
-            rectangle.top
-            + self.COMMAND_BOX_Y_OFFSET
-        )
-
-        return x, y
-
-    def send_command(self, command: str) -> bool:
-        """
-        Automatically enter and execute a QXDM modem command.
-
-        QXDM is a Qt application, so the Command field is clicked using
-        a stable location in the maximized QXDM 5.2.640 toolbar.
-        """
-        if not self.is_running():
-            self.launch()
-
-        window = self.focus_qxdm()
+        if not template_path.exists():
+            raise FileNotFoundError(
+                "The QXDM command-bar template was not found:\n"
+                f"{template_path}"
+            )
 
         try:
             window.maximize()
@@ -1046,35 +1037,125 @@ class QXDMController:
         except Exception:
             pass
 
-        x, y = self.get_command_box_coordinates(
+        rectangle = window.rectangle()
+
+        screenshot = ImageGrab.grab(
+            bbox=(
+                rectangle.left,
+                rectangle.top,
+                rectangle.right,
+                rectangle.bottom,
+            )
+        )
+
+        screenshot_bgr = cv2.cvtColor(
+            np.array(screenshot),
+            cv2.COLOR_RGB2BGR,
+        )
+
+        template = cv2.imread(
+            str(template_path),
+            cv2.IMREAD_COLOR,
+        )
+
+        if template is None:
+            raise RuntimeError(
+                "OpenCV could not read the QXDM command-bar template."
+            )
+
+        screenshot_gray = cv2.cvtColor(
+            screenshot_bgr,
+            cv2.COLOR_BGR2GRAY,
+        )
+        template_gray = cv2.cvtColor(
+            template,
+            cv2.COLOR_BGR2GRAY,
+        )
+
+        result = cv2.matchTemplate(
+            screenshot_gray,
+            template_gray,
+            cv2.TM_CCOEFF_NORMED,
+        )
+
+        _, maximum_score, _, maximum_location = (
+            cv2.minMaxLoc(result)
+        )
+
+        if maximum_score < self.COMMAND_TEMPLATE_THRESHOLD:
+            raise RuntimeError(
+                "OpenCV could not confidently locate the complete "
+                f"QXDM Command bar. Match score: {maximum_score:.3f}"
+            )
+
+        template_height, template_width = (
+            template_gray.shape
+        )
+
+        matched_left = (
+            rectangle.left
+            + maximum_location[0]
+        )
+        matched_top = (
+            rectangle.top
+            + maximum_location[1]
+        )
+
+        click_x = int(
+            matched_left
+            + template_width
+            * self.COMMAND_INPUT_X_RATIO
+        )
+        click_y = int(
+            matched_top
+            + template_height
+            * self.COMMAND_INPUT_Y_RATIO
+        )
+
+        print(
+            "OpenCV located the complete QXDM Command bar with "
+            f"score {maximum_score:.3f}. "
+            f"Clicking inside the large input box at ({click_x}, {click_y})."
+        )
+
+        return click_x, click_y
+
+    def send_command(self, command: str) -> bool:
+        """
+        Locate QXDM's full Command bar with OpenCV, click inside the
+        large input box, type the command, and execute it.
+        """
+        if not self.is_running():
+            self.launch()
+
+        window = self.focus_qxdm()
+        x, y = self.locate_command_box_with_opencv(
             window
         )
 
-        # Click well inside the editable section of the Command field.
         mouse.click(
             button="left",
             coords=(x, y),
         )
-        time.sleep(0.75)
+        time.sleep(0.7)
 
-        # Clear the current command/history value.
         send_keys("^a")
         time.sleep(0.15)
         send_keys("{BACKSPACE}")
-        time.sleep(0.15)
+        time.sleep(0.2)
 
-        # Type and submit the modem command.
+        normalized_command = command.strip().lower()
+
         send_keys(
-            command,
+            normalized_command,
             with_spaces=True,
-            pause=0.12,
+            pause=0.10,
         )
-        time.sleep(0.25)
+        time.sleep(0.4)
         send_keys("{ENTER}")
 
         print(
-            f"Executed QXDM command: {command} "
-            f"at ({x}, {y})."
+            f"Executed QXDM command: {normalized_command}"
         )
 
         time.sleep(3)
@@ -1274,22 +1355,13 @@ class QXDMController:
 
         return True
 
-    def test_command_coordinates(self) -> tuple[int, int]:
+    def test_command_detection(self) -> tuple[int, int]:
         """
-        Type mode lpm into QXDM's Command field without pressing Enter.
-
-        This confirms that the automatic click lands in the correct field.
+        Locate the complete Command bar with OpenCV and type mode lpm
+        into the large input box without pressing Enter.
         """
         window = self.focus_qxdm()
-
-        try:
-            window.maximize()
-            time.sleep(1)
-            window.set_focus()
-        except Exception:
-            pass
-
-        x, y = self.get_command_box_coordinates(
+        x, y = self.locate_command_box_with_opencv(
             window
         )
 
@@ -1297,19 +1369,19 @@ class QXDMController:
             button="left",
             coords=(x, y),
         )
-        time.sleep(0.75)
+        time.sleep(0.7)
 
         send_keys("^a")
         send_keys("{BACKSPACE}")
         send_keys(
             "mode lpm",
             with_spaces=True,
-            pause=0.12,
+            pause=0.10,
         )
 
         print(
-            "Typed mode lpm into the calculated QXDM Command "
-            f"field at ({x}, {y}) without pressing Enter."
+            "OpenCV found the complete QXDM Command bar and typed "
+            "mode lpm into the large input box without pressing Enter."
         )
 
         return x, y
