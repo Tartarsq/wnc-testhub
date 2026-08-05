@@ -1454,14 +1454,21 @@ class QXDMController:
         time.sleep(3)
 
         self.mode_lpm()
+
+        # Give the modem enough time to enter low-power mode and for
+        # QXDM to settle before sending the online command.
         time.sleep(max(transition_delay, 10.0))
 
-        # QXDM may lose focus while the modem changes state.
+        # QXDM can lose focus during the modem state transition.
+        # Refocus it, then let send_command() re-run OpenCV detection
+        # before typing mode online.
         self.focus_qxdm()
         time.sleep(2)
 
         self.mode_online()
-        time.sleep(max(transition_delay, 5.0))
+
+        # Allow the modem and QXDM connection to stabilize.
+        time.sleep(max(transition_delay, 3.0))
 
         print("QXDM logging sequence started.")
         return True
