@@ -1,23 +1,26 @@
-import { NavLink } from "react-router-dom";
+import { NavLink } from 'react-router-dom'
 import {
   FiHome,
   FiCpu,
   FiFileText,
   FiActivity,
-  FiCheckSquare,
   FiBarChart2,
   FiSettings,
-} from "react-icons/fi";
-import logo from "../assets/wnc-logo.png";
+} from 'react-icons/fi'
+import logo from '../assets/wnc-logo.png'
 
 function Sidebar() {
   const getLinkClass = ({ isActive }) =>
-    `sidebar-link ${isActive ? "active" : ""}`;
+    `sidebar-link ${isActive ? 'active' : ''}`
 
   return (
     <aside className="sidebar">
       <div className="sidebar-brand">
-        <img src={logo} alt="WNC Logo" className="sidebar-logo" />
+        <img
+          src={logo}
+          alt="WNC Logo"
+          className="sidebar-logo"
+        />
 
         <div>
           <h2 className="sidebar-title">WNC</h2>
@@ -46,11 +49,6 @@ function Sidebar() {
           <span>Throughput</span>
         </NavLink>
 
-        <NavLink to="/test-cases" className={getLinkClass}>
-          <FiCheckSquare className="sidebar-icon" />
-          <span>Test Cases</span>
-        </NavLink>
-
         <NavLink to="/analytics" className={getLinkClass}>
           <FiBarChart2 className="sidebar-icon" />
           <span>Analytics</span>
@@ -62,7 +60,7 @@ function Sidebar() {
         </NavLink>
       </nav>
     </aside>
-  );
+  )
 }
 
-export default Sidebar;
+export default Sidebar

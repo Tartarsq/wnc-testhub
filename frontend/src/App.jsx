@@ -3,7 +3,6 @@ import Dashboard from './pages/Dashboard'
 import Devices from './pages/Devices'
 import QXDMLogs from './pages/QXDMLogs'
 import Throughput from './pages/Throughput'
-import TestCases from './pages/TestCases'
 import Analytics from './pages/Analytics'
 import TestResultDetails from './pages/TestResultDetails'
 import Settings from './pages/Settings'
@@ -16,7 +15,6 @@ function App() {
         <Route path="/devices" element={<Devices />} />
         <Route path="/qxdm-logs" element={<QXDMLogs />} />
         <Route path="/throughput" element={<Throughput />} />
-        <Route path="/test-cases" element={<TestCases />} />
         <Route path="/analytics" element={<Analytics />} />
         <Route
           path="/analytics/results/:resultIndex"
