@@ -3415,3 +3415,428 @@ input {
     width: 100%;
   }
 }
+
+/* ==========================================================
+   Final UI Polish
+========================================================== */
+
+:root {
+  --surface: #ffffff;
+  --surface-soft: #f8fafc;
+  --page-bg: #f1f5f9;
+  --border: #e2e8f0;
+  --border-strong: #cbd5e1;
+  --text: #0f172a;
+  --text-muted: #64748b;
+  --primary: #2563eb;
+  --primary-dark: #1d4ed8;
+  --success: #16a34a;
+  --danger: #dc2626;
+  --warning: #d97706;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 18px;
+  --shadow-sm: 0 2px 8px rgba(15, 23, 42, 0.05);
+  --shadow-md: 0 8px 24px rgba(15, 23, 42, 0.08);
+  --shadow-lg: 0 16px 40px rgba(15, 23, 42, 0.12);
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background:
+    radial-gradient(circle at top right, rgba(37, 99, 235, 0.06), transparent 24rem),
+    var(--page-bg);
+}
+
+button,
+a,
+input,
+select,
+textarea {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button,
+a {
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease,
+    color 0.2s ease,
+    transform 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.2);
+  outline-offset: 2px;
+}
+
+.main-content {
+  background: transparent;
+  padding: 28px;
+}
+
+.sidebar {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.025), transparent 35%),
+    #0f172a;
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: 8px 0 24px rgba(15, 23, 42, 0.08);
+}
+
+.sidebar-brand {
+  margin-bottom: 28px;
+}
+
+.sidebar-logo {
+  filter: drop-shadow(0 6px 12px rgba(0, 0, 0, 0.16));
+}
+
+.sidebar-link {
+  min-height: 48px;
+  border: 1px solid transparent;
+  font-weight: 600;
+}
+
+.sidebar-link:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.08);
+  transform: translateX(3px);
+}
+
+.sidebar-link.active {
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.28);
+}
+
+.topbar {
+  position: sticky;
+  top: 18px;
+  z-index: 20;
+  border: 1px solid rgba(226, 232, 240, 0.9);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(12px);
+  box-shadow: var(--shadow-md);
+}
+
+.topbar h1,
+.dashboard-header h2,
+.page-heading h2 {
+  letter-spacing: -0.025em;
+}
+
+.dashboard-header,
+.page-heading {
+  gap: 24px;
+  padding: 6px 2px;
+}
+
+.dashboard-header p,
+.page-heading p {
+  max-width: 720px;
+  line-height: 1.6;
+}
+
+.dashboard-card,
+.dashboard-panel,
+.device-primary-card,
+.device-control-panel,
+.qxdm-control-card,
+.qxdm-monitor-card,
+.qxdm-status-card,
+.throughput-configuration,
+.metric-card,
+.analytics-summary-card,
+.analytics-chart-card,
+.analytics-history-card {
+  border-color: var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.dashboard-card,
+.metric-card,
+.qxdm-status-card,
+.analytics-summary-card,
+.mission-status-card {
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease,
+    border-color 0.2s ease;
+}
+
+.dashboard-card:hover,
+.metric-card:hover,
+.qxdm-status-card:hover,
+.analytics-summary-card:hover,
+.mission-status-card:hover {
+  border-color: #bfdbfe;
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+.dashboard-panel,
+.device-primary-card,
+.qxdm-control-card,
+.qxdm-monitor-card,
+.analytics-chart-card,
+.analytics-history-card {
+  box-shadow: var(--shadow-md);
+}
+
+.panel-header {
+  gap: 20px;
+}
+
+.panel-header h3 {
+  letter-spacing: -0.015em;
+}
+
+.status-badge {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  padding: 5px 11px;
+  letter-spacing: 0.01em;
+}
+
+.status-badge.running {
+  border-color: #bbf7d0;
+}
+
+.status-badge.queued {
+  border-color: #fde68a;
+}
+
+.status-badge.failed {
+  border-color: #fecaca;
+}
+
+.status-badge.idle {
+  border-color: #e2e8f0;
+}
+
+.start-test-button,
+.start-throughput-button,
+.refresh-device-button,
+.analytics-refresh-button,
+.qxdm-start-button,
+.qxdm-stop-button,
+.qxdm-refresh-button,
+.dashboard-panel-link,
+.dashboard-refresh-button,
+.throughput-export-button {
+  min-height: 44px;
+  border-radius: 11px;
+  font-weight: 700;
+}
+
+.start-test-button,
+.start-throughput-button,
+.refresh-device-button,
+.analytics-refresh-button,
+.qxdm-refresh-button,
+.dashboard-panel-link {
+  box-shadow: 0 6px 16px rgba(37, 99, 235, 0.18);
+}
+
+.start-test-button:hover,
+.start-throughput-button:hover:not(:disabled),
+.refresh-device-button:hover:not(:disabled),
+.analytics-refresh-button:hover:not(:disabled),
+.qxdm-refresh-button:hover:not(:disabled),
+.dashboard-panel-link:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 22px rgba(37, 99, 235, 0.24);
+}
+
+.form-field input,
+.form-field select,
+.analytics-filter-row select,
+.analytics-search-field,
+.analytics-date-field,
+.qxdm-folder-input {
+  min-height: 44px;
+  border-radius: 11px;
+}
+
+.form-field input:hover:not(:disabled),
+.analytics-filter-row select:hover,
+.analytics-search-field:hover,
+.analytics-date-field:hover,
+.qxdm-folder-input:hover {
+  border-color: var(--border-strong);
+}
+
+.api-error-message,
+.device-warning-message,
+.qxdm-status-error {
+  border-radius: 12px;
+  line-height: 1.55;
+  box-shadow: var(--shadow-sm);
+}
+
+.empty-state,
+.analytics-empty-chart {
+  border-radius: 14px;
+}
+
+.table-container {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.throughput-table,
+.analytics-history-table {
+  overflow: hidden;
+}
+
+.throughput-table thead,
+.analytics-history-table thead {
+  background: #f8fafc;
+}
+
+.throughput-table th,
+.analytics-history-table th {
+  color: #475569;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+}
+
+.throughput-table tbody tr,
+.analytics-history-table tbody tr {
+  transition: background-color 0.18s ease;
+}
+
+.throughput-table tbody tr:hover,
+.analytics-history-table tbody tr:hover {
+  background: #f8fbff;
+}
+
+.metric-card h3,
+.card-value,
+.analytics-summary-card h3,
+.qxdm-status-card h3 {
+  letter-spacing: -0.03em;
+}
+
+.throughput-progress-panel {
+  border-radius: 14px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+.throughput-progress-track,
+.qxdm-log-progress-track {
+  height: 10px;
+}
+
+.mission-status-card,
+.mission-session-hero,
+.mission-details-grid > div,
+.mission-action-grid button,
+.dashboard-throughput-item,
+.device-summary-grid > div {
+  border-radius: 13px;
+}
+
+.mission-action-grid button:hover {
+  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.1);
+}
+
+.qxdm-workflow-marker {
+  box-shadow: 0 0 0 4px #ffffff;
+}
+
+.qxdm-workflow-step.active .qxdm-workflow-marker {
+  animation: qxdm-active-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes qxdm-active-pulse {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 4px #ffffff,
+      0 0 0 7px rgba(37, 99, 235, 0.08);
+  }
+
+  50% {
+    box-shadow:
+      0 0 0 4px #ffffff,
+      0 0 0 10px rgba(37, 99, 235, 0.03);
+  }
+}
+
+.spinning {
+  animation-duration: 0.8s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@media (max-width: 900px) {
+  .main-content {
+    padding: 20px;
+  }
+
+  .topbar {
+    top: 10px;
+  }
+}
+
+@media (max-width: 700px) {
+  .sidebar {
+    position: static;
+    width: 100%;
+    height: auto;
+    min-height: auto;
+    overflow: visible;
+    box-shadow: none;
+  }
+
+  .main-content {
+    padding: 14px;
+  }
+
+  .topbar {
+    position: static;
+    border-radius: 14px;
+  }
+
+  .dashboard-header h2,
+  .page-heading h2,
+  .topbar h1 {
+    font-size: 24px;
+  }
+
+  .dashboard-panel,
+  .device-primary-card,
+  .qxdm-control-card,
+  .qxdm-monitor-card,
+  .analytics-chart-card,
+  .analytics-history-card {
+    padding: 18px;
+  }
+}
