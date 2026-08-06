@@ -79,6 +79,12 @@ class QXDMController:
     )
     SETTINGS_TEMPLATE_THRESHOLD = 0.72
 
+    ITEM_STORE_ANCHOR_TEMPLATE_PATH = (
+        Path(__file__).resolve().parent
+        / "qxdm_item_store_anchor.png"
+    )
+    ITEM_STORE_ANCHOR_THRESHOLD = 0.72
+
     # QXDM 5.2.640 Settings dialog positions, expressed as ratios
     # of the Settings window. These match the Item Store File layout.
     SETTINGS_ITEM_STORE_X_RATIO = 0.14
@@ -1054,83 +1060,86 @@ class QXDMController:
         log_path: Path,
     ) -> bool:
         """
-        Configure QXDM saving through Options -> Settings... ->
-        Item Store File.
+        Configure QXDM Item Store File saving from one OpenCV anchor.
 
-        The caller controls the destination by passing a full log path.
-        QXDM receives:
-            Base File Name -> filename without extension
-            Log File Directory -> selected folder
-            Log File Path -> full selected path
+        OpenCV locates the Base File Name row once. The remaining fields
+        are addressed by stable offsets from that matched row:
 
-        All other working QXDM automation remains unchanged.
+            Base File Name
+            Log File Directory
+            Log File Path
+            Maximum Log File Size
+
+        All other QXDM automation remains unchanged.
         """
         log_path = self.prepare_log_path(
             log_path
         )
 
-        settings_left, settings_top, _, _ = (
-            self.open_qxdm_settings()
+        self.open_qxdm_settings()
+        time.sleep(1)
+
+        (
+            anchor_left,
+            anchor_top,
+            anchor_right,
+            anchor_bottom,
+            anchor_score,
+        ) = self.locate_template_on_screen(
+            self.ITEM_STORE_ANCHOR_TEMPLATE_PATH,
+            self.ITEM_STORE_ANCHOR_THRESHOLD,
         )
 
-        # Offsets measured from the QXDM 5.2.640 Item Store File dialog.
-        quick_save = (
-            settings_left + 168,
-            settings_top + 49,
-        )
-        base_filename = (
-            settings_left + 360,
-            settings_top + 81,
-        )
-        log_directory = (
-            settings_left + 400,
-            settings_top + 117,
-        )
-        advanced_mode = (
-            settings_left + 181,
-            settings_top + 457,
-        )
-        maximum_size = (
-            settings_left + 500,
-            settings_top + 485,
-        )
-        automatic_saving = (
-            settings_left + 198,
-            settings_top + 543,
-        )
-        log_file_path = (
-            settings_left + 385,
-            settings_top + 704,
-        )
-        close_button = (
-            settings_left + 575,
-            settings_top + 16,
+        print(
+            "Located QXDM Item Store File anchor with "
+            f"score {anchor_score:.3f}."
         )
 
+        # Positions measured from the clean Item Store File screenshot.
+        base_filename_point = (
+            anchor_left + 285,
+            anchor_top + 24,
+        )
+        log_directory_point = (
+            anchor_left + 330,
+            anchor_top + 101,
+        )
+        log_file_path_point = (
+            anchor_left + 315,
+            anchor_top + 183,
+        )
+        maximum_size_point = (
+            anchor_left + 420,
+            anchor_top + 260,
+        )
+
+        # Base File Name receives only the filename stem.
         self._click_absolute(
-            *quick_save
-        )
-
-        self._click_absolute(
-            *base_filename
+            *base_filename_point
         )
         self._replace_active_text(
             log_path.stem
         )
 
+        # Log File Directory receives only the selected folder.
         self._click_absolute(
-            *log_directory
+            *log_directory_point
         )
         self._replace_active_text(
             str(log_path.parent)
         )
 
+        # Log File Path receives the complete path.
         self._click_absolute(
-            *advanced_mode
+            *log_file_path_point
+        )
+        self._replace_active_text(
+            str(log_path)
         )
 
+        # Preserve the configured maximum log size.
         self._click_absolute(
-            *maximum_size
+            *maximum_size_point
         )
         send_keys("^a")
         send_keys("{BACKSPACE}")
@@ -1148,17 +1157,6 @@ class QXDMController:
         )
         send_keys("{ENTER}")
 
-        self._click_absolute(
-            *automatic_saving
-        )
-
-        self._click_absolute(
-            *log_file_path
-        )
-        self._replace_active_text(
-            str(log_path)
-        )
-
         print(
             f"QXDM base filename configured: {log_path.stem}"
         )
@@ -1173,9 +1171,8 @@ class QXDMController:
             f"{self.max_log_size_mb} MB"
         )
 
-        self._click_absolute(
-            *close_button
-        )
+        # Close Settings after applying the field values.
+        send_keys("{ESC}")
         time.sleep(2)
 
         return True
@@ -1288,50 +1285,11 @@ class QXDMController:
             + self.COMMAND_INPUT_Y_OFFSET
         )
 
-        # Save a debug image showing exactly what OpenCV matched.
-        template_height, template_width = template_gray.shape
-        debug_image = screenshot_bgr.copy()
-
-        cv2.rectangle(
-            debug_image,
-            maximum_location,
-            (
-                maximum_location[0] + template_width,
-                maximum_location[1] + template_height,
-            ),
-            (0, 0, 255),
-            2,
-        )
-
-        local_click = (
-            maximum_location[0] + self.COMMAND_INPUT_X_OFFSET,
-            maximum_location[1] + self.COMMAND_INPUT_Y_OFFSET,
-        )
-
-        cv2.circle(
-            debug_image,
-            local_click,
-            6,
-            (0, 255, 0),
-            -1,
-        )
-
-        debug_path = (
-            Path(__file__).resolve().parent
-            / "qxdm_command_debug.png"
-        )
-
-        cv2.imwrite(
-            str(debug_path),
-            debug_image,
-        )
-
         print(
             "OpenCV located the QXDM Command bar with "
             f"score {maximum_score:.3f}. "
             f"Clicking the large input box at ({click_x}, {click_y}). "
-            "Search was restricted to the left side of the toolbar. "
-            f"Debug image: {debug_path}"
+            "Search was restricted to the left side of the toolbar."
         )
 
         return click_x, click_y
