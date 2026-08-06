@@ -275,6 +275,8 @@ class QXDMStartRequest(BaseModel):
 class QXDMStatus(BaseModel):
     status: str
     message: str
+    workflow_step: str = "idle"
+    manual_settings_required: bool = False
     installed: bool
     process_running: bool
     logging_active: bool
@@ -297,6 +299,8 @@ qxdm_lock = Lock()
 qxdm_state: dict[str, Any] = {
     "status": "idle",
     "message": "QXDM logging is idle.",
+    "workflow_step": "idle",
+    "manual_settings_required": False,
     "logging_active": False,
     "current_log_path": None,
     "started_at": None,
@@ -366,6 +370,11 @@ def build_qxdm_status() -> QXDMStatus:
     return QXDMStatus(
         status=state_snapshot["status"],
         message=state_snapshot["message"],
+        workflow_step=state_snapshot.get("workflow_step", "idle"),
+        manual_settings_required=state_snapshot.get(
+            "manual_settings_required",
+            False,
+        ),
         installed=qxdm_controller.executable_exists(),
         process_running=qxdm_controller.is_running(),
         logging_active=state_snapshot["logging_active"],
@@ -538,7 +547,7 @@ def run_qxdm_start(
             f"{filename_path.suffix}"
         )
 
-        log_path = (
+        suggested_log_path = (
             output_folder / timestamped_filename
         ).resolve()
 
@@ -547,50 +556,73 @@ def run_qxdm_start(
             1024,
         )
 
+        session_name = (
+            session.get("session_name")
+            if session is not None
+            else None
+        )
+
         update_qxdm_state(
             status="starting",
-            message="Launching QXDM and preparing logging.",
+            workflow_step="launching",
+            message="Launching QXDM and waiting for the diagnostic USB connection.",
+            manual_settings_required=False,
             logging_active=False,
-            current_log_path=str(log_path),
+            current_log_path=str(suggested_log_path),
             started_at=None,
             stopped_at=None,
             session_id=request.session_id,
-            session_name=(
-                session.get("session_name")
-                if session is not None
-                else None
-            ),
+            session_name=session_name,
             error=None,
         )
 
+        # The controller loads the DMC, opens QXDM Settings, and displays
+        # its Continue confirmation window while the user chooses the
+        # actual Item Store File save settings.
+        update_qxdm_state(
+            workflow_step="manual_save_settings",
+            message=(
+                "QXDM is preparing the capture. When Settings opens, "
+                "choose the save location, close Settings, and click "
+                "Continue in the WNC TestHub confirmation window."
+            ),
+            manual_settings_required=True,
+        )
+
         qxdm_controller.start_logging(
-            log_path=log_path,
+            log_path=suggested_log_path,
             load_mask=request.load_mask,
             continue_without_mask=request.continue_without_mask,
         )
 
+        actual_log_path = (
+            str(qxdm_controller.current_log_path)
+            if qxdm_controller.current_log_path is not None
+            else str(suggested_log_path)
+        )
+
         update_qxdm_state(
             status="logging",
-            message="QXDM logging is active.",
+            workflow_step="capture_active",
+            message="QXDM capture is active.",
+            manual_settings_required=False,
             logging_active=True,
-            current_log_path=str(log_path),
+            current_log_path=actual_log_path,
             started_at=datetime.now().isoformat(
                 timespec="seconds"
             ),
             stopped_at=None,
             session_id=request.session_id,
-            session_name=(
-                session.get("session_name")
-                if session is not None
-                else None
-            ),
+            session_name=session_name,
             error=None,
         )
 
     except Exception as error:
         update_qxdm_state(
             status="failed",
+            workflow_step="failed",
             message="QXDM logging failed to start.",
+            manual_settings_required=False,
             logging_active=False,
             error=str(error),
         )
@@ -603,7 +635,9 @@ def run_qxdm_stop() -> None:
 
         update_qxdm_state(
             status="stopping",
+            workflow_step="stopping",
             message="Stopping and finalizing the QXDM log.",
+            manual_settings_required=False,
             error=None,
         )
 
@@ -625,9 +659,11 @@ def run_qxdm_stop() -> None:
 
         update_qxdm_state(
             status="completed",
+            workflow_step="completed",
             message=(
                 "QXDM logging stopped and the log was finalized."
             ),
+            manual_settings_required=False,
             logging_active=False,
             current_log_path=(
                 str(completed_log.resolve())
@@ -641,7 +677,9 @@ def run_qxdm_stop() -> None:
     except Exception as error:
         update_qxdm_state(
             status="failed",
+            workflow_step="failed",
             message="QXDM logging failed to stop cleanly.",
+            manual_settings_required=False,
             logging_active=False,
             error=str(error),
         )
@@ -967,7 +1005,9 @@ def start_qxdm_logging(
 
     update_qxdm_state(
         status="starting",
+        workflow_step="queued",
         message="QXDM logging start has been queued.",
+        manual_settings_required=False,
         logging_active=False,
         error=None,
     )
@@ -1003,7 +1043,9 @@ def stop_qxdm_logging(
 
     update_qxdm_state(
         status="stopping",
+        workflow_step="stopping",
         message="QXDM logging stop has been queued.",
+        manual_settings_required=False,
         error=None,
     )
 

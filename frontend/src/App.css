@@ -2625,3 +2625,79 @@ input {
 .qxdm-optional-mask-row span {
   color: #1e3a8a;
 }
+
+/* ==========================================================
+   QXDM Manual Save + Workflow Integration
+========================================================== */
+
+.qxdm-manual-settings-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 20px;
+  padding: 15px 17px;
+  border: 1px solid #93c5fd;
+  border-radius: 12px;
+  background: #eff6ff;
+  color: #1e3a8a;
+  line-height: 1.5;
+}
+
+.qxdm-manual-settings-banner strong {
+  font-size: 0.96rem;
+}
+
+.qxdm-manual-settings-banner span {
+  color: #1e40af;
+  font-size: 14px;
+}
+
+.qxdm-suggested-path {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 16px 0;
+  padding: 14px 16px;
+  border: 1px solid #dbeafe;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.qxdm-suggested-path > svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  color: #2563eb;
+  font-size: 1.2rem;
+}
+
+.qxdm-suggested-path div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.qxdm-suggested-path strong {
+  color: #0f172a;
+  font-size: 14px;
+}
+
+.qxdm-suggested-path span {
+  overflow-wrap: anywhere;
+  color: #334155;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.qxdm-suggested-path small {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+@media (max-width: 700px) {
+  .qxdm-manual-settings-banner,
+  .qxdm-suggested-path {
+    padding: 13px 14px;
+  }
+}

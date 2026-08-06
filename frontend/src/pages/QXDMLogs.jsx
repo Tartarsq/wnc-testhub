@@ -193,6 +193,29 @@ function QXDMLogs() {
   const qxdmReady =
     qxdmStatus?.installed === true
 
+  const workflowLabels = {
+    idle: 'Idle',
+    queued: 'Queued',
+    launching: 'Launching QXDM',
+    manual_save_settings: 'Configure Save Location',
+    capture_active: 'Live Capture',
+    stopping: 'Stopping Capture',
+    completed: 'Completed',
+    failed: 'Failed',
+  }
+
+  const workflowLabel =
+    workflowLabels[qxdmStatus?.workflow_step] ??
+    loggingStatusLabel
+
+  const selectedSession = sessions.find(
+    (session) => session.session_id === selectedSessionId
+  )
+
+  const suggestedDestination = selectedSession
+    ? `${selectedSession.session_folder}\\captures\\qxdm`
+    : outputFolder.trim() || 'Default TestHub QXDM folder'
+
   const progressPercent =
     qxdmStatus?.max_log_size_mb > 0
       ? Math.min(
@@ -231,6 +254,17 @@ function QXDMLogs() {
         {error && (
           <div className="api-error-message qxdm-error-message">
             <strong>QXDM error:</strong> {error}
+          </div>
+        )}
+
+        {qxdmStatus?.manual_settings_required && (
+          <div className="qxdm-manual-settings-banner">
+            <strong>Complete the QXDM save setup</strong>
+            <span>
+              In QXDM Settings, choose the actual filename, folder,
+              log path, and maximum size. Close Settings, then click
+              Continue in the WNC TestHub confirmation window.
+            </span>
           </div>
         )}
 
@@ -299,8 +333,8 @@ function QXDMLogs() {
               <div>
                 <h3>Logging Configuration</h3>
                 <p>
-                  Configure the QXDM output before starting a
-                  capture.
+                  Choose a suggested filename and session, then confirm
+                  the actual save location inside QXDM Settings.
                 </p>
               </div>
             </div>
@@ -331,8 +365,8 @@ function QXDMLogs() {
                 </select>
 
                 <small className="qxdm-session-help">
-                  Selecting a session saves the log inside that
-                  session&apos;s captures/qxdm folder.
+                  Selecting a session suggests its captures/qxdm
+                  folder and links the capture to that session.
                 </small>
               </label>
 
@@ -375,7 +409,7 @@ function QXDMLogs() {
               </label>
 
               <label className="form-field qxdm-folder-field">
-                <span>Output Folder</span>
+                <span>Suggested Output Folder</span>
 
                 <div className="qxdm-folder-input">
                   <FiFolder />
@@ -399,6 +433,17 @@ function QXDMLogs() {
                   />
                 </div>
               </label>
+            </div>
+
+            <div className="qxdm-suggested-path">
+              <FiFolder />
+              <div>
+                <strong>Suggested destination</strong>
+                <span>{suggestedDestination}</span>
+                <small>
+                  The final save location is confirmed manually in QXDM.
+                </small>
+              </div>
             </div>
 
             <label className="qxdm-checkbox-row">
@@ -496,7 +541,7 @@ function QXDMLogs() {
               <span
                 className={`status-badge ${loggingStatusClass}`}
               >
-                {loggingStatusLabel}
+                {workflowLabel}
               </span>
             </div>
 
