@@ -2827,3 +2827,467 @@ input {
     max-width: none;
   }
 }
+
+/* ==========================================================
+   Dashboard Mission Control
+========================================================== */
+
+.mission-control-header {
+  gap: 24px;
+}
+
+.dashboard-eyebrow {
+  margin: 0 0 6px;
+  color: #2563eb !important;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.dashboard-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.dashboard-refresh-button,
+.start-test-button {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.dashboard-refresh-button {
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #334155;
+  padding: 0 16px;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    border-color 0.2s ease,
+    background-color 0.2s ease,
+    color 0.2s ease;
+}
+
+.dashboard-refresh-button:hover:not(:disabled) {
+  border-color: #93c5fd;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.dashboard-refresh-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.mission-status-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 18px;
+  margin-bottom: 24px;
+}
+
+.mission-status-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 14px;
+  align-items: center;
+  min-width: 0;
+  padding: 20px;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
+}
+
+.mission-status-card > div {
+  min-width: 0;
+}
+
+.mission-status-icon {
+  display: grid;
+  width: 52px;
+  height: 52px;
+  place-items: center;
+  border-radius: 13px;
+  font-size: 21px;
+}
+
+.mission-status-icon.backend {
+  background: #dbeafe;
+  color: #2563eb;
+}
+
+.mission-status-icon.device {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.mission-status-icon.qxdm {
+  background: #ede9fe;
+  color: #7c3aed;
+}
+
+.mission-status-icon.session {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.mission-status-card p,
+.mission-status-card h3,
+.mission-status-card span {
+  margin: 0;
+}
+
+.mission-status-card p {
+  margin-bottom: 4px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.mission-status-card h3 {
+  margin-bottom: 4px;
+  color: #0f172a;
+  font-size: 19px;
+}
+
+.mission-status-card div > span {
+  display: block;
+  overflow-wrap: anywhere;
+  color: #94a3b8;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.mission-health-dot {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.mission-health-dot.online {
+  background: #22c55e;
+  box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.12);
+}
+
+.mission-health-dot.offline {
+  background: #ef4444;
+  box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.1);
+}
+
+.mission-health-dot.warning {
+  background: #f59e0b;
+  box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.12);
+}
+
+.mission-health-dot.idle {
+  background: #94a3b8;
+}
+
+.mission-primary-grid,
+.mission-secondary-grid {
+  display: grid;
+  gap: 22px;
+  margin-bottom: 24px;
+}
+
+.mission-primary-grid {
+  grid-template-columns: minmax(0, 1.2fr) minmax(330px, 0.8fr);
+}
+
+.mission-secondary-grid {
+  grid-template-columns:
+    minmax(0, 1.15fr)
+    minmax(320px, 0.85fr)
+    minmax(300px, 0.75fr);
+}
+
+.mission-session-panel,
+.mission-device-panel,
+.mission-activity-panel,
+.mission-actions-panel {
+  min-width: 0;
+}
+
+.mission-session-hero {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  margin-top: 22px;
+  padding: 18px;
+  border: 1px solid #dbeafe;
+  border-radius: 12px;
+  background: #f8fbff;
+}
+
+.mission-session-icon {
+  display: grid;
+  width: 50px;
+  height: 50px;
+  flex-shrink: 0;
+  place-items: center;
+  border-radius: 13px;
+  background: #dbeafe;
+  color: #2563eb;
+  font-size: 21px;
+}
+
+.mission-session-hero p,
+.mission-session-hero h4,
+.mission-session-hero span {
+  margin: 0;
+}
+
+.mission-session-hero p {
+  margin-bottom: 4px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.mission-session-hero h4 {
+  margin-bottom: 5px;
+  color: #0f172a;
+  font-size: 19px;
+}
+
+.mission-session-hero div > span {
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.mission-details-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 20px 0 24px;
+}
+
+.mission-details-grid > div {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.mission-details-grid dt,
+.mission-device-details dt {
+  margin-bottom: 6px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.mission-details-grid dd,
+.mission-device-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.mission-device-details {
+  margin: 20px 0 24px;
+}
+
+.mission-device-details > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 12px 0;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.mission-device-details > div:last-child {
+  border-bottom: none;
+}
+
+.mission-device-details dt {
+  margin: 0;
+}
+
+.mission-device-details dd {
+  text-align: right;
+}
+
+.mission-activity-panel .panel-header > svg,
+.mission-actions-panel .panel-header > svg {
+  flex-shrink: 0;
+  color: #2563eb;
+  font-size: 21px;
+}
+
+.mission-activity-list {
+  display: flex;
+  flex-direction: column;
+  margin-top: 18px;
+}
+
+.mission-activity-item {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr);
+  gap: 11px;
+  padding: 13px 0;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.mission-activity-item:last-child {
+  border-bottom: none;
+}
+
+.mission-activity-marker {
+  width: 10px;
+  height: 10px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: #cbd5e1;
+}
+
+.mission-activity-marker.active {
+  background: #22c55e;
+  box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.1);
+}
+
+.mission-activity-item strong {
+  display: block;
+  margin-bottom: 4px;
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.mission-activity-item div > span {
+  display: block;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.mission-action-grid {
+  display: grid;
+  gap: 11px;
+  margin-top: 18px;
+}
+
+.mission-action-grid button {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 11px;
+  align-items: center;
+  width: 100%;
+  border: 1px solid #e2e8f0;
+  border-radius: 11px;
+  background: #f8fafc;
+  padding: 12px;
+  color: #0f172a;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.2s ease,
+    background-color 0.2s ease,
+    transform 0.2s ease;
+}
+
+.mission-action-grid button:hover {
+  border-color: #93c5fd;
+  background: #eff6ff;
+  transform: translateY(-1px);
+}
+
+.mission-action-grid button > svg {
+  width: 38px;
+  height: 38px;
+  padding: 9px;
+  border-radius: 10px;
+  background: #dbeafe;
+  color: #2563eb;
+}
+
+.mission-action-grid strong,
+.mission-action-grid small {
+  display: block;
+}
+
+.mission-action-grid strong {
+  margin-bottom: 3px;
+  font-size: 13px;
+}
+
+.mission-action-grid small {
+  color: #64748b;
+  font-size: 11px;
+}
+
+@media (max-width: 1200px) {
+  .mission-status-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .mission-secondary-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .mission-actions-panel {
+    grid-column: 1 / -1;
+  }
+
+  .mission-action-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .mission-primary-grid,
+  .mission-secondary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .mission-actions-panel {
+    grid-column: auto;
+  }
+}
+
+@media (max-width: 700px) {
+  .dashboard-header-actions {
+    width: 100%;
+    flex-direction: column;
+  }
+
+  .dashboard-refresh-button,
+  .start-test-button {
+    width: 100%;
+  }
+
+  .mission-status-grid,
+  .mission-details-grid,
+  .mission-action-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .mission-device-details > div {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .mission-device-details dd {
+    text-align: left;
+  }
+}
