@@ -1055,6 +1055,128 @@ class QXDMController:
             pause=0.03,
         )
 
+    def locate_template_multiscale(
+        self,
+        template_path: Path,
+        threshold: float = 0.50,
+        minimum_scale: float = 0.70,
+        maximum_scale: float = 1.35,
+        scale_step: float = 0.05,
+    ) -> tuple[int, int, int, int, float]:
+        """
+        Locate a UI template across multiple DPI/display scales.
+
+        This is used for the Item Store File anchor because QXDM and
+        Windows display scaling can make the live control larger or
+        smaller than the saved template.
+        """
+        template_path = Path(template_path).resolve()
+
+        if not template_path.exists():
+            raise FileNotFoundError(
+                "QXDM UI template was not found:\n"
+                f"{template_path}"
+            )
+
+        screenshot = ImageGrab.grab()
+        screenshot_bgr = cv2.cvtColor(
+            np.array(screenshot),
+            cv2.COLOR_RGB2BGR,
+        )
+        screenshot_gray = cv2.cvtColor(
+            screenshot_bgr,
+            cv2.COLOR_BGR2GRAY,
+        )
+
+        original_template = cv2.imread(
+            str(template_path),
+            cv2.IMREAD_GRAYSCALE,
+        )
+
+        if original_template is None:
+            raise RuntimeError(
+                "OpenCV could not read the QXDM UI template:\n"
+                f"{template_path}"
+            )
+
+        best_score = -1.0
+        best_location = None
+        best_width = None
+        best_height = None
+        scale = minimum_scale
+
+        while scale <= maximum_scale + 0.001:
+            resized = cv2.resize(
+                original_template,
+                None,
+                fx=scale,
+                fy=scale,
+                interpolation=(
+                    cv2.INTER_AREA
+                    if scale < 1.0
+                    else cv2.INTER_CUBIC
+                ),
+            )
+
+            height, width = resized.shape
+
+            if (
+                width >= screenshot_gray.shape[1]
+                or height >= screenshot_gray.shape[0]
+                or width < 20
+                or height < 10
+            ):
+                scale += scale_step
+                continue
+
+            result = cv2.matchTemplate(
+                screenshot_gray,
+                resized,
+                cv2.TM_CCOEFF_NORMED,
+            )
+
+            _, score, _, location = cv2.minMaxLoc(
+                result
+            )
+
+            if score > best_score:
+                best_score = float(score)
+                best_location = location
+                best_width = width
+                best_height = height
+
+            scale += scale_step
+
+        if (
+            best_location is None
+            or best_width is None
+            or best_height is None
+            or best_score < threshold
+        ):
+            raise RuntimeError(
+                "OpenCV could not confidently locate the QXDM UI "
+                f"template '{template_path.name}' at any tested scale. "
+                f"Best match score: {best_score:.3f}"
+            )
+
+        left = int(best_location[0])
+        top = int(best_location[1])
+        right = left + int(best_width)
+        bottom = top + int(best_height)
+
+        print(
+            "Multiscale OpenCV located "
+            f"{template_path.name} with score {best_score:.3f}."
+        )
+
+        return (
+            left,
+            top,
+            right,
+            bottom,
+            best_score,
+        )
+
     def configure_logging(
         self,
         log_path: Path,
@@ -1085,9 +1207,12 @@ class QXDMController:
             anchor_right,
             anchor_bottom,
             anchor_score,
-        ) = self.locate_template_on_screen(
+        ) = self.locate_template_multiscale(
             self.ITEM_STORE_ANCHOR_TEMPLATE_PATH,
-            self.ITEM_STORE_ANCHOR_THRESHOLD,
+            threshold=0.50,
+            minimum_scale=0.70,
+            maximum_scale=1.35,
+            scale_step=0.05,
         )
 
         print(
