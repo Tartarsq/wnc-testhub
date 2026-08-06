@@ -14,10 +14,37 @@ import api from '../services/api'
 import '../App.css'
 
 function Throughput() {
-  const [titanIp, setTitanIp] = useState('192.168.100.1')
-  const [numberOfRuns, setNumberOfRuns] = useState(5)
-  const [delaySeconds, setDelaySeconds] = useState(10)
-  const [timeoutSeconds, setTimeoutSeconds] = useState(180)
+  const getStoredSettings = () => {
+    const storedSettings = window.localStorage.getItem(
+      'wncTestHubSettings'
+    )
+
+    if (!storedSettings) {
+      return {}
+    }
+
+    try {
+      return JSON.parse(storedSettings)
+    } catch {
+      window.localStorage.removeItem('wncTestHubSettings')
+      return {}
+    }
+  }
+
+  const storedSettings = getStoredSettings()
+
+  const [titanIp, setTitanIp] = useState(
+    storedSettings.titanIp ?? '192.168.100.1'
+  )
+  const [numberOfRuns, setNumberOfRuns] = useState(
+    storedSettings.numberOfRuns ?? 5
+  )
+  const [delaySeconds, setDelaySeconds] = useState(
+    storedSettings.delaySeconds ?? 10
+  )
+  const [timeoutSeconds, setTimeoutSeconds] = useState(
+    storedSettings.timeoutSeconds ?? 180
+  )
   const [sessionName, setSessionName] = useState('')
 
   const [jobId, setJobId] = useState(null)
