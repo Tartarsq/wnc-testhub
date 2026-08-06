@@ -1057,7 +1057,13 @@ class QXDMController:
         Configure QXDM saving through Options -> Settings... ->
         Item Store File.
 
-        Coordinates are anchored to the Settings dialog found by OpenCV.
+        The caller controls the destination by passing a full log path.
+        QXDM receives:
+            Base File Name -> filename without extension
+            Log File Directory -> selected folder
+            Log File Path -> full selected path
+
+        All other working QXDM automation remains unchanged.
         """
         log_path = self.prepare_log_path(
             log_path
@@ -1067,50 +1073,51 @@ class QXDMController:
             self.open_qxdm_settings()
         )
 
-        # These offsets come from the user's QXDM 5.2.640 Settings layout.
+        # Offsets measured from the QXDM 5.2.640 Item Store File dialog.
         quick_save = (
-            settings_left + 140,
-            settings_top + 77,
+            settings_left + 168,
+            settings_top + 49,
         )
         base_filename = (
-            settings_left + 286,
-            settings_top + 100,
+            settings_left + 360,
+            settings_top + 81,
         )
         log_directory = (
-            settings_left + 326,
-            settings_top + 129,
+            settings_left + 400,
+            settings_top + 117,
         )
         advanced_mode = (
-            settings_left + 151,
-            settings_top + 395,
+            settings_left + 181,
+            settings_top + 457,
         )
         maximum_size = (
-            settings_left + 394,
-            settings_top + 418,
+            settings_left + 500,
+            settings_top + 485,
         )
         automatic_saving = (
-            settings_left + 165,
-            settings_top + 462,
+            settings_left + 198,
+            settings_top + 543,
+        )
+        log_file_path = (
+            settings_left + 385,
+            settings_top + 704,
         )
         close_button = (
-            settings_left + 510,
-            settings_top + 14,
+            settings_left + 575,
+            settings_top + 16,
         )
 
-        # Enable Quick Saving.
         self._click_absolute(
             *quick_save
         )
 
-        # Set Base File Name.
         self._click_absolute(
             *base_filename
         )
         self._replace_active_text(
-            log_path.name
+            log_path.stem
         )
 
-        # Set Log File Directory.
         self._click_absolute(
             *log_directory
         )
@@ -1118,12 +1125,10 @@ class QXDMController:
             str(log_path.parent)
         )
 
-        # Select Advanced Mode.
         self._click_absolute(
             *advanced_mode
         )
 
-        # Set Maximum Log File Size.
         self._click_absolute(
             *maximum_size
         )
@@ -1143,30 +1148,37 @@ class QXDMController:
         )
         send_keys("{ENTER}")
 
-        # Enable automatic saving when the limit is reached.
         self._click_absolute(
             *automatic_saving
         )
 
+        self._click_absolute(
+            *log_file_path
+        )
+        self._replace_active_text(
+            str(log_path)
+        )
+
         print(
-            f"QXDM base filename configured: {log_path.name}"
+            f"QXDM base filename configured: {log_path.stem}"
         )
         print(
             f"QXDM log directory configured: {log_path.parent}"
+        )
+        print(
+            f"QXDM full log path configured: {log_path}"
         )
         print(
             "QXDM maximum log size configured: "
             f"{self.max_log_size_mb} MB"
         )
 
-        # Close Settings. QXDM retains these Item Store File values.
         self._click_absolute(
             *close_button
         )
         time.sleep(2)
 
         return True
-
 
     def locate_command_box_with_opencv(
         self,
