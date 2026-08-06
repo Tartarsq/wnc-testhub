@@ -131,8 +131,81 @@ function Throughput() {
     }, 2000)
   }
 
+  const getRequestErrorMessage = (requestError) => {
+    const detail = requestError.response?.data?.detail
+
+    if (Array.isArray(detail)) {
+      return detail
+        .map((item) => {
+          const field = Array.isArray(item.loc)
+            ? item.loc[item.loc.length - 1]
+            : 'request'
+
+          return `${field}: ${item.msg}`
+        })
+        .join(' | ')
+    }
+
+    if (typeof detail === 'string') {
+      return detail
+    }
+
+    return (
+      requestError.message ||
+      'Unknown request error.'
+    )
+  }
+
   const handleStartTest = async () => {
     if (isRunning) {
+      return
+    }
+
+    const normalizedTitanIp = titanIp.trim()
+    const normalizedRuns = Number(numberOfRuns)
+    const normalizedDelay = Number(delaySeconds)
+    const normalizedTimeout = Number(timeoutSeconds)
+
+    if (
+      normalizedTitanIp.length < 7 ||
+      normalizedTitanIp.length > 45
+    ) {
+      setError(
+        'Titan IP must contain between 7 and 45 characters.'
+      )
+      return
+    }
+
+    if (
+      !Number.isInteger(normalizedRuns) ||
+      normalizedRuns < 1 ||
+      normalizedRuns > 15
+    ) {
+      setError(
+        'Number of runs must be a whole number from 1 to 15.'
+      )
+      return
+    }
+
+    if (
+      !Number.isInteger(normalizedDelay) ||
+      normalizedDelay < 0 ||
+      normalizedDelay > 3600
+    ) {
+      setError(
+        'Delay between runs must be a whole number from 0 to 3600 seconds.'
+      )
+      return
+    }
+
+    if (
+      !Number.isInteger(normalizedTimeout) ||
+      normalizedTimeout < 1 ||
+      normalizedTimeout > 1800
+    ) {
+      setError(
+        'Test timeout must be a whole number from 1 to 1800 seconds.'
+      )
       return
     }
 
@@ -151,10 +224,10 @@ function Throughput() {
 
     try {
       const response = await api.post('/throughput/start', {
-        titan_ip: titanIp,
-        number_of_runs: numberOfRuns,
-        delay_between_runs: delaySeconds,
-        timeout_seconds: timeoutSeconds,
+        titan_ip: normalizedTitanIp,
+        number_of_runs: normalizedRuns,
+        delay_between_runs: normalizedDelay,
+        timeout_seconds: normalizedTimeout,
       })
 
       const job = response.data
@@ -179,11 +252,7 @@ function Throughput() {
         'failed'
       )
 
-      setError(
-        requestError.response?.data?.detail ||
-          requestError.message ||
-          'Unknown request error.'
-      )
+      setError(getRequestErrorMessage(requestError))
     }
   }
 
