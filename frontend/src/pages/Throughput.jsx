@@ -4,6 +4,7 @@ import {
   FiArrowDown,
   FiArrowUp,
   FiClock,
+  FiDownload,
   FiPlay,
   FiServer,
 } from 'react-icons/fi'
@@ -17,6 +18,7 @@ function Throughput() {
   const [numberOfRuns, setNumberOfRuns] = useState(5)
   const [delaySeconds, setDelaySeconds] = useState(10)
   const [timeoutSeconds, setTimeoutSeconds] = useState(180)
+  const [sessionName, setSessionName] = useState('')
 
   const [jobId, setJobId] = useState(null)
   const [jobStatus, setJobStatus] = useState('idle')
@@ -27,6 +29,7 @@ function Throughput() {
   const [error, setError] = useState('')
   const [completedRuns, setCompletedRuns] = useState(0)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
+  const [lastUpdatedAt, setLastUpdatedAt] = useState(null)
 
   const pollingRef = useRef(null)
   const timerRef = useRef(null)
@@ -83,6 +86,7 @@ function Throughput() {
         setMessage(job.message)
         setResults(updatedResults)
         setCompletedRuns(job.completed_runs ?? updatedResults.length)
+        setLastUpdatedAt(new Date())
 
         window.localStorage.setItem(
           'wncThroughputStatus',
@@ -209,6 +213,110 @@ function Throughput() {
           ? 'failed'
           : 'idle'
 
+  const completedResults = results.filter(
+    (result) => !result.notes
+  )
+
+  const averageMetric = (field) => {
+    const values = completedResults
+      .map((result) => Number(result[field]))
+      .filter((value) => Number.isFinite(value))
+
+    if (values.length === 0) {
+      return null
+    }
+
+    return (
+      values.reduce((sum, value) => sum + value, 0) /
+      values.length
+    )
+  }
+
+  const averageDownload = averageMetric('download_mbps')
+  const averageUpload = averageMetric('upload_mbps')
+  const averagePing = averageMetric('ping_ms')
+
+  const estimatedRemainingSeconds = isRunning
+    ? Math.max(
+        0,
+        (numberOfRuns - completedRuns) *
+          (timeoutSeconds + delaySeconds)
+      )
+    : 0
+
+  const formatTimestamp = (value) => {
+    if (!value) {
+      return 'Not updated yet'
+    }
+
+    return value.toLocaleTimeString()
+  }
+
+  const escapeCsvValue = (value) => {
+    const normalized =
+      value === null || value === undefined ? '' : String(value)
+
+    return `"${normalized.replace(/"/g, '""')}"`
+  }
+
+  const handleExportResults = () => {
+    if (results.length === 0) {
+      return
+    }
+
+    const headers = [
+      'Session',
+      'Run',
+      'Download Mbps',
+      'Upload Mbps',
+      'Ping ms',
+      'Jitter ms',
+      'Server',
+      'Location',
+      'Status',
+      'Notes',
+    ]
+
+    const rows = results.map((result) => [
+      sessionName.trim() || 'Unnamed session',
+      result.run_number,
+      result.download_mbps,
+      result.upload_mbps,
+      result.ping_ms,
+      result.ping_jitter_ms,
+      result.server_name,
+      result.server_location,
+      result.notes ? 'Failed' : 'Completed',
+      result.notes || '',
+    ])
+
+    const csvContent = [
+      headers.map(escapeCsvValue).join(','),
+      ...rows.map((row) =>
+        row.map(escapeCsvValue).join(',')
+      ),
+    ].join('\n')
+
+    const blob = new Blob([csvContent], {
+      type: 'text/csv;charset=utf-8;',
+    })
+
+    const url = window.URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    const safeSessionName = (
+      sessionName.trim() || 'throughput-results'
+    )
+      .replace(/[^a-z0-9_-]+/gi, '_')
+      .replace(/^_+|_+$/g, '')
+
+    link.href = url
+    link.download = `${safeSessionName || 'throughput-results'}.csv`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    window.URL.revokeObjectURL(url)
+  }
+
   return (
     <div className="dashboard-layout">
       <Sidebar />
@@ -243,7 +351,20 @@ function Throughput() {
             </div>
           </div>
 
-          <div className="configuration-grid">
+          <div className="configuration-grid throughput-configuration-grid">
+            <label className="form-field throughput-session-field">
+              <span>Session Name</span>
+              <input
+                type="text"
+                value={sessionName}
+                onChange={(event) =>
+                  setSessionName(event.target.value)
+                }
+                placeholder="Example: Morning LTE Validation"
+                disabled={isRunning}
+              />
+            </label>
+
             <label className="form-field">
               <span>Titan IP Address</span>
               <input
@@ -337,10 +458,12 @@ function Throughput() {
               <span>{progressPercent}% complete</span>
               <span>
                 {isRunning
-                  ? `Current run: ${Math.min(
+                  ? `Run ${Math.min(
                       completedRuns + 1,
                       numberOfRuns
-                    )}`
+                    )} of ${numberOfRuns} · up to ${formatElapsedTime(
+                      estimatedRemainingSeconds
+                    )} remaining`
                   : jobStatus === 'completed'
                     ? 'All runs completed'
                     : 'Ready to begin'}
@@ -349,11 +472,16 @@ function Throughput() {
           </div>
 
           <div className="configuration-footer">
-            <div className="configuration-note">
-              <FiServer />
-              <span>
-                Ookla automatically selects an available server.
-              </span>
+            <div className="configuration-note throughput-note-stack">
+              <div>
+                <FiServer />
+                <span>
+                  Ookla automatically selects an available server.
+                </span>
+              </div>
+              <small>
+                Last updated: {formatTimestamp(lastUpdatedAt)}
+              </small>
             </div>
 
             <button
@@ -392,6 +520,12 @@ function Throughput() {
                 {latestResult?.download_mbps ?? 0}
                 <span> Mbps</span>
               </h3>
+              <small>
+                Average:{' '}
+                {averageDownload !== null
+                  ? `${averageDownload.toFixed(2)} Mbps`
+                  : 'Not available'}
+              </small>
             </div>
           </article>
 
@@ -406,6 +540,12 @@ function Throughput() {
                 {latestResult?.upload_mbps ?? 0}
                 <span> Mbps</span>
               </h3>
+              <small>
+                Average:{' '}
+                {averageUpload !== null
+                  ? `${averageUpload.toFixed(2)} Mbps`
+                  : 'Not available'}
+              </small>
             </div>
           </article>
 
@@ -420,6 +560,12 @@ function Throughput() {
                 {latestResult?.ping_ms ?? 0}
                 <span> ms</span>
               </h3>
+              <small>
+                Average:{' '}
+                {averagePing !== null
+                  ? `${averagePing.toFixed(2)} ms`
+                  : 'Not available'}
+              </small>
             </div>
           </article>
 
@@ -445,9 +591,21 @@ function Throughput() {
               <p>Results returned by the FastAPI backend.</p>
             </div>
 
-            <span className="history-count">
-              {results.length} results
-            </span>
+            <div className="throughput-history-actions">
+              <span className="history-count">
+                {results.length} results
+              </span>
+
+              <button
+                type="button"
+                className="throughput-export-button"
+                onClick={handleExportResults}
+                disabled={results.length === 0}
+              >
+                <FiDownload />
+                Export CSV
+              </button>
+            </div>
           </div>
 
           <div className="table-container">
@@ -474,7 +632,15 @@ function Throughput() {
                   </tr>
                 ) : (
                   results.map((result) => (
-                    <tr key={result.run_number}>
+                    <tr
+                      key={result.run_number}
+                      className={
+                        result.run_number ===
+                        latestResult?.run_number
+                          ? 'latest-throughput-row'
+                          : ''
+                      }
+                    >
                       <td>{result.run_number}</td>
                       <td>
                         {result.download_mbps ?? 'N/A'} Mbps
