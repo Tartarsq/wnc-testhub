@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   FiActivity,
+  FiCheckCircle,
+  FiCircle,
+  FiClock,
   FiFileText,
   FiFolder,
   FiHardDrive,
@@ -198,7 +201,7 @@ function QXDMLogs() {
     queued: 'Queued',
     launching: 'Launching QXDM',
     manual_save_settings: 'Configure Save Location',
-    capture_active: 'Live Capture',
+    capture_active: 'Capture Active',
     stopping: 'Stopping Capture',
     completed: 'Completed',
     failed: 'Failed',
@@ -216,17 +219,76 @@ function QXDMLogs() {
     ? `${selectedSession.session_folder}\\captures\\qxdm`
     : outputFolder.trim() || 'Default TestHub QXDM folder'
 
-  const progressPercent =
-    qxdmStatus?.max_log_size_mb > 0
-      ? Math.min(
-          100,
-          Math.round(
-            (qxdmStatus.current_log_size_mb /
-              qxdmStatus.max_log_size_mb) *
-              100
-          )
-        )
-      : 0
+  const workflowSteps = [
+    {
+      id: 'launching',
+      label: 'Launch QXDM',
+      description: 'Open QXDM and locate the desktop window.',
+    },
+    {
+      id: 'device',
+      label: 'Connect Device',
+      description: 'Wait for the diagnostic USB/COM connection.',
+    },
+    {
+      id: 'configuration',
+      label: 'Load Configuration',
+      description: 'Load the selected or remembered DMC configuration.',
+    },
+    {
+      id: 'manual_save_settings',
+      label: 'Configure Save Location',
+      description: 'Choose the final Item Store File settings in QXDM.',
+    },
+    {
+      id: 'lpm',
+      label: 'Enable Airplane Mode',
+      description: 'Send the mode lpm command.',
+    },
+    {
+      id: 'online',
+      label: 'Return Online',
+      description: 'Send the mode online command after the delay.',
+    },
+    {
+      id: 'capture_active',
+      label: 'Capture Active',
+      description: 'QXDM logging is active and ready for testing.',
+    },
+  ]
+
+  const workflowOrder = {
+    idle: -1,
+    queued: 0,
+    launching: 1,
+    manual_save_settings: 4,
+    capture_active: 7,
+    stopping: 7,
+    completed: 7,
+    failed: -1,
+  }
+
+  const currentWorkflowIndex =
+    workflowOrder[qxdmStatus?.workflow_step] ?? -1
+
+  const getWorkflowStepState = (stepIndex) => {
+    if (qxdmStatus?.status === 'failed') {
+      return 'pending'
+    }
+
+    if (stepIndex < currentWorkflowIndex) {
+      return 'complete'
+    }
+
+    if (stepIndex === currentWorkflowIndex) {
+      return qxdmStatus?.status === 'completed'
+        ? 'complete'
+        : 'active'
+    }
+
+    return 'pending'
+  }
+
 
   return (
     <div className="dashboard-layout">
@@ -532,9 +594,9 @@ function QXDMLogs() {
           <article className="qxdm-monitor-card">
             <div className="panel-header">
               <div>
-                <h3>Live Capture</h3>
+                <h3>Capture Session</h3>
                 <p>
-                  Current QXDM log information and file size.
+                  Reliable session status and QXDM workflow progress.
                 </p>
               </div>
 
@@ -545,48 +607,45 @@ function QXDMLogs() {
               </span>
             </div>
 
-            <div className="qxdm-log-progress">
-              <div className="qxdm-log-progress-header">
-                <span>Log Size</span>
+            <div className="qxdm-workflow-timeline">
+              {workflowSteps.map((step, index) => {
+                const stepState = getWorkflowStepState(index)
 
-                <strong>
-                  {qxdmStatus?.current_log_size_mb ?? 0} MB
-                  {' / '}
-                  {qxdmStatus?.max_log_size_mb ??
-                    maxLogSizeMb}{' '}
-                  MB
-                </strong>
-              </div>
+                return (
+                  <div
+                    key={step.id}
+                    className={`qxdm-workflow-step ${stepState}`}
+                  >
+                    <div className="qxdm-workflow-marker">
+                      {stepState === 'complete' ? (
+                        <FiCheckCircle />
+                      ) : stepState === 'active' ? (
+                        <FiClock />
+                      ) : (
+                        <FiCircle />
+                      )}
+                    </div>
 
-              <div className="qxdm-log-progress-track">
-                <div
-                  className="qxdm-log-progress-fill"
-                  style={{
-                    width: `${progressPercent}%`,
-                  }}
-                />
-              </div>
-
-              <span className="qxdm-log-progress-percent">
-                {progressPercent}% of configured maximum
-              </span>
+                    <div className="qxdm-workflow-content">
+                      <strong>{step.label}</strong>
+                      <span>{step.description}</span>
+                    </div>
+                  </div>
+                )
+              })}
             </div>
 
-            <dl className="qxdm-details-list">
+            <dl className="qxdm-details-list qxdm-session-details">
+              <div>
+                <dt>Status</dt>
+                <dd>{workflowLabel}</dd>
+              </div>
+
               <div>
                 <dt>Test Session</dt>
                 <dd>
                   {displayValue(
                     qxdmStatus?.session_name
-                  )}
-                </dd>
-              </div>
-
-              <div>
-                <dt>Current Log</dt>
-                <dd>
-                  {displayValue(
-                    qxdmStatus?.current_log_path
                   )}
                 </dd>
               </div>
@@ -614,6 +673,15 @@ function QXDMLogs() {
                 <dd>
                   {formatDateTime(
                     qxdmStatus?.stopped_at
+                  )}
+                </dd>
+              </div>
+
+              <div>
+                <dt>Last Status</dt>
+                <dd>
+                  {displayValue(
+                    qxdmStatus?.message
                   )}
                 </dd>
               </div>

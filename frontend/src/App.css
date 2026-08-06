@@ -2701,3 +2701,129 @@ input {
     padding: 13px 14px;
   }
 }
+
+/* ==========================================================
+   QXDM Capture Session Timeline
+========================================================== */
+
+.qxdm-workflow-timeline {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin-top: 24px;
+  padding: 4px 0;
+}
+
+.qxdm-workflow-step {
+  position: relative;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 12px;
+  min-height: 64px;
+}
+
+.qxdm-workflow-step:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  top: 31px;
+  bottom: -1px;
+  left: 16px;
+  width: 2px;
+  background: #e2e8f0;
+}
+
+.qxdm-workflow-step.complete:not(:last-child)::after {
+  background: #86efac;
+}
+
+.qxdm-workflow-marker {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid #cbd5e1;
+  border-radius: 50%;
+  background: #ffffff;
+  color: #94a3b8;
+  font-size: 18px;
+}
+
+.qxdm-workflow-step.complete .qxdm-workflow-marker {
+  border-color: #86efac;
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.qxdm-workflow-step.active .qxdm-workflow-marker {
+  border-color: #93c5fd;
+  background: #dbeafe;
+  color: #2563eb;
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.1);
+}
+
+.qxdm-workflow-content {
+  min-width: 0;
+  padding: 3px 0 18px;
+}
+
+.qxdm-workflow-content strong {
+  display: block;
+  margin-bottom: 4px;
+  color: #0f172a;
+  font-size: 14px;
+}
+
+.qxdm-workflow-step.pending .qxdm-workflow-content strong {
+  color: #64748b;
+}
+
+.qxdm-workflow-content span {
+  display: block;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.qxdm-session-details {
+  margin-top: 18px;
+  padding-top: 4px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.qxdm-session-details > div:last-child {
+  align-items: start;
+}
+
+.qxdm-session-details > div:last-child dd {
+  max-width: 260px;
+  line-height: 1.45;
+}
+
+/* Hide the old log-size UI if stale markup remains during hot reload. */
+.qxdm-log-progress {
+  display: none;
+}
+
+@media (max-width: 700px) {
+  .qxdm-workflow-step {
+    grid-template-columns: 30px minmax(0, 1fr);
+  }
+
+  .qxdm-workflow-marker {
+    width: 30px;
+    height: 30px;
+    font-size: 16px;
+  }
+
+  .qxdm-workflow-step:not(:last-child)::after {
+    top: 28px;
+    left: 14px;
+  }
+
+  .qxdm-session-details > div:last-child dd {
+    max-width: none;
+  }
+}
