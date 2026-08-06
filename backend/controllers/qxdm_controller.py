@@ -79,12 +79,6 @@ class QXDMController:
     )
     SETTINGS_TEMPLATE_THRESHOLD = 0.72
 
-    ITEM_STORE_ANCHOR_TEMPLATE_PATH = (
-        Path(__file__).resolve().parent
-        / "qxdm_item_store_anchor.png"
-    )
-    ITEM_STORE_ANCHOR_THRESHOLD = 0.72
-
     # QXDM 5.2.640 Settings dialog positions, expressed as ratios
     # of the Settings window. These match the Item Store File layout.
     SETTINGS_ITEM_STORE_X_RATIO = 0.14
@@ -1055,144 +1049,72 @@ class QXDMController:
             pause=0.03,
         )
 
-    def locate_template_multiscale(
-        self,
-        template_path: Path,
-        threshold: float = 0.50,
-        minimum_scale: float = 0.70,
-        maximum_scale: float = 1.35,
-        scale_step: float = 0.05,
-    ) -> tuple[int, int, int, int, float]:
+    def wait_for_manual_log_settings(self) -> None:
         """
-        Locate a UI template across multiple DPI/display scales.
+        Show a small confirmation window while the user configures QXDM.
 
-        This is used for the Item Store File anchor because QXDM and
-        Windows display scaling can make the live control larger or
-        smaller than the saved template.
+        The user can continue interacting with QXDM, then click Continue
+        after choosing the filename, folder, log path, and size settings.
         """
-        template_path = Path(template_path).resolve()
-
-        if not template_path.exists():
-            raise FileNotFoundError(
-                "QXDM UI template was not found:\n"
-                f"{template_path}"
-            )
-
-        screenshot = ImageGrab.grab()
-        screenshot_bgr = cv2.cvtColor(
-            np.array(screenshot),
-            cv2.COLOR_RGB2BGR,
-        )
-        screenshot_gray = cv2.cvtColor(
-            screenshot_bgr,
-            cv2.COLOR_BGR2GRAY,
-        )
-
-        original_template = cv2.imread(
-            str(template_path),
-            cv2.IMREAD_GRAYSCALE,
-        )
-
-        if original_template is None:
+        try:
+            from tkinter import Button, Label, Tk
+        except ImportError as error:
             raise RuntimeError(
-                "OpenCV could not read the QXDM UI template:\n"
-                f"{template_path}"
-            )
+                "Tkinter is required for the manual QXDM Settings "
+                "confirmation window."
+            ) from error
 
-        best_score = -1.0
-        best_location = None
-        best_width = None
-        best_height = None
-        scale = minimum_scale
+        root = Tk()
+        root.title("WNC TestHub - QXDM Settings")
+        root.attributes("-topmost", True)
+        root.resizable(False, False)
 
-        while scale <= maximum_scale + 0.001:
-            resized = cv2.resize(
-                original_template,
-                None,
-                fx=scale,
-                fy=scale,
-                interpolation=(
-                    cv2.INTER_AREA
-                    if scale < 1.0
-                    else cv2.INTER_CUBIC
-                ),
-            )
-
-            height, width = resized.shape
-
-            if (
-                width >= screenshot_gray.shape[1]
-                or height >= screenshot_gray.shape[0]
-                or width < 20
-                or height < 10
-            ):
-                scale += scale_step
-                continue
-
-            result = cv2.matchTemplate(
-                screenshot_gray,
-                resized,
-                cv2.TM_CCOEFF_NORMED,
-            )
-
-            _, score, _, location = cv2.minMaxLoc(
-                result
-            )
-
-            if score > best_score:
-                best_score = float(score)
-                best_location = location
-                best_width = width
-                best_height = height
-
-            scale += scale_step
-
-        if (
-            best_location is None
-            or best_width is None
-            or best_height is None
-            or best_score < threshold
-        ):
-            raise RuntimeError(
-                "OpenCV could not confidently locate the QXDM UI "
-                f"template '{template_path.name}' at any tested scale. "
-                f"Best match score: {best_score:.3f}"
-            )
-
-        left = int(best_location[0])
-        top = int(best_location[1])
-        right = left + int(best_width)
-        bottom = top + int(best_height)
-
-        print(
-            "Multiscale OpenCV located "
-            f"{template_path.name} with score {best_score:.3f}."
+        message = (
+            "Configure QXDM Item Store File settings now.\n\n"
+            "Choose the Base File Name, Log File Directory, "
+            "Log File Path, and Maximum Log File Size.\n\n"
+            "Close the QXDM Settings window, then click Continue."
         )
 
-        return (
-            left,
-            top,
-            right,
-            bottom,
-            best_score,
+        label = Label(
+            root,
+            text=message,
+            justify="left",
+            padx=18,
+            pady=14,
+            wraplength=430,
         )
+        label.pack()
+
+        button = Button(
+            root,
+            text="Continue",
+            width=18,
+            command=root.destroy,
+        )
+        button.pack(pady=(0, 16))
+
+        root.update_idletasks()
+
+        screen_width = root.winfo_screenwidth()
+        window_width = root.winfo_width()
+
+        root.geometry(
+            f"+{max(screen_width - window_width - 30, 0)}+30"
+        )
+
+        root.mainloop()
 
     def configure_logging(
         self,
         log_path: Path,
     ) -> bool:
         """
-        Configure QXDM Item Store File saving from one OpenCV anchor.
+        Open QXDM Item Store File Settings for manual configuration.
 
-        OpenCV locates the Base File Name row once. The remaining fields
-        are addressed by stable offsets from that matched row:
-
-            Base File Name
-            Log File Directory
-            Log File Path
-            Maximum Log File Size
-
-        All other QXDM automation remains unchanged.
+        TestHub prepares and remembers the intended log path, but the user
+        manually chooses the actual QXDM save filename, directory, file
+        path, and maximum size. No fragile field-click automation is used.
         """
         log_path = self.prepare_log_path(
             log_path
@@ -1201,104 +1123,24 @@ class QXDMController:
         self.open_qxdm_settings()
         time.sleep(1)
 
-        (
-            anchor_left,
-            anchor_top,
-            anchor_right,
-            anchor_bottom,
-            anchor_score,
-        ) = self.locate_template_multiscale(
-            self.ITEM_STORE_ANCHOR_TEMPLATE_PATH,
-            threshold=0.50,
-            minimum_scale=0.70,
-            maximum_scale=1.35,
-            scale_step=0.05,
-        )
-
         print(
-            "Located QXDM Item Store File anchor with "
-            f"score {anchor_score:.3f}."
-        )
-
-        # Positions measured from the clean Item Store File screenshot.
-        base_filename_point = (
-            anchor_left + 285,
-            anchor_top + 24,
-        )
-        log_directory_point = (
-            anchor_left + 330,
-            anchor_top + 101,
-        )
-        log_file_path_point = (
-            anchor_left + 315,
-            anchor_top + 183,
-        )
-        maximum_size_point = (
-            anchor_left + 420,
-            anchor_top + 260,
-        )
-
-        # Base File Name receives only the filename stem.
-        self._click_absolute(
-            *base_filename_point
-        )
-        self._replace_active_text(
-            log_path.stem
-        )
-
-        # Log File Directory receives only the selected folder.
-        self._click_absolute(
-            *log_directory_point
-        )
-        self._replace_active_text(
-            str(log_path.parent)
-        )
-
-        # Log File Path receives the complete path.
-        self._click_absolute(
-            *log_file_path_point
-        )
-        self._replace_active_text(
-            str(log_path)
-        )
-
-        # Preserve the configured maximum log size.
-        self._click_absolute(
-            *maximum_size_point
-        )
-        send_keys("^a")
-        send_keys("{BACKSPACE}")
-
-        size_value = (
-            "1.0 Gigabytes"
-            if self.max_log_size_mb >= 1024
-            else f"{self.max_log_size_mb} Megabytes"
-        )
-
-        send_keys(
-            size_value,
-            with_spaces=True,
-            pause=0.03,
-        )
-        send_keys("{ENTER}")
-
-        print(
-            f"QXDM base filename configured: {log_path.stem}"
+            "QXDM Settings is open. Configure Item Store File saving "
+            "manually, close Settings, and click Continue in the "
+            "WNC TestHub confirmation window."
         )
         print(
-            f"QXDM log directory configured: {log_path.parent}"
-        )
-        print(
-            f"QXDM full log path configured: {log_path}"
-        )
-        print(
-            "QXDM maximum log size configured: "
-            f"{self.max_log_size_mb} MB"
+            f"Suggested log path: {log_path}"
         )
 
-        # Close Settings after applying the field values.
-        send_keys("{ESC}")
+        self.wait_for_manual_log_settings()
+
+        # Return focus to QXDM before the mode commands begin.
+        self.focus_qxdm()
         time.sleep(2)
+
+        print(
+            "Manual QXDM log settings confirmed."
+        )
 
         return True
 
