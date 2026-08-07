@@ -207,7 +207,104 @@ http://localhost:5173
 - Report generation
 - Real-time backend connectivity over HTTPS
 
+
 ---
+
+
+# Installation
+
+## Clone the Repository
+
+```bash
+git clone https://github.com/Tartarsq/wnc-testhub.git
+
+cd wnc-testhub
+```
+
+---
+
+## Backend Setup
+
+Navigate to the backend directory:
+
+```bash
+cd backend
+```
+
+Create a Python virtual environment:
+
+```bash
+python -m venv .venv
+```
+
+Activate the virtual environment:
+
+### Windows Command Prompt
+
+```cmd
+.venv\Scripts\activate
+```
+
+### Windows PowerShell
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+Install the required Python packages:
+
+```bash
+pip install -r requirements.txt
+```
+
+Start the backend server:
+
+```bash
+uvicorn api:app --reload
+```
+
+---
+
+## Frontend Setup
+
+Open a second terminal.
+
+Navigate to the frontend directory:
+
+```bash
+cd frontend
+```
+
+Install the required Node.js packages:
+
+```bash
+npm install
+```
+
+Run the React development server:
+
+```bash
+npm run dev
+```
+
+Open your browser to:
+
+```
+http://localhost:5173
+```
+
+---
+
+## Required Software
+
+Before using WNC TestHub, install:
+
+- Python 3.11+
+- Node.js 20+
+- npm
+- Git
+- Qualcomm QXDM
+- WNC Titan 3 device
 
 # Screenshots
 
@@ -224,3 +321,6 @@ Electrical & Computer Engineering
 Rutgers University
 
 Field Application Engineer Intern — WNC
+
+
+
