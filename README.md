@@ -312,6 +312,10 @@ Coming soon.
 
 ---
 
+**Live Demo:** https://wnc-testhub.vercel.app
+
+> **Note:** The live demo showcases the frontend interface. Hardware-dependent features such as Titan 3 communication, throughput testing, and QXDM log capture require the FastAPI backend running on a configured Windows test machine.
+
 # Author
 
 **Tarun Sathyanarayana**
