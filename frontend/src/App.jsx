@@ -1,6 +1,6 @@
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import Dashboard from './pages/Dashboard'
-import Devices from './pages/Devices'
+import Devices from './pages/devices'
 import QXDMLogs from './pages/QXDMLogs'
 import Throughput from './pages/Throughput'
 import Analytics from './pages/Analytics'
