@@ -316,6 +316,33 @@ Coming soon.
 
 > **Note:** The live demo showcases the frontend interface. Hardware-dependent features such as Titan 3 communication, throughput testing, and QXDM log capture require the FastAPI backend running on a configured Windows test machine.
 
+
+## Throughput Testing Requirement
+
+WNC TestHub uses the **Ookla Speedtest CLI** to perform automated throughput testing.
+
+Before running throughput tests:
+
+1. Download the **Speedtest CLI** executable from Ookla.
+2. Create a folder named **`tools`** inside the backend directory.
+3. Place the Speedtest executable inside the folder.
+
+Your project structure should look similar to:
+
+```text
+backend/
+├── api.py
+├── throughput.py
+├── qxdm_controller.py
+├── requirements.txt
+└── tools/
+    └── speedtest.exe
+```
+
+> **Note:** The Throughput page expects the Speedtest CLI executable to be located in the `backend/tools` directory. If it is missing, throughput tests will not run successfully.
+
+
+
 # Author
 
 **Tarun Sathyanarayana**
