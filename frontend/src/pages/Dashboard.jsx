@@ -340,9 +340,35 @@ function Dashboard() {
             </div>
 
             <div className="dashboard-throughput-results">
-              <div className="dashboard-throughput-item"><span className="dashboard-throughput-icon download"><FiArrowDown /></span><div><p>Download</p><strong>{currentDownload}</strong></div></div>
-              <div className="dashboard-throughput-item"><span className="dashboard-throughput-icon upload"><FiActivity /></span><div><p>Upload</p><strong>{currentUpload}</strong></div></div>
-              <div className="dashboard-throughput-item"><span className="dashboard-throughput-icon ping"><FiWifi /></span><div><p>Ping</p><strong>{currentPing}</strong></div></div>
+              <div className="dashboard-throughput-row">
+                <span className="dashboard-throughput-icon download">
+                  <FiArrowDown />
+                </span>
+                <div className="dashboard-throughput-info">
+                  <p>Download</p>
+                  <strong>{currentDownload}</strong>
+                </div>
+              </div>
+
+              <div className="dashboard-throughput-row">
+                <span className="dashboard-throughput-icon upload">
+                  <FiActivity />
+                </span>
+                <div className="dashboard-throughput-info">
+                  <p>Upload</p>
+                  <strong>{currentUpload}</strong>
+                </div>
+              </div>
+
+              <div className="dashboard-throughput-row">
+                <span className="dashboard-throughput-icon ping">
+                  <FiWifi />
+                </span>
+                <div className="dashboard-throughput-info">
+                  <p>Ping</p>
+                  <strong>{currentPing}</strong>
+                </div>
+              </div>
             </div>
 
             <button type="button" className="dashboard-panel-link" onClick={() => navigate('/throughput')}>
