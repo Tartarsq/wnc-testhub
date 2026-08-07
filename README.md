@@ -323,24 +323,19 @@ WNC TestHub uses the **Ookla Speedtest CLI** to perform automated throughput tes
 
 Before running throughput tests:
 
-1. Download the **Speedtest CLI** executable from Ookla.
-2. Create a folder named **`tools`** inside the backend directory.
-3. Place the Speedtest executable inside the folder.
+1. Download the **Ookla Speedtest CLI** for Windows.
+2. Create a folder named **`tools`** in the location expected by the application.
+3. Place the `speedtest.exe` executable inside the `tools` folder.
 
-Your project structure should look similar to:
+Example:
 
 ```text
-backend/
-├── api.py
-├── throughput.py
-├── qxdm_controller.py
-├── requirements.txt
-└── tools/
+C:\
+└── tools
     └── speedtest.exe
 ```
 
-> **Note:** The Throughput page expects the Speedtest CLI executable to be located in the `backend/tools` directory. If it is missing, throughput tests will not run successfully.
-
+> **Important:** The backend expects `speedtest.exe` to be located in the configured `tools` directory. If the executable is missing or stored in a different location, throughput testing will not function.
 
 
 # Author
