@@ -20,10 +20,10 @@ function TestRunner() {
   const [saveRoot, setSaveRoot] = useState(
     'C:\\Users\\niket\\Documents\\GitHub\\wnc-testhub\\results'
   )
-  const [mode, setMode] = useState('manual')
   const [titanIp, setTitanIp] = useState('192.168.100.1')
 
   const [collectQxdm, setCollectQxdm] = useState(true)
+  const [qxdmMode, setQxdmMode] = useState('manual')
   const [collectThroughput, setCollectThroughput] = useState(true)
   const [collectSyslog, setCollectSyslog] = useState(true)
 
@@ -75,9 +75,12 @@ function TestRunner() {
         setJob(updatedJob)
 
         if (
-          ['completed', 'failed', 'ready', 'awaiting_qxdm_stop'].includes(
-            updatedJob.status
-          )
+          [
+            'completed',
+            'failed',
+            'ready',
+            'awaiting_qxdm_stop',
+          ].includes(updatedJob.status)
         ) {
           stopPolling()
           setIsSubmitting(false)
@@ -99,6 +102,7 @@ function TestRunner() {
 
     try {
       const response = await api.get('/wrapper/browse-folder')
+
       if (response.data?.path) {
         setSaveRoot(response.data.path)
       }
@@ -112,7 +116,9 @@ function TestRunner() {
   }
 
   const startTest = async () => {
-    if (isSubmitting) return
+    if (isSubmitting) {
+      return
+    }
 
     if (!sessionName.trim()) {
       setError('Enter a test/session name.')
@@ -137,21 +143,28 @@ function TestRunner() {
       const payload = {
         session_name: sessionName.trim(),
         save_root: saveRoot.trim(),
-        mode,
         titan_ip: titanIp.trim(),
+
         collect_qxdm: collectQxdm,
+        qxdm_mode: collectQxdm ? qxdmMode : 'manual',
+
         collect_throughput: collectThroughput,
         collect_syslog: collectSyslog,
+
         number_of_runs: Number(numberOfRuns),
         delay_between_runs: Number(delayBetweenRuns),
         timeout_seconds: Number(timeoutSeconds),
+
         qxdm_log_filename: `${sessionName.trim()}_QXDM.isf`,
         qxdm_max_log_size_mb: 1024,
         load_mask: true,
         continue_without_mask: true,
       }
 
-      const response = await api.post('/wrapper/start', payload)
+      const response = await api.post(
+        '/wrapper/start',
+        payload
+      )
 
       setJob(response.data)
       startPolling(response.data.job_id)
@@ -178,8 +191,8 @@ function TestRunner() {
           <div>
             <h2>Unified Test Session</h2>
             <p>
-              Run QXDM, throughput, and syslog collection from one
-              session and store the outputs under one result folder.
+              Store QXDM, throughput, and syslog artifacts under one
+              test result folder.
             </p>
           </div>
 
@@ -204,8 +217,8 @@ function TestRunner() {
               <div>
                 <h3>Test Configuration</h3>
                 <p>
-                  Choose where the complete test package should be saved
-                  and how much of the workflow TestHub should automate.
+                  Choose the test destination and which artifacts TestHub
+                  should collect.
                 </p>
               </div>
             </div>
@@ -235,8 +248,10 @@ function TestRunner() {
 
               <label className="form-field qxdm-folder-field">
                 <span>Save Location</span>
-                <div className="qxdm-folder-input wrapper-folder-input">
+
+                <div className="qxdm-folder-input">
                   <FiFolder />
+
                   <input
                     value={saveRoot}
                     onChange={(event) =>
@@ -244,6 +259,7 @@ function TestRunner() {
                     }
                     disabled={isSubmitting}
                   />
+
                   <button
                     type="button"
                     className="qxdm-refresh-button"
@@ -256,39 +272,6 @@ function TestRunner() {
               </label>
             </div>
 
-            <div className="wrapper-mode-grid">
-              <button
-                type="button"
-                className={`wrapper-mode-card ${
-                  mode === 'manual' ? 'selected' : ''
-                }`}
-                onClick={() => setMode('manual')}
-                disabled={isSubmitting}
-              >
-                <FiSettings />
-                <strong>Manual</strong>
-                <span>
-                  Create one organized session folder, then control each
-                  test tool yourself.
-                </span>
-              </button>
-
-              <button
-                type="button"
-                className={`wrapper-mode-card ${
-                  mode === 'automatic' ? 'selected' : ''
-                }`}
-                onClick={() => setMode('automatic')}
-                disabled={isSubmitting}
-              >
-                <FiActivity />
-                <strong>Automatic</strong>
-                <span>
-                  TestHub coordinates the enabled collectors in sequence.
-                </span>
-              </button>
-            </div>
-
             <div className="wrapper-artifact-grid">
               <label className="wrapper-artifact-card">
                 <input
@@ -299,7 +282,9 @@ function TestRunner() {
                   }
                   disabled={isSubmitting}
                 />
+
                 <FiDatabase />
+
                 <div>
                   <strong>QXDM Log</strong>
                   <span>Qualcomm diagnostic capture</span>
@@ -315,10 +300,12 @@ function TestRunner() {
                   }
                   disabled={isSubmitting}
                 />
+
                 <FiActivity />
+
                 <div>
                   <strong>Throughput Report</strong>
-                  <span>Download, upload, and latency report</span>
+                  <span>Download, upload, latency report</span>
                 </div>
               </label>
 
@@ -331,7 +318,9 @@ function TestRunner() {
                   }
                   disabled={isSubmitting}
                 />
+
                 <FiFileText />
+
                 <div>
                   <strong>Syslog</strong>
                   <span>
@@ -343,10 +332,68 @@ function TestRunner() {
               </label>
             </div>
 
-            {mode === 'automatic' && collectThroughput && (
-              <div className="qxdm-form-grid wrapper-throughput-options">
+            {collectQxdm && (
+              <div className="qxdm-control-card wrapper-qxdm-mode-panel">
+                <div className="section-heading">
+                  <div className="section-icon">
+                    <FiDatabase />
+                  </div>
+
+                  <div>
+                    <h3>QXDM Logging Mode</h3>
+                    <p>
+                      Choose whether the QXDM portion of this test should
+                      use manual setup or the automatic QXDM workflow.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="wrapper-mode-grid">
+                  <button
+                    type="button"
+                    className={`wrapper-mode-card ${
+                      qxdmMode === 'manual' ? 'selected' : ''
+                    }`}
+                    onClick={() => setQxdmMode('manual')}
+                    disabled={isSubmitting}
+                  >
+                    <FiSettings />
+
+                    <strong>Manual QXDM</strong>
+
+                    <span>
+                      TestHub opens QXDM Settings and gives you time to
+                      enter the save values manually before continuing.
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    className={`wrapper-mode-card ${
+                      qxdmMode === 'automatic' ? 'selected' : ''
+                    }`}
+                    onClick={() => setQxdmMode('automatic')}
+                    disabled={isSubmitting}
+                  >
+                    <FiActivity />
+
+                    <strong>Automatic QXDM</strong>
+
+                    <span>
+                      TestHub uses the automatic QXDM controller workflow.
+                      If your current QXDM build still requires manual save
+                      setup, the backend will report that clearly.
+                    </span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {collectThroughput && (
+              <div className="qxdm-form-grid wrapper-throughput-config">
                 <label className="form-field">
                   <span>Throughput Runs</span>
+
                   <input
                     type="number"
                     min="1"
@@ -361,6 +408,7 @@ function TestRunner() {
 
                 <label className="form-field">
                   <span>Delay Between Runs</span>
+
                   <input
                     type="number"
                     min="0"
@@ -374,6 +422,7 @@ function TestRunner() {
 
                 <label className="form-field">
                   <span>Timeout</span>
+
                   <input
                     type="number"
                     min="1"
@@ -395,11 +444,10 @@ function TestRunner() {
                 disabled={isSubmitting}
               >
                 <FiPlay />
+
                 {isSubmitting
                   ? 'Starting...'
-                  : mode === 'automatic'
-                    ? 'Start Automatic Test'
-                    : 'Create Manual Session'}
+                  : 'Start Test'}
               </button>
             </div>
           </article>
@@ -409,7 +457,7 @@ function TestRunner() {
               <div>
                 <h3>Wrapper Progress</h3>
                 <p>
-                  One session, one destination, three test artifacts.
+                  One session, one destination, all selected artifacts.
                 </p>
               </div>
 
@@ -423,8 +471,12 @@ function TestRunner() {
               </div>
 
               <div>
-                <dt>Mode</dt>
-                <dd>{job?.mode ?? mode}</dd>
+                <dt>QXDM Mode</dt>
+                <dd>
+                  {collectQxdm
+                    ? job?.result?.qxdm_mode ?? qxdmMode
+                    : 'Not selected'}
+                </dd>
               </div>
 
               <div>
@@ -449,6 +501,7 @@ function TestRunner() {
                     <strong>
                       {item.step} · {item.status}
                     </strong>
+
                     <span>{item.message}</span>
                   </div>
                 </div>
@@ -457,6 +510,7 @@ function TestRunner() {
               {!job?.progress?.length && (
                 <div className="wrapper-progress-empty">
                   <FiRadio />
+
                   <span>
                     Configure the session and start when ready.
                   </span>

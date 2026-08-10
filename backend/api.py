@@ -710,20 +710,45 @@ def run_qxdm_stop() -> None:
 # ==========================================================
 
 class WrapperStartRequest(BaseModel):
-    session_name: str = Field(min_length=1, max_length=120)
-    save_root: str = Field(min_length=1, max_length=500)
-    mode: str = Field(default="manual", pattern="^(manual|automatic)$")
+    session_name: str = Field(
+        min_length=1,
+        max_length=120,
+    )
+    save_root: str = Field(
+        min_length=1,
+        max_length=500,
+    )
     titan_ip: str = Field(
         default=DEFAULT_TITAN_IP,
         min_length=7,
         max_length=45,
     )
+
     collect_qxdm: bool = True
+    qxdm_mode: str = Field(
+        default="manual",
+        pattern="^(manual|automatic)$",
+    )
+
     collect_throughput: bool = True
     collect_syslog: bool = True
-    number_of_runs: int = Field(default=5, ge=1, le=15)
-    delay_between_runs: int = Field(default=10, ge=0, le=3600)
-    timeout_seconds: int = Field(default=180, ge=1, le=1800)
+
+    number_of_runs: int = Field(
+        default=5,
+        ge=1,
+        le=15,
+    )
+    delay_between_runs: int = Field(
+        default=10,
+        ge=0,
+        le=3600,
+    )
+    timeout_seconds: int = Field(
+        default=180,
+        ge=1,
+        le=1800,
+    )
+
     qxdm_log_filename: str = Field(
         default=QXDM_DEFAULT_LOG_FILENAME,
         min_length=1,
@@ -742,7 +767,7 @@ class WrapperJob(BaseModel):
     job_id: str
     status: str
     message: str
-    mode: str
+    qxdm_mode: str
     session_folder: str | None = None
     progress: list[dict[str, Any]] = Field(default_factory=list)
     result: dict[str, Any] | None = None
@@ -793,62 +818,67 @@ def run_wrapper_job(
         update_wrapper_job(
             job_id,
             status="running",
-            message="Wrapper test session is starting.",
+            message=(
+                "Wrapper test session is starting."
+            ),
             error=None,
         )
 
-        if request.mode == "manual":
-            result = test_wrapper.create_workspace(
-                save_root=Path(request.save_root),
-                session_name=request.session_name,
-                titan_ip=request.titan_ip,
-                mode="manual",
-            )
-
-            update_wrapper_job(
-                job_id,
-                status="ready",
-                message=(
-                    "Manual wrapper session created. Use the QXDM, "
-                    "Throughput, and Syslog tools with this result folder."
-                ),
-                session_folder=result["session_folder"],
-                result=result,
-            )
-            return
-
-        result = test_wrapper.run_automatic(
-            save_root=Path(request.save_root),
+        result = test_wrapper.run(
+            save_root=Path(
+                request.save_root
+            ),
             session_name=request.session_name,
             titan_ip=request.titan_ip,
+            qxdm_mode=request.qxdm_mode,
             number_of_runs=request.number_of_runs,
-            delay_between_runs=request.delay_between_runs,
-            timeout_seconds=request.timeout_seconds,
+            delay_between_runs=(
+                request.delay_between_runs
+            ),
+            timeout_seconds=(
+                request.timeout_seconds
+            ),
             collect_qxdm=request.collect_qxdm,
-            collect_throughput=request.collect_throughput,
+            collect_throughput=(
+                request.collect_throughput
+            ),
             collect_syslog=request.collect_syslog,
-            qxdm_log_filename=request.qxdm_log_filename,
-            qxdm_max_log_size_mb=request.qxdm_max_log_size_mb,
+            qxdm_log_filename=(
+                request.qxdm_log_filename
+            ),
+            qxdm_max_log_size_mb=(
+                request.qxdm_max_log_size_mb
+            ),
             load_mask=request.load_mask,
-            continue_without_mask=request.continue_without_mask,
-            progress_callback=lambda item: append_wrapper_progress(
-                job_id,
-                item,
+            continue_without_mask=(
+                request.continue_without_mask
+            ),
+            progress_callback=lambda item: (
+                append_wrapper_progress(
+                    job_id,
+                    item,
+                )
             ),
         )
 
         update_wrapper_job(
             job_id,
-            status=result.get("status", "completed"),
+            status=result.get(
+                "status",
+                "completed",
+            ),
             message=(
-                "Automatic wrapper workflow finished."
-                if result.get("status") == "completed"
+                "Wrapper workflow completed."
+                if result.get("status")
+                == "completed"
                 else (
-                    "Automatic workflow finished and is waiting "
-                    "for QXDM finalization."
+                    "Wrapper workflow finished and "
+                    "is waiting for QXDM finalization."
                 )
             ),
-            session_folder=result.get("session_folder"),
+            session_folder=result.get(
+                "session_folder"
+            ),
             result=result,
         )
 
@@ -995,7 +1025,7 @@ def start_wrapper_test(
         "job_id": job_id,
         "status": "queued",
         "message": "Wrapper test session queued.",
-        "mode": request.mode,
+        "qxdm_mode": request.qxdm_mode,
         "session_folder": None,
         "progress": [],
         "result": None,
