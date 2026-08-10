@@ -654,7 +654,7 @@ def run_qxdm_stop() -> None:
         update_qxdm_state(
             status="stopping",
             workflow_step="stopping",
-            message="Stopping and finalizing the QXDM log while leaving the modem online.",
+            message="Stopping QXDM Quick Saving and finalizing the log while leaving the modem online.",
             manual_settings_required=False,
             error=None,
         )

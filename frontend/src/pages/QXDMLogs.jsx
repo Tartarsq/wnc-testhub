@@ -395,10 +395,9 @@ function QXDMLogs() {
           <div className="qxdm-manual-settings-banner">
             <strong>Complete the QXDM save setup</strong>
             <span>
-              QXDM capture is paused after a short delay. Enter the
-              QXDM Log Folder shown in TestHub into QXDM Item Store File
-              Settings, confirm the filename and maximum size, then close
-              Settings and click Continue. There is no timeout.
+              QXDM capture is paused. After the 5-second delay, TestHub
+              applies the filename and QXDM Log Folder automatically. Verify
+              the values in QXDM, close Settings, then click Continue.
             </span>
           </div>
         )}
@@ -468,8 +467,8 @@ function QXDMLogs() {
               <div>
                 <h3>Logging Configuration</h3>
                 <p>
-                  Choose a suggested filename and session, then confirm
-                  the actual save location inside QXDM Settings.
+                  Enter the filename and Windows save folder. TestHub
+                  applies those values to QXDM after a short delay.
                 </p>
               </div>
             </div>
@@ -573,8 +572,8 @@ function QXDMLogs() {
                 <strong>Suggested destination</strong>
                 <span>{suggestedDestination}</span>
                 <small>
-                  Use this same folder in QXDM Item Store File Settings.
-                  TestHub pauses and waits for you before continuing.
+                  TestHub applies this folder to QXDM Item Store File
+                  Settings after a 5-second delay, then pauses for review.
                 </small>
               </div>
             </div>

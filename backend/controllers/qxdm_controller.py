@@ -169,6 +169,11 @@ class QXDMController:
         self.process: subprocess.Popen | None = None
         self.current_log_path: Optional[Path] = None
 
+        # Tracks only changes made by TestHub. This lets a later Start Logging
+        # re-enable Quick Saving after TestHub disabled it during Stop Logging,
+        # without blindly toggling a user's pre-existing QXDM setting.
+        self.quick_saving_disabled_by_testhub = False
+
         # Remember the last mask selected by the user. This allows future test
         # runs to load it automatically, while still falling back to a picker
         # if the file is moved, deleted, or cannot be loaded.
@@ -1049,6 +1054,138 @@ class QXDMController:
             pause=0.03,
         )
 
+    @staticmethod
+    def _settings_point(
+        bounds: tuple[int, int, int, int],
+        x_ratio: float,
+        y_ratio: float,
+    ) -> tuple[int, int]:
+        """Return an absolute screen point inside the QXDM Settings dialog."""
+        left, top, right, bottom = bounds
+        width = right - left
+        height = bottom - top
+
+        return (
+            int(left + width * x_ratio),
+            int(top + height * y_ratio),
+        )
+
+    def _replace_qxdm_settings_field(
+        self,
+        bounds: tuple[int, int, int, int],
+        x_ratio: float,
+        y_ratio: float,
+        value: str,
+    ) -> None:
+        """
+        Replace text in one QXDM Item Store File field.
+
+        QXDM is a Qt application, so these fields are addressed by the
+        screen-position ratios already defined for the supported QXDM build.
+        """
+        x, y = self._settings_point(
+            bounds,
+            x_ratio,
+            y_ratio,
+        )
+
+        mouse.click(
+            button="left",
+            coords=(x, y),
+        )
+        time.sleep(0.35)
+
+        send_keys("^a")
+        time.sleep(0.1)
+        send_keys("{BACKSPACE}")
+        send_keys(
+            value,
+            with_spaces=True,
+            pause=0.01,
+        )
+        time.sleep(0.35)
+
+    def apply_logging_settings(
+        self,
+        log_path: Path,
+    ) -> tuple[str, str]:
+        """
+        Open QXDM Item Store File Settings and apply the TestHub values.
+
+        The save directory comes directly from the path entered in TestHub.
+        A five-second delay is intentionally kept so the QXDM Settings UI
+        has time to render before TestHub edits the fields.
+        """
+        log_path = self.prepare_log_path(
+            log_path
+        )
+
+        expected_directory = str(
+            log_path.parent
+        )
+        expected_base_name = log_path.stem
+
+        settings_bounds = self.open_qxdm_settings()
+
+        # User requested a short pause before TestHub applies the values.
+        time.sleep(5)
+
+        # If TestHub disabled Quick Saving on the previous Stop, turn it back
+        # on now. We do not blindly toggle this on a fresh application run.
+        if self.quick_saving_disabled_by_testhub:
+            quick_x, quick_y = self._settings_point(
+                settings_bounds,
+                self.SETTINGS_QUICK_SAVE_X_RATIO,
+                self.SETTINGS_QUICK_SAVE_Y_RATIO,
+            )
+            mouse.click(
+                button="left",
+                coords=(quick_x, quick_y),
+            )
+            time.sleep(0.5)
+            self.quick_saving_disabled_by_testhub = False
+
+        self._replace_qxdm_settings_field(
+            settings_bounds,
+            self.SETTINGS_BASE_NAME_X_RATIO,
+            self.SETTINGS_BASE_NAME_Y_RATIO,
+            expected_base_name,
+        )
+
+        self._replace_qxdm_settings_field(
+            settings_bounds,
+            self.SETTINGS_LOG_DIRECTORY_X_RATIO,
+            self.SETTINGS_LOG_DIRECTORY_Y_RATIO,
+            expected_directory,
+        )
+
+        # QXDM's Log File Path field is visible near the bottom of the Item
+        # Store File page in the supported layout.
+        self._replace_qxdm_settings_field(
+            settings_bounds,
+            self.SETTINGS_LOG_PATH_X_RATIO,
+            self.SETTINGS_LOG_PATH_Y_RATIO,
+            expected_directory,
+        )
+
+        print(
+            "Applied QXDM Item Store File settings from TestHub."
+        )
+        print(
+            f"Base File Name: {expected_base_name}"
+        )
+        print(
+            f"Log File Directory: {expected_directory}"
+        )
+        print(
+            f"Log File Path: {expected_directory}"
+        )
+
+        return (
+            expected_directory,
+            expected_base_name,
+        )
+
     def wait_for_manual_log_settings(
         self,
         expected_directory: str,
@@ -1074,13 +1211,12 @@ class QXDMController:
         root.resizable(False, False)
 
         message = (
-            "QXDM capture is PAUSED while you configure saving.\n\n"
-            "Use these values in QXDM Item Store File Settings:\n\n"
+            "TestHub applied the QXDM save settings after the 5-second delay.\n\n"
             f"Base File Name: {expected_base_name}\n"
             f"Log File Directory: {expected_directory}\n"
             f"Log File Path: {expected_directory}\n\n"
-            "You may manually edit the location in QXDM if needed. "
-            "Take as much time as you need.\n\n"
+            "Verify the values in QXDM. You can still edit them manually "
+            "before continuing if needed.\n\n"
             "Close QXDM Settings, then click Continue below. "
             "Only then will TestHub continue to mode lpm and mode online."
         )
@@ -1119,32 +1255,17 @@ class QXDMController:
         log_path: Path,
     ) -> bool:
         """
-        Open QXDM Item Store File Settings for manual configuration.
+        Apply the TestHub save folder/filename to QXDM, then pause for review.
 
-        TestHub prepares and remembers the intended log path, but the user
-        manually chooses the actual QXDM save filename, directory, file
-        path, and maximum size. No fragile field-click automation is used.
+        The user enters the desired folder in TestHub. QXDM Settings opens,
+        waits five seconds, TestHub fills the supported Item Store File fields,
+        and the workflow waits until the user clicks Continue.
         """
-        log_path = self.prepare_log_path(
+        (
+            expected_directory,
+            expected_base_name,
+        ) = self.apply_logging_settings(
             log_path
-        )
-
-        expected_directory = str(log_path.parent)
-        expected_base_name = log_path.stem
-
-        self.open_qxdm_settings()
-
-        # Give QXDM a few seconds to fully render the Item Store File
-        # settings before the manual confirmation prompt is shown.
-        time.sleep(5)
-
-        print(
-            "QXDM Settings is open. Configure Item Store File saving "
-            "manually, close Settings, and click Continue in the "
-            "WNC TestHub confirmation window."
-        )
-        print(
-            f"Suggested log path: {log_path}"
         )
 
         self.wait_for_manual_log_settings(
@@ -1152,12 +1273,19 @@ class QXDMController:
             expected_base_name=expected_base_name,
         )
 
+        # Close the embedded Settings dialog if it is still open.
+        try:
+            send_keys("{ESC}")
+            time.sleep(1)
+        except Exception:
+            pass
+
         # Return focus to QXDM before the mode commands begin.
         self.focus_qxdm()
         time.sleep(2)
 
         print(
-            "Manual QXDM log settings confirmed."
+            "QXDM log settings confirmed."
         )
 
         return True
@@ -1429,19 +1557,39 @@ class QXDMController:
         return True
 
     def stop_qxdm_capture(self) -> bool:
-        """Use the QXDM menu to stop capture."""
-        window = self.focus_qxdm()
+        """
+        Stop QXDM file capture by disabling Item Store File Quick Saving.
 
-        selected_menu = self.select_first_available_menu(
-            window,
-            self.STOP_LOGGING_MENU_PATHS,
+        QXDM 5's Qt menu is not exposed through pywinauto, so menu_select()
+        cannot reliably locate a "Stop Logging" menu. Disabling Quick Saving
+        stops file capture while leaving the modem in its current online mode.
+        """
+        settings_bounds = self.open_qxdm_settings()
+        time.sleep(2)
+
+        quick_x, quick_y = self._settings_point(
+            settings_bounds,
+            self.SETTINGS_QUICK_SAVE_X_RATIO,
+            self.SETTINGS_QUICK_SAVE_Y_RATIO,
         )
+
+        mouse.click(
+            button="left",
+            coords=(quick_x, quick_y),
+        )
+        time.sleep(1)
+
+        self.quick_saving_disabled_by_testhub = True
+
+        # Close the embedded Settings dialog. No modem mode command is sent.
+        send_keys("{ESC}")
+        time.sleep(2)
 
         print(
-            f"Stopped QXDM using: {selected_menu}"
+            "QXDM Quick Saving disabled. File capture stopped; "
+            "modem remains online."
         )
 
-        time.sleep(2)
         return True
 
     def _find_completed_log(self) -> Optional[Path]:
