@@ -303,34 +303,31 @@ class TestWrapper:
                         "qxdm",
                         "manual_setup",
                         (
-                            "Starting QXDM in manual mode. "
-                            "TestHub will open the current "
-                            "manual Item Store File setup "
-                            "workflow before continuing."
+                            "Manual QXDM mode selected. TestHub is only "
+                            "launching QXDM. You control the mask, save "
+                            "location, logging, and modem commands manually."
                         ),
-                        expected_path=str(
-                            qxdm_path
-                        ),
+                        wrapper_qxdm_folder=str(qxdm_folder.resolve()),
                     )
 
-                    self.qxdm.start_logging(
-                        log_path=qxdm_path,
-                        load_mask=load_mask,
-                        continue_without_mask=(
-                            continue_without_mask
-                        ),
+                    self.qxdm.launch()
+
+                    # Give the engineer time to complete the QXDM setup before
+                    # the wrapper starts throughput testing. This does not open
+                    # Settings or send any modem commands.
+                    self.qxdm.wait_for_manual_log_settings(
+                        wait_seconds=60.0
                     )
 
                     report(
                         "qxdm",
-                        "running",
+                        "manual_ready",
                         (
-                            "QXDM manual-mode capture "
-                            "is active."
+                            "Manual QXDM setup window ended. TestHub will "
+                            "continue the wrapper workflow. QXDM remains "
+                            "under manual control."
                         ),
-                        expected_path=str(
-                            qxdm_path
-                        ),
+                        wrapper_qxdm_folder=str(qxdm_folder.resolve()),
                     )
 
                 else:
@@ -338,9 +335,10 @@ class TestWrapper:
                         "qxdm",
                         "automatic_starting",
                         (
-                            "Starting QXDM in automatic "
-                            "mode using the controller's "
-                            "automatic workflow."
+                            "Automatic QXDM mode selected. TestHub will "
+                            "run the QXDM controller startup workflow, including "
+                            "USB detection, mask loading, logging setup, mode "
+                            "lpm, and mode online."
                         ),
                         expected_path=str(
                             qxdm_path
@@ -422,12 +420,10 @@ class TestWrapper:
                     "qxdm",
                     "manual_stop_required",
                     (
-                        "The selected QXDM capture is "
-                        "still active. Stop/finalize it "
-                        "using the currently validated "
-                        "QXDM stop workflow, then use "
-                        "Select Saved Log if TestHub "
-                        "does not detect the final file."
+                        "When the QXDM log is finished, use Finalize "
+                        "QXDM Log in TestHub. You can select the actual saved "
+                        "QXDM file from any location, and TestHub will copy it "
+                        "into this wrapper session's qxdm folder."
                     ),
                 )
 

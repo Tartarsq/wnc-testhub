@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+import shutil
 from threading import Lock
 from typing import Any
 from uuid import uuid4
@@ -1006,6 +1007,113 @@ def get_device_status(
 
 
 
+def finalize_wrapper_qxdm_log(
+    job_id: str,
+) -> dict[str, Any]:
+    """
+    Let the engineer choose the real QXDM log saved by QXDM, then copy it
+    into the wrapper session's qxdm folder.
+
+    This intentionally does not depend on QXDM having used TestHub's expected
+    filename or folder. It makes wrapper packaging reliable even when QXDM
+    saves under a different filename or directory.
+    """
+    with wrapper_jobs_lock:
+        job = wrapper_jobs.get(job_id)
+
+        if job is None:
+            raise ValueError(
+                "Wrapper job was not found."
+            )
+
+        snapshot = dict(job)
+
+    result = snapshot.get("result") or {}
+    session_folder_value = (
+        snapshot.get("session_folder")
+        or result.get("session_folder")
+    )
+
+    if not session_folder_value:
+        raise RuntimeError(
+            "The wrapper session folder is not available yet."
+        )
+
+    selected_log = qxdm_controller.prompt_for_saved_log()
+
+    if selected_log is None:
+        raise RuntimeError(
+            "No QXDM log was selected."
+        )
+
+    selected_log = Path(selected_log).resolve()
+
+    qxdm_folder = (
+        Path(session_folder_value).resolve()
+        / "qxdm"
+    )
+    qxdm_folder.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    destination = (
+        qxdm_folder
+        / selected_log.name
+    ).resolve()
+
+    if selected_log != destination:
+        if destination.exists():
+            timestamp = datetime.now().strftime(
+                "%Y%m%d_%H%M%S"
+            )
+            destination = (
+                qxdm_folder
+                / (
+                    f"{destination.stem}_{timestamp}"
+                    f"{destination.suffix}"
+                )
+            )
+
+        shutil.copy2(
+            selected_log,
+            destination,
+        )
+    else:
+        destination = selected_log
+
+    result = dict(result)
+    result["qxdm_source_path"] = str(
+        selected_log
+    )
+    result["qxdm_log_path"] = str(
+        destination
+    )
+    result["qxdm_log_filename"] = (
+        destination.name
+    )
+    result["status"] = "completed"
+
+    update_wrapper_job(
+        job_id,
+        status="completed",
+        message=(
+            "QXDM log finalized and collected into the "
+            "wrapper session folder."
+        ),
+        session_folder=str(
+            Path(session_folder_value).resolve()
+        ),
+        result=result,
+    )
+
+    return {
+        "source_path": str(selected_log),
+        "saved_path": str(destination),
+        "filename": destination.name,
+    }
+
+
 # ==========================================================
 # Wrapper endpoints
 # ==========================================================
@@ -1063,6 +1171,26 @@ def get_wrapper_status(
         snapshot = dict(job)
 
     return WrapperJob(**snapshot)
+
+
+@app.post("/api/wrapper/qxdm/finalize/{job_id}")
+def finalize_wrapper_qxdm(
+    job_id: str,
+) -> dict[str, Any]:
+    try:
+        return finalize_wrapper_qxdm_log(
+            job_id
+        )
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        ) from error
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(error),
+        ) from error
 
 
 @app.get("/api/wrapper/syslog/status")

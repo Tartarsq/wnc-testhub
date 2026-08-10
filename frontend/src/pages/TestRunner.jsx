@@ -35,6 +35,7 @@ function TestRunner() {
   const [syslogStatus, setSyslogStatus] = useState(null)
   const [error, setError] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isFinalizingQxdm, setIsFinalizingQxdm] = useState(false)
 
   const pollingRef = useRef(null)
 
@@ -175,6 +176,35 @@ function TestRunner() {
           requestError.message ||
           'Unable to start the wrapper test.'
       )
+    }
+  }
+
+  const finalizeQxdmLog = async () => {
+    if (!job?.job_id || isFinalizingQxdm) {
+      return
+    }
+
+    setError('')
+    setIsFinalizingQxdm(true)
+
+    try {
+      const response = await api.post(
+        `/wrapper/qxdm/finalize/${job.job_id}`
+      )
+
+      const statusResponse = await api.get(
+        `/wrapper/status/${job.job_id}`
+      )
+
+      setJob(statusResponse.data)
+    } catch (requestError) {
+      setError(
+        requestError.response?.data?.detail ||
+          requestError.message ||
+          'Unable to finalize the QXDM log.'
+      )
+    } finally {
+      setIsFinalizingQxdm(false)
     }
   }
 
@@ -362,8 +392,9 @@ function TestRunner() {
                     <strong>Manual QXDM</strong>
 
                     <span>
-                      TestHub opens QXDM Settings and gives you time to
-                      enter the save values manually before continuing.
+                      TestHub only opens QXDM and gives you 60 seconds.
+                      You control the mask, save location, logging, and modem
+                      commands yourself.
                     </span>
                   </button>
 
@@ -380,9 +411,9 @@ function TestRunner() {
                     <strong>Automatic QXDM</strong>
 
                     <span>
-                      TestHub uses the automatic QXDM controller workflow.
-                      If your current QXDM build still requires manual save
-                      setup, the backend will report that clearly.
+                      TestHub runs the QXDM controller startup sequence.
+                      The current controller may still pause for QXDM Item
+                      Store File setup if your build cannot set it reliably.
                     </span>
                   </button>
                 </div>
@@ -449,6 +480,20 @@ function TestRunner() {
                   ? 'Starting...'
                   : 'Start Test'}
               </button>
+
+              {collectQxdm && job?.job_id && (
+                <button
+                  type="button"
+                  className="qxdm-refresh-button"
+                  onClick={finalizeQxdmLog}
+                  disabled={isFinalizingQxdm}
+                >
+                  <FiFolder />
+                  {isFinalizingQxdm
+                    ? 'Finalizing...'
+                    : 'Finalize QXDM Log'}
+                </button>
+              )}
             </div>
           </article>
 
@@ -485,6 +530,14 @@ function TestRunner() {
                   {job?.session_folder ??
                     job?.result?.session_folder ??
                     'Not created yet'}
+                </dd>
+              </div>
+
+              <div>
+                <dt>Collected QXDM Log</dt>
+                <dd>
+                  {job?.result?.qxdm_log_path ??
+                    'Not finalized yet'}
                 </dd>
               </div>
             </dl>
