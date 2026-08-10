@@ -1049,78 +1049,42 @@ class QXDMController:
             pause=0.03,
         )
 
-    def wait_for_qxdm_settings_close(
+    def wait_for_manual_log_settings(
         self,
-        timeout_seconds: float = 600.0,
-        poll_interval: float = 0.75,
+        wait_seconds: float = 60.0,
     ) -> None:
         """
-        Pause TestHub while the QXDM Settings window is open.
+        Give the user a fixed amount of time to configure QXDM Item Store File
+        settings manually.
 
-        QXDM's Settings UI is an embedded Qt dialog, so it is not exposed as
-        a normal child control. The existing qxdm_settings_anchor.png template
-        is used to detect whether the Item Store File settings are still
-        visible. Once the user closes Settings, the workflow continues
-        automatically with no extra Continue button.
+        No image template or coordinate detection is used. After the delay,
+        TestHub continues automatically with the existing mode lpm -> online
+        startup sequence.
         """
-        template_path = Path(
-            self.SETTINGS_ANCHOR_TEMPLATE_PATH
-        ).resolve()
+        wait_seconds = max(float(wait_seconds), 1.0)
 
-        if not template_path.exists():
-            raise FileNotFoundError(
-                "QXDM Settings detection template was not found:\n"
-                f"{template_path}"
-            )
-
-        # First verify that Settings is actually visible before waiting.
-        try:
-            self.locate_template_on_screen(
-                template_path,
-                self.SETTINGS_TEMPLATE_THRESHOLD,
-            )
-        except Exception as error:
-            raise RuntimeError(
-                "QXDM Settings opened, but TestHub could not detect the "
-                "Settings window using qxdm_settings_anchor.png. "
-                "Do not continue the test until the template is corrected."
-            ) from error
-
+        print("")
+        print("==========================================================")
+        print("QXDM MANUAL SAVE CONFIGURATION")
+        print("==========================================================")
         print(
-            "QXDM Settings detected. TestHub is paused while you enter "
-            "the Item Store File values."
+            f"You have {int(wait_seconds)} seconds to configure "
+            "the QXDM Item Store File settings."
         )
         print(
-            "Close the QXDM Settings window when finished. "
-            "The test will continue automatically."
+            "Enter the Base File Name, Log File Directory, Log File Path, "
+            "and Maximum Log File Size."
         )
+        print(
+            "When the timer ends, TestHub will continue automatically."
+        )
+        print("==========================================================")
+        print("")
 
-        deadline = time.monotonic() + timeout_seconds
-        missing_checks = 0
+        time.sleep(wait_seconds)
 
-        while time.monotonic() < deadline:
-            try:
-                self.locate_template_on_screen(
-                    template_path,
-                    self.SETTINGS_TEMPLATE_THRESHOLD,
-                )
-                missing_checks = 0
-            except Exception:
-                # Require two consecutive misses so a single screenshot/match
-                # hiccup does not accidentally start the test.
-                missing_checks += 1
-
-                if missing_checks >= 2:
-                    print(
-                        "QXDM Settings closed. Continuing the logging workflow."
-                    )
-                    return
-
-            time.sleep(poll_interval)
-
-        raise TimeoutError(
-            "QXDM Settings remained open for more than 10 minutes. "
-            "Close Settings and start the workflow again."
+        print(
+            "Manual QXDM setup delay completed. Continuing the test."
         )
 
 
@@ -1129,12 +1093,11 @@ class QXDMController:
         log_path: Path,
     ) -> bool:
         """
-        Open QXDM Item Store File Settings and wait for manual configuration.
+        Open QXDM Item Store File Settings and allow one minute for the user
+        to enter the save configuration manually.
 
-        TestHub does not type into QXDM fields. The user manually enters the
-        filename, directory, file path, and maximum size. When the user closes
-        the QXDM Settings window, TestHub detects that closure and continues
-        automatically to mode lpm and then mode online.
+        TestHub does not click or type into QXDM fields. After 60 seconds,
+        the workflow continues automatically to mode lpm and mode online.
         """
         log_path = self.prepare_log_path(
             log_path
@@ -1147,39 +1110,34 @@ class QXDMController:
 
         self.open_qxdm_settings()
 
-        # Give the embedded Settings page time to fully render.
+        # Give the embedded Settings page a moment to finish drawing.
         time.sleep(3)
 
         print("")
-        print("==========================================================")
-        print("QXDM MANUAL SAVE CONFIGURATION")
-        print("==========================================================")
+        print("Suggested values:")
         print(f"Base File Name:     {expected_base_name}")
         print(f"Log File Directory: {expected_directory}")
         print(f"Log File Path:      {expected_directory}")
         print(f"Maximum Log Size:   {self.max_log_size_mb} MB")
         print("")
-        print(
-            "Enter/confirm these values in QXDM. "
-            "When finished, close the Settings window."
-        )
-        print(
-            "TestHub will continue automatically after Settings closes."
-        )
-        print("==========================================================")
-        print("")
 
-        self.wait_for_qxdm_settings_close(
-            timeout_seconds=600.0,
-            poll_interval=0.75,
+        self.wait_for_manual_log_settings(
+            wait_seconds=60.0
         )
 
-        # Give QXDM a moment to restore its normal main-window state.
-        time.sleep(2)
+        # Try to close Settings before resuming the mode commands. If the user
+        # already closed it, Escape is harmless.
+        try:
+            send_keys("{ESC}")
+            time.sleep(1)
+        except Exception:
+            pass
+
         self.focus_qxdm()
+        time.sleep(2)
 
         print(
-            "Manual QXDM save configuration completed."
+            "Manual QXDM save configuration window completed."
         )
 
         return True

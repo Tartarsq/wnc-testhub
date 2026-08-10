@@ -598,9 +598,9 @@ def run_qxdm_start(
         update_qxdm_state(
             workflow_step="manual_save_settings",
             message=(
-                "QXDM Settings is opening. Enter the Item Store File "
-                "values manually, then close Settings. TestHub will "
-                "continue automatically."
+                "QXDM Settings is open. You have 60 seconds to manually "
+                "enter the Item Store File values before TestHub continues "
+                "automatically."
             ),
             manual_settings_required=True,
         )
