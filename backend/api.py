@@ -525,9 +525,9 @@ def run_qxdm_start(
             request.session_id
         )
 
-        # The QXDM log location is user-controlled. If a folder is entered
-        # in TestHub, always honor it even when a test session is selected.
-        # The session still receives the log metadata after capture stops.
+        # The user controls the QXDM save folder. Selecting a TestHub
+        # session links metadata to the session but does not override the
+        # folder entered on the QXDM Logs page.
         output_folder = (
             Path(request.output_folder).expanduser()
             if request.output_folder
@@ -598,10 +598,9 @@ def run_qxdm_start(
         update_qxdm_state(
             workflow_step="manual_save_settings",
             message=(
-                "QXDM is preparing the capture. After the short delay, "
-                "Settings will remain open while you manually enter or "
-                "confirm the QXDM save location. TestHub will wait until "
-                "you close Settings and click Continue."
+                "QXDM Settings is opening. Enter the Item Store File "
+                "values manually, then close Settings. TestHub will "
+                "continue automatically."
             ),
             manual_settings_required=True,
         )
@@ -654,7 +653,7 @@ def run_qxdm_stop() -> None:
         update_qxdm_state(
             status="stopping",
             workflow_step="stopping",
-            message="Stopping QXDM Quick Saving and finalizing the log while leaving the modem online.",
+            message="Stopping and finalizing the QXDM log.",
             manual_settings_required=False,
             error=None,
         )
@@ -679,7 +678,7 @@ def run_qxdm_stop() -> None:
             status="completed",
             workflow_step="completed",
             message=(
-                "QXDM logging stopped. The modem remains online."
+                "QXDM logging stopped and the log was finalized."
             ),
             manual_settings_required=False,
             logging_active=False,

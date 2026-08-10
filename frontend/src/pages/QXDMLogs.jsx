@@ -95,22 +95,13 @@ function QXDMLogs() {
       return
     }
 
-    const requestedFolder = outputFolder.trim()
-
-    if (!requestedFolder) {
-      setError(
-        'Enter the QXDM log folder before starting the capture.'
-      )
-      return
-    }
-
     setIsSubmitting(true)
     setError('')
 
     try {
       const payload = {
         log_filename: logFilename,
-        output_folder: requestedFolder,
+        output_folder: outputFolder.trim() || null,
         max_log_size_mb: Number(maxLogSizeMb),
         load_mask: loadMask,
         continue_without_mask: continueWithoutMask,
@@ -287,9 +278,9 @@ function QXDMLogs() {
     (session) => session.session_id === selectedSessionId
   )
 
-  const suggestedDestination =
-    outputFolder.trim() ||
-    'Enter the QXDM log folder'
+  const suggestedDestination = selectedSession
+    ? `${selectedSession.session_folder}\\captures\\qxdm`
+    : outputFolder.trim() || 'Default TestHub QXDM folder'
 
   const workflowSteps = [
     {
@@ -310,7 +301,7 @@ function QXDMLogs() {
     {
       id: 'manual_save_settings',
       label: 'Configure Save Location',
-      description: 'Manually confirm the TestHub save folder in QXDM Settings.',
+      description: 'Choose the final Item Store File settings in QXDM.',
     },
     {
       id: 'lpm',
@@ -395,9 +386,9 @@ function QXDMLogs() {
           <div className="qxdm-manual-settings-banner">
             <strong>Complete the QXDM save setup</strong>
             <span>
-              QXDM capture is paused. After the 5-second delay, TestHub
-              applies the filename and QXDM Log Folder automatically. Verify
-              the values in QXDM, close Settings, then click Continue.
+              QXDM capture is paused while Settings is open. Enter the
+              filename, folder, log path, and maximum size manually. When you
+              close QXDM Settings, TestHub continues automatically.
             </span>
           </div>
         )}
@@ -467,8 +458,9 @@ function QXDMLogs() {
               <div>
                 <h3>Logging Configuration</h3>
                 <p>
-                  Enter the filename and Windows save folder. TestHub
-                  applies those values to QXDM after a short delay.
+                  Choose the filename and save folder here. When QXDM
+                  Settings opens, enter the values manually and close Settings
+                  when finished. The test then continues automatically.
                 </p>
               </div>
             </div>
@@ -500,7 +492,7 @@ function QXDMLogs() {
 
                 <small className="qxdm-session-help">
                   Selecting a session links the capture metadata to
-                  that session. It does not override the save folder below.
+                  that session. It does not change the QXDM save folder.
                 </small>
               </label>
 
@@ -572,8 +564,8 @@ function QXDMLogs() {
                 <strong>Suggested destination</strong>
                 <span>{suggestedDestination}</span>
                 <small>
-                  TestHub applies this folder to QXDM Item Store File
-                  Settings after a 5-second delay, then pauses for review.
+                  Enter this same folder in QXDM Item Store File Settings.
+                  Close Settings when finished and TestHub continues automatically.
                 </small>
               </div>
             </div>
