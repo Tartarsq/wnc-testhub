@@ -39,6 +39,8 @@ function Throughput() {
 
   const [isLaunching, setIsLaunching] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
+  const [speedtestResultUrl, setSpeedtestResultUrl] = useState('')
+  const [isImporting, setIsImporting] = useState(false)
 
   const pollingRef = useRef(null)
 
@@ -173,6 +175,71 @@ function Throughput() {
 
   const optionalNumber = (value) =>
     value === '' ? null : Number(value)
+
+  const handleImportResultLink = async () => {
+    if (!speedtestResultUrl.trim() || isImporting) {
+      return
+    }
+
+    setError('')
+    setIsImporting(true)
+    setMessage('Importing Speedtest result...')
+
+    try {
+      const response = await api.post(
+        '/throughput/gui/import-link',
+        {
+          result_url: speedtestResultUrl.trim(),
+        }
+      )
+
+      const imported = response.data?.result ?? {}
+
+      if (imported.download_mbps != null) {
+        setDownloadMbps(String(imported.download_mbps))
+      }
+
+      if (imported.upload_mbps != null) {
+        setUploadMbps(String(imported.upload_mbps))
+      }
+
+      if (imported.ping_ms != null) {
+        setPingMs(String(imported.ping_ms))
+      }
+
+      if (imported.ping_jitter_ms != null) {
+        setJitterMs(String(imported.ping_jitter_ms))
+      }
+
+      if (imported.packet_loss_percent != null) {
+        setPacketLoss(String(imported.packet_loss_percent))
+      }
+
+      if (imported.server_name) {
+        setServerName(imported.server_name)
+      }
+
+      if (imported.server_location) {
+        setServerLocation(imported.server_location)
+      }
+
+      setResultUrl(speedtestResultUrl.trim())
+
+      setMessage(
+        response.data?.message ||
+          'Speedtest result import finished.'
+      )
+    } catch (requestError) {
+      setError(
+        requestError.response?.data?.detail ||
+          requestError.message ||
+          'Unable to import the Speedtest result.'
+      )
+      setMessage('Speedtest result import failed.')
+    } finally {
+      setIsImporting(false)
+    }
+  }
 
   const handleSaveResult = async () => {
     if (!jobId || isSaving) {
@@ -354,10 +421,62 @@ function Throughput() {
             <div>
               <h3>Save GUI Result</h3>
               <p>
-                After Speedtest finishes, enter the values shown in the
-                GUI. TestHub saves them in the existing Analytics format.
+                After Speedtest finishes, paste the copied result link
+                to auto-fill the fields. You can still correct or enter
+                any missing values manually before saving.
               </p>
             </div>
+          </div>
+
+          <div className="configuration-grid">
+            <label className="form-field">
+              <span>Speedtest Result Link</span>
+              <input
+                type="text"
+                value={speedtestResultUrl}
+                onChange={(event) =>
+                  setSpeedtestResultUrl(event.target.value)
+                }
+                disabled={!resultEntryEnabled || isImporting}
+                placeholder="https://www.speedtest.net/my-result/d/..."
+              />
+            </label>
+
+            <div className="form-field">
+              <span>Import From Speedtest</span>
+              <div className="configuration-note">
+                <FiExternalLink />
+                <span>
+                  Click Share in Speedtest, copy the result link,
+                  paste it here, then import it.
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="configuration-footer">
+            <div className="configuration-note">
+              <FiExternalLink />
+              <span>
+                TestHub will try to detect the result values automatically.
+              </span>
+            </div>
+
+            <button
+              type="button"
+              className="start-throughput-button"
+              onClick={handleImportResultLink}
+              disabled={
+                !resultEntryEnabled ||
+                isImporting ||
+                speedtestResultUrl.trim() === ''
+              }
+            >
+              <FiExternalLink />
+              {isImporting
+                ? 'Importing...'
+                : 'Import Result'}
+            </button>
           </div>
 
           <div className="configuration-grid">
