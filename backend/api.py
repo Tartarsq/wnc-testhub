@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+import json
+import re
 import shutil
 from threading import Lock
 from typing import Any
@@ -11,6 +13,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from openpyxl import Workbook, load_workbook
+import requests
 
 from automation.automated_runner import AutomatedTestRunner
 from automation.throughput_test import ThroughputTester
@@ -144,6 +147,13 @@ class ThroughputGUIResultRequest(BaseModel):
     )
 
 
+class SpeedtestResultLinkRequest(BaseModel):
+    result_url: str = Field(
+        min_length=10,
+        max_length=1000,
+    )
+
+
 class SessionCreateRequest(BaseModel):
     session_name: str = Field(
         min_length=1,
@@ -212,6 +222,134 @@ def update_job(
             return
 
         current_job.update(changes)
+
+
+
+def extract_speedtest_result_from_html(
+    html: str,
+    result_url: str,
+) -> dict[str, Any]:
+    """
+    Best-effort extraction of a shared Speedtest result page.
+
+    Speedtest may render some result data dynamically, so failure to find
+    values here is handled cleanly by the import endpoint and the existing
+    manual GUI-result workflow remains available as a fallback.
+    """
+    result: dict[str, Any] = {
+        "result_url": result_url,
+        "download_mbps": None,
+        "upload_mbps": None,
+        "ping_ms": None,
+        "ping_jitter_ms": None,
+        "packet_loss_percent": None,
+        "server_name": None,
+        "server_location": None,
+    }
+
+    def first_number(patterns: list[str]) -> float | None:
+        for pattern in patterns:
+            match = re.search(
+                pattern,
+                html,
+                flags=re.IGNORECASE | re.DOTALL,
+            )
+            if match:
+                try:
+                    return float(match.group(1))
+                except (TypeError, ValueError):
+                    pass
+        return None
+
+    # Search embedded script/JSON and page markup. The patterns are kept
+    # conservative so a failed parse is preferable to saving a wrong result.
+    result["download_mbps"] = first_number([
+        r'"download(?:_mbps|Bandwidth|Speed)?"\s*:\s*"?([0-9]+(?:\.[0-9]+)?)',
+        r'\bDOWNLOAD\b.{0,250}?([0-9]+(?:\.[0-9]+)?)\s*(?:Mbps|Mb/s)',
+    ])
+    result["upload_mbps"] = first_number([
+        r'"upload(?:_mbps|Bandwidth|Speed)?"\s*:\s*"?([0-9]+(?:\.[0-9]+)?)',
+        r'\bUPLOAD\b.{0,250}?([0-9]+(?:\.[0-9]+)?)\s*(?:Mbps|Mb/s)',
+    ])
+    result["ping_ms"] = first_number([
+        r'"ping(?:Latency)?"\s*:\s*"?([0-9]+(?:\.[0-9]+)?)',
+        r'\bPING\b.{0,250}?([0-9]+(?:\.[0-9]+)?)\s*ms',
+    ])
+    result["ping_jitter_ms"] = first_number([
+        r'"jitter"\s*:\s*"?([0-9]+(?:\.[0-9]+)?)',
+        r'\bJITTER\b.{0,250}?([0-9]+(?:\.[0-9]+)?)\s*ms',
+    ])
+    result["packet_loss_percent"] = first_number([
+        r'"packetLoss"\s*:\s*"?([0-9]+(?:\.[0-9]+)?)',
+        r'\bLOSS\b.{0,250}?([0-9]+(?:\.[0-9]+)?)\s*%',
+    ])
+
+    # Try a few common structured-text names for server information.
+    server_name_match = re.search(
+        r'"serverName"\s*:\s*"([^"]+)"',
+        html,
+        flags=re.IGNORECASE,
+    )
+    if server_name_match:
+        result["server_name"] = server_name_match.group(1).strip()
+
+    server_location_match = re.search(
+        r'"serverLocation"\s*:\s*"([^"]+)"',
+        html,
+        flags=re.IGNORECASE,
+    )
+    if server_location_match:
+        result["server_location"] = server_location_match.group(1).strip()
+
+    return result
+
+
+def fetch_speedtest_result(
+    result_url: str,
+) -> dict[str, Any]:
+    """
+    Retrieve a Speedtest share page and attempt to extract its result values.
+    """
+    result_url = result_url.strip()
+
+    if not re.match(
+        r"^https://(?:www\.)?speedtest\.net/my-result/",
+        result_url,
+        flags=re.IGNORECASE,
+    ):
+        raise ValueError(
+            "Enter a Speedtest share URL beginning with "
+            "https://www.speedtest.net/my-result/."
+        )
+
+    try:
+        response = requests.get(
+            result_url,
+            timeout=15,
+            allow_redirects=True,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/151.0 Safari/537.36"
+                ),
+                "Accept": (
+                    "text/html,application/xhtml+xml,"
+                    "application/xml;q=0.9,*/*;q=0.8"
+                ),
+            },
+        )
+        response.raise_for_status()
+    except requests.RequestException as error:
+        raise RuntimeError(
+            "TestHub could not retrieve the Speedtest result page: "
+            f"{error}"
+        ) from error
+
+    return extract_speedtest_result_from_html(
+        response.text,
+        result_url,
+    )
 
 
 def write_gui_throughput_workbook(
@@ -1637,6 +1775,64 @@ def save_throughput_gui_result(
     return save_speedtest_gui_result(
         request
     )
+
+
+@app.post("/api/throughput/gui/import-link")
+def import_speedtest_result_link(
+    request: SpeedtestResultLinkRequest,
+) -> dict[str, Any]:
+    """
+    Import the values exposed by a copied Speedtest result link.
+
+    This only previews/fills the result. The existing GUI save endpoint is
+    still responsible for writing the reviewed result into Analytics.
+    """
+    try:
+        extracted = fetch_speedtest_result(
+            request.result_url
+        )
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(error),
+        ) from error
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(error),
+        ) from error
+
+    required_fields = (
+        "download_mbps",
+        "upload_mbps",
+        "ping_ms",
+    )
+    found_required = [
+        field
+        for field in required_fields
+        if extracted.get(field) is not None
+    ]
+
+    if len(found_required) == len(required_fields):
+        return {
+            "success": True,
+            "message": (
+                "Speedtest result detected. Review the imported "
+                "values, then save the result."
+            ),
+            "result": extracted,
+        }
+
+    return {
+        "success": False,
+        "message": (
+            "The Speedtest page was retrieved, but TestHub could not "
+            "reliably detect download, upload, and ping. Keep using the "
+            "manual fields for this result while we test another method."
+        ),
+        "detected_fields": found_required,
+        "result": extracted,
+    }
 
 
 @app.post(
