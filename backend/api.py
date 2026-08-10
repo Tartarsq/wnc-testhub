@@ -525,18 +525,14 @@ def run_qxdm_start(
             request.session_id
         )
 
-        if session is not None:
-            output_folder = (
-                Path(session["session_folder"])
-                / "captures"
-                / "qxdm"
-            )
-        else:
-            output_folder = (
-                Path(request.output_folder).expanduser()
-                if request.output_folder
-                else RESULTS_FOLDER / "qxdm_logs"
-            )
+        # The QXDM log location is user-controlled. If a folder is entered
+        # in TestHub, always honor it even when a test session is selected.
+        # The session still receives the log metadata after capture stops.
+        output_folder = (
+            Path(request.output_folder).expanduser()
+            if request.output_folder
+            else RESULTS_FOLDER / "qxdm_logs"
+        )
 
         output_folder = output_folder.resolve()
         output_folder.mkdir(
@@ -602,9 +598,10 @@ def run_qxdm_start(
         update_qxdm_state(
             workflow_step="manual_save_settings",
             message=(
-                "QXDM is preparing the capture. When Settings opens, "
-                "choose the save location, close Settings, and click "
-                "Continue in the WNC TestHub confirmation window."
+                "QXDM is preparing the capture. After the short delay, "
+                "Settings will remain open while you manually enter or "
+                "confirm the QXDM save location. TestHub will wait until "
+                "you close Settings and click Continue."
             ),
             manual_settings_required=True,
         )
@@ -657,7 +654,7 @@ def run_qxdm_stop() -> None:
         update_qxdm_state(
             status="stopping",
             workflow_step="stopping",
-            message="Stopping and finalizing the QXDM log.",
+            message="Stopping and finalizing the QXDM log while leaving the modem online.",
             manual_settings_required=False,
             error=None,
         )
@@ -682,7 +679,7 @@ def run_qxdm_stop() -> None:
             status="completed",
             workflow_step="completed",
             message=(
-                "QXDM logging stopped and the log was finalized."
+                "QXDM logging stopped. The modem remains online."
             ),
             manual_settings_required=False,
             logging_active=False,

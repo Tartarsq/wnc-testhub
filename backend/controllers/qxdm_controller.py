@@ -1069,12 +1069,19 @@ class QXDMController:
         root.attributes("-topmost", True)
         root.resizable(False, False)
 
+        expected_directory = str(log_path.parent)
+        expected_base_name = log_path.stem
+
         message = (
             "QXDM capture is PAUSED while you configure saving.\n\n"
-            "Choose the Base File Name, Log File Directory, "
-            "Log File Path, and Maximum Log File Size in QXDM.\n\n"
-            "Take as much time as you need. TestHub will NOT continue "
-            "until you close QXDM Settings and click Continue below."
+            "Use these values in QXDM Item Store File Settings:\n\n"
+            f"Base File Name: {expected_base_name}\n"
+            f"Log File Directory: {expected_directory}\n"
+            f"Log File Path: {expected_directory}\n\n"
+            "You may manually edit the location in QXDM if needed. "
+            "Take as much time as you need.\n\n"
+            "Close QXDM Settings, then click Continue below. "
+            "Only then will TestHub continue to mode lpm and mode online."
         )
 
         label = Label(
@@ -1122,7 +1129,10 @@ class QXDMController:
         )
 
         self.open_qxdm_settings()
-        time.sleep(1)
+
+        # Give QXDM a few seconds to fully render the Item Store File
+        # settings before the manual confirmation prompt is shown.
+        time.sleep(5)
 
         print(
             "QXDM Settings is open. Configure Item Store File saving "
@@ -1652,17 +1662,50 @@ class QXDMController:
         save_timeout_seconds: float = 20.0,
     ) -> bool:
         """
-        Put the modem into low-power mode and allow Quick Saving to flush.
+        Stop/finalize the current QXDM capture without changing modem mode.
 
-        The QXDM file is saved according to the existing Item Store File
-        settings configured inside QXDM.
+        The modem is intentionally left online. No ``mode lpm`` command is
+        sent when the user clicks Stop Logging.
         """
-        self.mode_lpm()
-        time.sleep(wait_seconds)
+        self.stop_qxdm_capture()
+        time.sleep(max(wait_seconds, 0.5))
+
+        completed_log = None
+
+        try:
+            completed_log = self.wait_for_saved_log(
+                timeout_seconds=save_timeout_seconds,
+                poll_interval=0.5,
+            )
+            self.current_log_path = completed_log
+            print(
+                "QXDM capture stopped and saved log finalized: "
+                f"{completed_log}"
+            )
+        except Exception as error:
+            # The capture itself has still been stopped. A manually chosen
+            # QXDM location may differ from TestHub's expected path, so log
+            # detection can be corrected later with Select Saved Log.
+            print(
+                "QXDM capture stopped, but TestHub could not automatically "
+                f"confirm the saved log: {error}"
+            )
+
+        if (
+            load_saved_log
+            and completed_log is not None
+        ):
+            try:
+                self.load_saved_log(completed_log)
+            except Exception as error:
+                print(
+                    "Saved log was finalized, but could not be reopened "
+                    f"automatically: {error}"
+                )
 
         print(
-            "QXDM test stopped. Check the Quick Saving directory "
-            "configured under Options > Settings > Item Store File."
+            "QXDM logging stopped. Modem remains online; no mode lpm "
+            "command was sent."
         )
 
         return True

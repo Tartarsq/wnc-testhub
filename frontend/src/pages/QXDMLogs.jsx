@@ -1,6 +1,3 @@
-QXDMLogs.jsx
-
-
 import { useEffect, useRef, useState } from 'react'
 import {
   FiActivity,
@@ -23,7 +20,7 @@ function QXDMLogs() {
   const [logFilename, setLogFilename] = useState(
     'Titan3_QXDM_Log.isf'
   )
-  const [outputFolder, setOutputFolder] = useState('')
+  const [outputFolder, setOutputFolder] = useState('C:\\Users\\niket\\Documents\\GitHub\\wnc-testhub\\results\\qxdm_logs')
   const [maxLogSizeMb, setMaxLogSizeMb] = useState(1024)
   const [loadMask, setLoadMask] = useState(true)
   const [continueWithoutMask, setContinueWithoutMask] =
@@ -98,13 +95,22 @@ function QXDMLogs() {
       return
     }
 
+    const requestedFolder = outputFolder.trim()
+
+    if (!requestedFolder) {
+      setError(
+        'Enter the QXDM log folder before starting the capture.'
+      )
+      return
+    }
+
     setIsSubmitting(true)
     setError('')
 
     try {
       const payload = {
         log_filename: logFilename,
-        output_folder: outputFolder.trim() || null,
+        output_folder: requestedFolder,
         max_log_size_mb: Number(maxLogSizeMb),
         load_mask: loadMask,
         continue_without_mask: continueWithoutMask,
@@ -281,9 +287,9 @@ function QXDMLogs() {
     (session) => session.session_id === selectedSessionId
   )
 
-  const suggestedDestination = selectedSession
-    ? `${selectedSession.session_folder}\\captures\\qxdm`
-    : outputFolder.trim() || 'Default TestHub QXDM folder'
+  const suggestedDestination =
+    outputFolder.trim() ||
+    'Enter the QXDM log folder'
 
   const workflowSteps = [
     {
@@ -304,7 +310,7 @@ function QXDMLogs() {
     {
       id: 'manual_save_settings',
       label: 'Configure Save Location',
-      description: 'Choose the final Item Store File settings in QXDM.',
+      description: 'Manually confirm the TestHub save folder in QXDM Settings.',
     },
     {
       id: 'lpm',
@@ -389,10 +395,10 @@ function QXDMLogs() {
           <div className="qxdm-manual-settings-banner">
             <strong>Complete the QXDM save setup</strong>
             <span>
-              QXDM capture is paused. Choose the actual filename,
-              folder, log path, and maximum size in QXDM. Take as much
-              time as needed, then close Settings and click Continue in
-              the WNC TestHub confirmation window.
+              QXDM capture is paused after a short delay. Enter the
+              QXDM Log Folder shown in TestHub into QXDM Item Store File
+              Settings, confirm the filename and maximum size, then close
+              Settings and click Continue. There is no timeout.
             </span>
           </div>
         )}
@@ -494,8 +500,8 @@ function QXDMLogs() {
                 </select>
 
                 <small className="qxdm-session-help">
-                  Selecting a session suggests its captures/qxdm
-                  folder and links the capture to that session.
+                  Selecting a session links the capture metadata to
+                  that session. It does not override the save folder below.
                 </small>
               </label>
 
@@ -538,7 +544,7 @@ function QXDMLogs() {
               </label>
 
               <label className="form-field qxdm-folder-field">
-                <span>Suggested Output Folder</span>
+                <span>QXDM Log Folder</span>
 
                 <div className="qxdm-folder-input">
                   <FiFolder />
@@ -550,14 +556,11 @@ function QXDMLogs() {
                       setOutputFolder(event.target.value)
                     }
                     placeholder={
-                      selectedSessionId
-                        ? 'Managed automatically by the selected session'
-                        : 'Leave blank to use the default results folder'
+                      'Enter the Windows folder QXDM should use'
                     }
                     disabled={
                       loggingActive ||
-                      isSubmitting ||
-                      Boolean(selectedSessionId)
+                      isSubmitting
                     }
                   />
                 </div>
@@ -570,7 +573,8 @@ function QXDMLogs() {
                 <strong>Suggested destination</strong>
                 <span>{suggestedDestination}</span>
                 <small>
-                  The final save location is confirmed manually in QXDM.
+                  Use this same folder in QXDM Item Store File Settings.
+                  TestHub pauses and waits for you before continuing.
                 </small>
               </div>
             </div>
