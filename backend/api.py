@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-import json
+from io import BytesIO
 import re
 import shutil
 from threading import Lock
@@ -14,6 +14,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from openpyxl import Workbook, load_workbook
 import requests
+from PIL import Image
+import pytesseract
 
 from automation.automated_runner import AutomatedTestRunner
 from automation.throughput_test import ThroughputTester
@@ -225,107 +227,148 @@ def update_job(
 
 
 
-def extract_speedtest_result_from_html(
-    html: str,
+def build_speedtest_png_url(
     result_url: str,
+) -> str:
+    """
+    Convert a normal Speedtest result URL into the static PNG result URL.
+    """
+    cleaned = result_url.strip()
+
+    if not re.match(
+        r"^https://(?:www\.)?speedtest\.net/my-result/",
+        cleaned,
+        flags=re.IGNORECASE,
+    ):
+        raise ValueError(
+            "Enter a valid Speedtest result URL beginning with "
+            "https://www.speedtest.net/my-result/."
+        )
+
+    if cleaned.lower().endswith(".png"):
+        return cleaned
+
+    return f"{cleaned}.png"
+
+
+def _extract_metric_value(
+    text: str,
+    label: str,
+) -> float | None:
+    """
+    Extract a numeric value appearing after a label in OCR text.
+    """
+    patterns = [
+        rf"{label}\s*[:\-]?\s*([0-9]+(?:\.[0-9]+)?)",
+        rf"{label}[^0-9]{{0,40}}([0-9]+(?:\.[0-9]+)?)",
+    ]
+
+    for pattern in patterns:
+        match = re.search(
+            pattern,
+            text,
+            flags=re.IGNORECASE,
+        )
+
+        if match:
+            try:
+                return float(match.group(1))
+            except (TypeError, ValueError):
+                continue
+
+    return None
+
+
+def parse_speedtest_png_text(
+    text: str,
+    result_url: str,
+    png_url: str,
 ) -> dict[str, Any]:
     """
-    Best-effort extraction of a shared Speedtest result page.
-
-    Speedtest may render some result data dynamically, so failure to find
-    values here is handled cleanly by the import endpoint and the existing
-    manual GUI-result workflow remains available as a fallback.
+    Parse OCR text from a Speedtest PNG into TestHub throughput fields.
     """
+    normalized_text = " ".join(
+        text.replace("\r", "\n").split()
+    )
+
     result: dict[str, Any] = {
         "result_url": result_url,
-        "download_mbps": None,
-        "upload_mbps": None,
-        "ping_ms": None,
-        "ping_jitter_ms": None,
-        "packet_loss_percent": None,
+        "png_url": png_url,
+        "download_mbps": _extract_metric_value(
+            normalized_text,
+            "download",
+        ),
+        "upload_mbps": _extract_metric_value(
+            normalized_text,
+            "upload",
+        ),
+        "ping_ms": _extract_metric_value(
+            normalized_text,
+            "ping",
+        ),
+        "ping_jitter_ms": _extract_metric_value(
+            normalized_text,
+            "jitter",
+        ),
+        "packet_loss_percent": _extract_metric_value(
+            normalized_text,
+            "loss",
+        ),
         "server_name": None,
         "server_location": None,
+        "ocr_text": normalized_text,
     }
 
-    def first_number(patterns: list[str]) -> float | None:
-        for pattern in patterns:
-            match = re.search(
-                pattern,
-                html,
-                flags=re.IGNORECASE | re.DOTALL,
-            )
-            if match:
-                try:
-                    return float(match.group(1))
-                except (TypeError, ValueError):
-                    pass
-        return None
+    server_patterns = [
+        r"Server\s*[:\-]?\s*([A-Za-z0-9 .&'_-]{2,80})",
+        r"Hosted by\s+([A-Za-z0-9 .&'_-]{2,80})",
+    ]
 
-    # Search embedded script/JSON and page markup. The patterns are kept
-    # conservative so a failed parse is preferable to saving a wrong result.
-    result["download_mbps"] = first_number([
-        r'"download(?:_mbps|Bandwidth|Speed)?"\s*:\s*"?([0-9]+(?:\.[0-9]+)?)',
-        r'\bDOWNLOAD\b.{0,250}?([0-9]+(?:\.[0-9]+)?)\s*(?:Mbps|Mb/s)',
-    ])
-    result["upload_mbps"] = first_number([
-        r'"upload(?:_mbps|Bandwidth|Speed)?"\s*:\s*"?([0-9]+(?:\.[0-9]+)?)',
-        r'\bUPLOAD\b.{0,250}?([0-9]+(?:\.[0-9]+)?)\s*(?:Mbps|Mb/s)',
-    ])
-    result["ping_ms"] = first_number([
-        r'"ping(?:Latency)?"\s*:\s*"?([0-9]+(?:\.[0-9]+)?)',
-        r'\bPING\b.{0,250}?([0-9]+(?:\.[0-9]+)?)\s*ms',
-    ])
-    result["ping_jitter_ms"] = first_number([
-        r'"jitter"\s*:\s*"?([0-9]+(?:\.[0-9]+)?)',
-        r'\bJITTER\b.{0,250}?([0-9]+(?:\.[0-9]+)?)\s*ms',
-    ])
-    result["packet_loss_percent"] = first_number([
-        r'"packetLoss"\s*:\s*"?([0-9]+(?:\.[0-9]+)?)',
-        r'\bLOSS\b.{0,250}?([0-9]+(?:\.[0-9]+)?)\s*%',
-    ])
+    for pattern in server_patterns:
+        match = re.search(
+            pattern,
+            normalized_text,
+            flags=re.IGNORECASE,
+        )
+        if match:
+            value = match.group(1).strip()
+            value = re.split(
+                r"\b(?:download|upload|ping|jitter|loss)\b",
+                value,
+                maxsplit=1,
+                flags=re.IGNORECASE,
+            )[0].strip()
+            if value:
+                result["server_name"] = value
+                break
 
-    # Try a few common structured-text names for server information.
-    server_name_match = re.search(
-        r'"serverName"\s*:\s*"([^"]+)"',
-        html,
-        flags=re.IGNORECASE,
+    location_match = re.search(
+        r"([A-Za-z .'-]+,\s*[A-Z]{2})\b",
+        normalized_text,
     )
-    if server_name_match:
-        result["server_name"] = server_name_match.group(1).strip()
 
-    server_location_match = re.search(
-        r'"serverLocation"\s*:\s*"([^"]+)"',
-        html,
-        flags=re.IGNORECASE,
-    )
-    if server_location_match:
-        result["server_location"] = server_location_match.group(1).strip()
+    if location_match:
+        result["server_location"] = (
+            location_match.group(1).strip()
+        )
 
     return result
 
 
-def fetch_speedtest_result(
+def fetch_speedtest_png_result(
     result_url: str,
 ) -> dict[str, Any]:
     """
-    Retrieve a Speedtest share page and attempt to extract its result values.
+    Download the Speedtest PNG and OCR the visible result values.
     """
-    result_url = result_url.strip()
-
-    if not re.match(
-        r"^https://(?:www\.)?speedtest\.net/my-result/",
-        result_url,
-        flags=re.IGNORECASE,
-    ):
-        raise ValueError(
-            "Enter a Speedtest share URL beginning with "
-            "https://www.speedtest.net/my-result/."
-        )
+    png_url = build_speedtest_png_url(
+        result_url
+    )
 
     try:
         response = requests.get(
-            result_url,
-            timeout=15,
+            png_url,
+            timeout=20,
             allow_redirects=True,
             headers={
                 "User-Agent": (
@@ -334,22 +377,54 @@ def fetch_speedtest_result(
                     "Chrome/151.0 Safari/537.36"
                 ),
                 "Accept": (
-                    "text/html,application/xhtml+xml,"
-                    "application/xml;q=0.9,*/*;q=0.8"
+                    "image/png,image/*;q=0.9,*/*;q=0.8"
                 ),
             },
         )
         response.raise_for_status()
+
     except requests.RequestException as error:
         raise RuntimeError(
-            "TestHub could not retrieve the Speedtest result page: "
+            "TestHub could not download the Speedtest PNG: "
             f"{error}"
         ) from error
 
-    return extract_speedtest_result_from_html(
-        response.text,
-        result_url,
+    try:
+        image = Image.open(
+            BytesIO(response.content)
+        ).convert("RGB")
+
+    except Exception as error:
+        raise RuntimeError(
+            "The Speedtest result was downloaded, but it could "
+            "not be opened as an image."
+        ) from error
+
+    try:
+        ocr_text = pytesseract.image_to_string(
+            image,
+            config="--psm 6",
+        )
+
+    except pytesseract.TesseractNotFoundError as error:
+        raise RuntimeError(
+            "The Speedtest PNG downloaded successfully, but "
+            "Tesseract OCR is not installed or is not available "
+            "in PATH on this testing computer."
+        ) from error
+
+    except Exception as error:
+        raise RuntimeError(
+            "TestHub could not read the Speedtest PNG with OCR: "
+            f"{error}"
+        ) from error
+
+    return parse_speedtest_png_text(
+        text=ocr_text,
+        result_url=result_url.strip(),
+        png_url=png_url,
     )
+
 
 
 def write_gui_throughput_workbook(
@@ -1782,20 +1857,23 @@ def import_speedtest_result_link(
     request: SpeedtestResultLinkRequest,
 ) -> dict[str, Any]:
     """
-    Import the values exposed by a copied Speedtest result link.
+    Convert the copied Speedtest result URL to its PNG form, download it,
+    OCR the result values, and return a preview to the frontend.
 
-    This only previews/fills the result. The existing GUI save endpoint is
-    still responsible for writing the reviewed result into Analytics.
+    Nothing is saved automatically. The engineer can review/correct the
+    imported values before using the existing GUI save endpoint.
     """
     try:
-        extracted = fetch_speedtest_result(
+        extracted = fetch_speedtest_png_result(
             request.result_url
         )
+
     except ValueError as error:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(error),
         ) from error
+
     except Exception as error:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -1807,30 +1885,32 @@ def import_speedtest_result_link(
         "upload_mbps",
         "ping_ms",
     )
-    found_required = [
+
+    detected_fields = [
         field
         for field in required_fields
         if extracted.get(field) is not None
     ]
 
-    if len(found_required) == len(required_fields):
-        return {
-            "success": True,
-            "message": (
-                "Speedtest result detected. Review the imported "
-                "values, then save the result."
-            ),
-            "result": extracted,
-        }
+    success = (
+        len(detected_fields)
+        == len(required_fields)
+    )
 
     return {
-        "success": False,
+        "success": success,
         "message": (
-            "The Speedtest page was retrieved, but TestHub could not "
-            "reliably detect download, upload, and ping. Keep using the "
-            "manual fields for this result while we test another method."
+            "Speedtest PNG imported successfully. Review the "
+            "detected values, then save the result."
+            if success
+            else (
+                "The Speedtest PNG was downloaded and read, but "
+                "some required values were not detected. Any values "
+                "that were found have still been returned so they can "
+                "be reviewed or corrected manually."
+            )
         ),
-        "detected_fields": found_required,
+        "detected_fields": detected_fields,
         "result": extracted,
     }
 
