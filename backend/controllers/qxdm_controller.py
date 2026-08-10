@@ -1505,6 +1505,117 @@ class QXDMController:
             f"{self.current_log_path}"
         )
 
+    def prompt_for_saved_log(
+        self,
+    ) -> Optional[Path]:
+        """
+        Let the user select the actual QXDM log that was saved on disk.
+
+        This is intentionally separate from the existing logging workflow.
+        It is a fallback for cases where the user chose a different filename
+        or directory inside QXDM Settings than the path suggested by TestHub.
+        """
+        try:
+            from tkinter import Tk
+            from tkinter.filedialog import askopenfilename
+        except ImportError as error:
+            raise RuntimeError(
+                "Tkinter is required to select the saved QXDM log."
+            ) from error
+
+        root = Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+
+        initial_directory = None
+        if self.current_log_path is not None:
+            try:
+                candidate_parent = Path(
+                    self.current_log_path
+                ).expanduser().resolve().parent
+                if candidate_parent.exists():
+                    initial_directory = str(candidate_parent)
+            except OSError:
+                initial_directory = None
+
+        dialog_options = {
+            "parent": root,
+            "title": "Select Saved QXDM Log",
+            "filetypes": [
+                (
+                    "QXDM log files",
+                    "*.isf *.dlf *.qmdl *.qmdl2 *.bin",
+                ),
+                ("All files", "*.*"),
+            ],
+        }
+
+        if initial_directory:
+            dialog_options["initialdir"] = initial_directory
+
+        try:
+            selected_file = askopenfilename(
+                **dialog_options
+            )
+        finally:
+            root.destroy()
+
+        if not selected_file:
+            return None
+
+        selected_log = Path(selected_file).resolve()
+
+        if not selected_log.exists() or not selected_log.is_file():
+            raise FileNotFoundError(
+                "The selected QXDM log was not found:\n"
+                f"{selected_log}"
+            )
+
+        self.current_log_path = selected_log
+
+        print(
+            "Selected saved QXDM log: "
+            f"{selected_log}"
+        )
+
+        return selected_log
+
+    def open_saved_log_folder(
+        self,
+        log_path: Optional[Path] = None,
+    ) -> bool:
+        """
+        Open Windows File Explorer and select the saved QXDM log.
+        """
+        selected_log = (
+            Path(log_path).resolve()
+            if log_path is not None
+            else self.current_log_path
+        )
+
+        if selected_log is None:
+            raise RuntimeError(
+                "No saved QXDM log has been selected."
+            )
+
+        selected_log = Path(selected_log).resolve()
+
+        if not selected_log.exists() or not selected_log.is_file():
+            raise FileNotFoundError(
+                "The saved QXDM log was not found:\n"
+                f"{selected_log}"
+            )
+
+        subprocess.Popen(
+            [
+                "explorer.exe",
+                "/select,",
+                str(selected_log),
+            ]
+        )
+
+        return True
+
     def load_saved_log(
         self,
         log_path: Optional[Path] = None,

@@ -150,6 +150,57 @@ function QXDMLogs() {
     }
   }
 
+  const handleSelectSavedLog = async () => {
+    if (isSubmitting || loggingActive) {
+      return
+    }
+
+    setIsSubmitting(true)
+    setError('')
+
+    try {
+      const response = await api.post(
+        '/qxdm/saved-log/select'
+      )
+
+      setQxdmStatus(response.data)
+      startPolling()
+    } catch (requestError) {
+      setError(
+        requestError.response?.data?.detail ||
+          requestError.message ||
+          'Unable to select the saved QXDM log.'
+      )
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  const handleOpenSavedLogFolder = async () => {
+    if (isSubmitting) {
+      return
+    }
+
+    setIsSubmitting(true)
+    setError('')
+
+    try {
+      const response = await api.post(
+        '/qxdm/saved-log/open-folder'
+      )
+
+      setQxdmStatus(response.data)
+    } catch (requestError) {
+      setError(
+        requestError.response?.data?.detail ||
+          requestError.message ||
+          'Unable to open the saved QXDM log folder.'
+      )
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
   const formatDateTime = (value) => {
     if (!value) {
       return 'Not available'
@@ -174,6 +225,18 @@ function QXDMLogs() {
     }
 
     return value
+  }
+
+  const formatFileSize = (sizeMb) => {
+    if (
+      sizeMb === null ||
+      sizeMb === undefined ||
+      Number.isNaN(Number(sizeMb))
+    ) {
+      return 'Not available'
+    }
+
+    return `${Number(sizeMb).toFixed(2)} MB`
   }
 
   const loggingStatusClass =
@@ -694,6 +757,87 @@ function QXDMLogs() {
               </div>
             )}
           </article>
+        </section>
+
+        <section className="qxdm-control-card">
+          <div className="section-heading">
+            <div className="section-icon">
+              <FiHardDrive />
+            </div>
+
+            <div>
+              <h3>Latest Saved Log</h3>
+              <p>
+                Track the actual QXDM log file saved on this test computer.
+              </p>
+            </div>
+          </div>
+
+          <dl className="qxdm-details-list">
+            <div>
+              <dt>Filename</dt>
+              <dd>
+                {displayValue(
+                  qxdmStatus?.current_log_filename
+                )}
+              </dd>
+            </div>
+
+            <div>
+              <dt>Path</dt>
+              <dd>
+                {displayValue(
+                  qxdmStatus?.current_log_path
+                )}
+              </dd>
+            </div>
+
+            <div>
+              <dt>Size</dt>
+              <dd>
+                {formatFileSize(
+                  qxdmStatus?.current_log_size_mb
+                )}
+              </dd>
+            </div>
+
+            <div>
+              <dt>Last Modified</dt>
+              <dd>
+                {formatDateTime(
+                  qxdmStatus?.current_log_modified_at
+                )}
+              </dd>
+            </div>
+          </dl>
+
+          <div className="qxdm-action-row">
+            <button
+              type="button"
+              className="qxdm-refresh-button"
+              onClick={handleSelectSavedLog}
+              disabled={
+                isSubmitting ||
+                loggingActive
+              }
+            >
+              <FiFileText />
+              Select Saved Log
+            </button>
+
+            <button
+              type="button"
+              className="qxdm-refresh-button"
+              onClick={handleOpenSavedLogFolder}
+              disabled={
+                isSubmitting ||
+                !qxdmStatus?.current_log_path
+              }
+            >
+              <FiFolder />
+              Open Folder
+            </button>
+          </div>
         </section>
       </main>
     </div>

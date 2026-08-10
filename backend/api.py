@@ -285,6 +285,8 @@ class QXDMStatus(BaseModel):
     current_log_path: str | None = None
     current_log_size_bytes: int = 0
     current_log_size_mb: float = 0.0
+    current_log_filename: str | None = None
+    current_log_modified_at: str | None = None
     max_log_size_mb: int
     started_at: str | None = None
     stopped_at: str | None = None
@@ -393,6 +395,18 @@ def build_qxdm_status() -> QXDMStatus:
         current_log_size_mb=round(
             current_size_bytes / (1024 * 1024),
             2,
+        ),
+        current_log_filename=(
+            current_log.name
+            if current_log is not None
+            else None
+        ),
+        current_log_modified_at=(
+            datetime.fromtimestamp(
+                current_log.stat().st_mtime
+            ).isoformat(timespec="seconds")
+            if current_log is not None
+            else None
         ),
         max_log_size_mb=qxdm_controller.max_log_size_mb,
         started_at=state_snapshot["started_at"],
@@ -1016,6 +1030,87 @@ def start_qxdm_logging(
         run_qxdm_start,
         request,
     )
+
+    return build_qxdm_status()
+
+
+@app.post(
+    "/api/qxdm/saved-log/select",
+    response_model=QXDMStatus,
+)
+def select_saved_qxdm_log() -> QXDMStatus:
+    """
+    Let the user identify the actual QXDM log saved on this Windows machine.
+
+    This does not change the existing QXDM start/stop workflow. It is a
+    fallback for captures whose final filename or folder was changed manually
+    inside QXDM Settings.
+    """
+    try:
+        selected_log = qxdm_controller.prompt_for_saved_log()
+
+        if selected_log is None:
+            return build_qxdm_status()
+
+        with qxdm_lock:
+            state_snapshot = dict(qxdm_state)
+
+        stopped_at = (
+            state_snapshot.get("stopped_at")
+            or datetime.now().isoformat(timespec="seconds")
+        )
+
+        update_qxdm_state(
+            current_log_path=str(selected_log.resolve()),
+            stopped_at=stopped_at,
+            message="Saved QXDM log selected successfully.",
+            error=None,
+        )
+
+        save_qxdm_log_to_session(
+            session_id=state_snapshot.get("session_id"),
+            log_path=selected_log,
+            started_at=state_snapshot.get("started_at"),
+            stopped_at=stopped_at,
+        )
+
+        return build_qxdm_status()
+
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(error),
+        ) from error
+
+
+@app.post(
+    "/api/qxdm/saved-log/open-folder",
+    response_model=QXDMStatus,
+)
+def open_saved_qxdm_log_folder() -> QXDMStatus:
+    """
+    Open File Explorer with the currently tracked saved QXDM log selected.
+    """
+    current_log = find_current_qxdm_log()
+
+    if current_log is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                "No saved QXDM log is currently tracked. "
+                "Select the saved log first."
+            ),
+        )
+
+    try:
+        qxdm_controller.open_saved_log_folder(
+            current_log
+        )
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(error),
+        ) from error
 
     return build_qxdm_status()
 
