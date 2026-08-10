@@ -20,6 +20,8 @@ from config import (
     QXDM_MAX_LOG_SIZE_MB,
 )
 
+from tool_settings import ToolSettings
+
 
 class QXDMController:
     """
@@ -152,7 +154,23 @@ class QXDMController:
         default_mask: Optional[Path] = QXDM_DEFAULT_MASK,
         max_log_size_mb: int = QXDM_MAX_LOG_SIZE_MB,
     ) -> None:
-        self.executable = Path(executable)
+        # Portable QXDM executable handling:
+        # 1. Prefer a valid machine/user-specific path saved by TestHub.
+        # 2. Fall back to the existing QXDM_EXECUTABLE value from config.py.
+        #
+        # This does not change any of the existing QXDM logging, mask,
+        # USB, command, or mode-transition behavior.
+        self.tool_settings = ToolSettings()
+
+        configured_executable = Path(executable).expanduser()
+        saved_executable = self.tool_settings.get_valid_path(
+            "qxdm_executable"
+        )
+
+        if saved_executable is not None:
+            self.executable = saved_executable
+        else:
+            self.executable = configured_executable
 
         self.default_mask = (
             Path(default_mask)
@@ -178,9 +196,108 @@ class QXDMController:
             / "qxdm_settings.json"
         )
 
+    def resolve_executable(self) -> Path:
+        """
+        Resolve the QXDM executable path for this computer.
+
+        Priority:
+            1. Valid qxdm_executable path saved in tool_settings.py storage
+            2. Existing config.py QXDM_EXECUTABLE fallback
+        """
+        saved_executable = self.tool_settings.get_valid_path(
+            "qxdm_executable"
+        )
+
+        if saved_executable is not None:
+            self.executable = saved_executable
+
+        return Path(self.executable).expanduser()
+
+    def set_executable(
+        self,
+        executable_path: Path,
+        persist: bool = True,
+    ) -> Path:
+        """
+        Set the QXDM executable path.
+
+        If persist=True, remember the selected executable for future TestHub
+        runs on this computer/user account.
+        """
+        executable_path = (
+            Path(executable_path)
+            .expanduser()
+            .resolve()
+        )
+
+        if not executable_path.exists():
+            raise FileNotFoundError(
+                "The selected QXDM executable was not found:\n"
+                f"{executable_path}"
+            )
+
+        if not executable_path.is_file():
+            raise ValueError(
+                "The selected QXDM executable path is not a file:\n"
+                f"{executable_path}"
+            )
+
+        self.executable = executable_path
+
+        if persist:
+            self.tool_settings.set_path(
+                "qxdm_executable",
+                executable_path,
+            )
+
+        print(
+            "QXDM executable configured for this computer: "
+            f"{self.executable}"
+        )
+
+        return self.executable
+
+    def prompt_for_executable(self) -> Optional[Path]:
+        """
+        Let the user browse for QXDM.exe and remember it for this computer.
+        """
+        try:
+            from tkinter import Tk
+            from tkinter.filedialog import askopenfilename
+        except ImportError as error:
+            raise RuntimeError(
+                "Tkinter is required to browse for QXDM.exe."
+            ) from error
+
+        root = Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+
+        try:
+            selected_file = askopenfilename(
+                parent=root,
+                title="Select QXDM Executable",
+                filetypes=[
+                    ("QXDM executable", "QXDM.exe"),
+                    ("Executable files", "*.exe"),
+                    ("All files", "*.*"),
+                ],
+            )
+        finally:
+            root.destroy()
+
+        if not selected_file:
+            return None
+
+        return self.set_executable(
+            Path(selected_file),
+            persist=True,
+        )
+
     def executable_exists(self) -> bool:
-        """Return True if the QXDM executable exists."""
-        return self.executable.exists()
+        """Return True if the resolved QXDM executable exists."""
+        executable = self.resolve_executable()
+        return executable.exists() and executable.is_file()
 
     def is_running(self) -> bool:
         """Return True if QXDM is running."""
@@ -215,9 +332,13 @@ class QXDMController:
 
     def launch(self, wait_seconds: float = 12.0) -> bool:
         """Launch QXDM if it is not already running."""
+        self.resolve_executable()
+
         if not self.executable_exists():
             raise FileNotFoundError(
-                f"QXDM executable was not found:\n{self.executable}"
+                "QXDM executable was not found. Configure it for this "
+                "computer or update config.py:\n"
+                f"{self.executable}"
             )
 
         if self.is_running():
