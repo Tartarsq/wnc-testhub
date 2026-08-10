@@ -5,27 +5,30 @@ import socket
 import subprocess
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from config import (
     find_speedtest_executable,
     verify_speedtest_executable,
 )
-
-
-DEFAULT_SERVER_ID = "62092"
-DEFAULT_SERVER_NAME = "Optimum Online - Parsippany, NJ"
+from tool_settings import ToolSettings
 
 
 class ThroughputTester:
     """
-    Run throughput tests using the official Ookla Speedtest CLI.
+    Run throughput testing in either GUI or CLI mode.
 
-    The executable is detected automatically through config.py.
+    GUI mode:
+        Launch the installed Speedtest desktop application so the engineer
+        can accept the best server or choose a specific server manually.
+        GUI results can then be normalized into the same result dictionary
+        used by the rest of TestHub.
 
-    The public class interface is kept similar to the previous
-    speedtest-cli implementation so existing project code does not
-    require major changes.
+    CLI mode:
+        Keep the existing official Ookla Speedtest CLI workflow unchanged.
+
+    Keeping both modes means existing analytics/reporting code can continue
+    consuming the same throughput result fields.
     """
 
     def __init__(
@@ -34,19 +37,27 @@ class ThroughputTester:
         maximum_retries: int = 1,
         retry_delay_seconds: int = 2,
         refresh_server_every: int = 10,
-        server_id: str | int | None = DEFAULT_SERVER_ID,
+        server_id: str | int | None = None,
+        mode: str = "cli",
+        gui_executable: Optional[Path] = None,
     ) -> None:
         self.timeout_seconds = timeout_seconds
         self.maximum_retries = maximum_retries
         self.retry_delay_seconds = retry_delay_seconds
-
-        # Kept for compatibility with existing code.
-        # The official CLI starts a new process for every test, so it
-        # does not reuse a persistent Speedtest connection.
         self.refresh_server_every = refresh_server_every
 
-        # Use the configured server consistently for comparable results.
-        # Pass server_id=None to use Ookla automatic server selection only.
+        normalized_mode = str(mode).strip().lower()
+
+        if normalized_mode not in {
+            "gui",
+            "cli",
+        }:
+            raise ValueError(
+                "Throughput mode must be either 'gui' or 'cli'."
+            )
+
+        self.mode = normalized_mode
+
         self.server_id = (
             str(server_id)
             if server_id is not None
@@ -54,19 +65,248 @@ class ThroughputTester:
         )
 
         self.completed_tests = 0
+        self.tool_settings = ToolSettings()
 
-        # Automatically locate the official Ookla CLI.
-        self.speedtest_path: Path = (
+        # Keep CLI discovery exactly as before. It is resolved lazily so GUI
+        # mode does not require the CLI to be installed.
+        self.speedtest_path: Optional[Path] = None
+        self.speedtest_version: Optional[str] = None
+
+        if self.mode == "cli":
+            self._ensure_cli_ready()
+
+        saved_gui = self.tool_settings.get_valid_path(
+            "speedtest_gui_executable"
+        )
+
+        if saved_gui is not None:
+            self.gui_executable: Optional[Path] = saved_gui
+        elif gui_executable is not None:
+            self.gui_executable = (
+                Path(gui_executable)
+                .expanduser()
+            )
+        else:
+            self.gui_executable = None
+
+        self.gui_process: Optional[subprocess.Popen] = None
+
+    def _ensure_cli_ready(self) -> Path:
+        """Locate and verify the official Ookla CLI only when it is needed."""
+        if (
+            self.speedtest_path is not None
+            and Path(self.speedtest_path).exists()
+        ):
+            return Path(self.speedtest_path)
+
+        self.speedtest_path = (
             find_speedtest_executable()
         )
 
-        # Make sure the detected executable is the official
-        # Ookla CLI and not the Python speedtest-cli package.
         self.speedtest_version = (
             verify_speedtest_executable(
                 self.speedtest_path
             )
         )
+
+        return self.speedtest_path
+
+    def get_gui_executable(self) -> Optional[Path]:
+        """
+        Return the saved Speedtest GUI executable when it still exists.
+        """
+        saved_gui = self.tool_settings.get_valid_path(
+            "speedtest_gui_executable"
+        )
+
+        if saved_gui is not None:
+            self.gui_executable = saved_gui
+            return saved_gui
+
+        if self.gui_executable is None:
+            return None
+
+        candidate = (
+            Path(self.gui_executable)
+            .expanduser()
+        )
+
+        if candidate.exists() and candidate.is_file():
+            return candidate.resolve()
+
+        return None
+
+    def set_gui_executable(
+        self,
+        executable_path: Path,
+        persist: bool = True,
+    ) -> Path:
+        """
+        Configure the Speedtest GUI executable for this testing computer.
+        """
+        executable_path = (
+            Path(executable_path)
+            .expanduser()
+            .resolve()
+        )
+
+        if not executable_path.exists():
+            raise FileNotFoundError(
+                "The selected Speedtest GUI executable was not found:\n"
+                f"{executable_path}"
+            )
+
+        if not executable_path.is_file():
+            raise ValueError(
+                "The selected Speedtest GUI path is not a file:\n"
+                f"{executable_path}"
+            )
+
+        self.gui_executable = executable_path
+
+        if persist:
+            self.tool_settings.set_path(
+                "speedtest_gui_executable",
+                executable_path,
+            )
+
+        return executable_path
+
+    def prompt_for_gui_executable(
+        self,
+    ) -> Optional[Path]:
+        """
+        Let the engineer browse for the Speedtest desktop executable.
+        The selected path is remembered for future TestHub runs.
+        """
+        try:
+            from tkinter import Tk
+            from tkinter.filedialog import askopenfilename
+        except ImportError as error:
+            raise RuntimeError(
+                "Tkinter is required to browse for the Speedtest GUI."
+            ) from error
+
+        root = Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+
+        try:
+            selected_file = askopenfilename(
+                parent=root,
+                title="Select Speedtest Desktop Executable",
+                filetypes=[
+                    ("Executable files", "*.exe"),
+                    ("All files", "*.*"),
+                ],
+            )
+        finally:
+            root.destroy()
+
+        if not selected_file:
+            return None
+
+        return self.set_gui_executable(
+            Path(selected_file),
+            persist=True,
+        )
+
+    def launch_gui(self) -> Path:
+        """
+        Launch Speedtest's desktop GUI.
+
+        TestHub deliberately does not automate the server-selection controls.
+        The engineer can use Speedtest's suggested/best server or choose a
+        specific server before pressing GO.
+        """
+        executable = self.get_gui_executable()
+
+        if executable is None:
+            executable = self.prompt_for_gui_executable()
+
+        if executable is None:
+            raise RuntimeError(
+                "Speedtest GUI is not configured on this computer."
+            )
+
+        self.gui_process = subprocess.Popen(
+            [str(executable)],
+            cwd=str(executable.parent),
+        )
+
+        print(
+            "Speedtest GUI opened. "
+            "Choose the desired server in Speedtest and run the test."
+        )
+
+        return executable
+
+    def normalize_gui_result(
+        self,
+        *,
+        download_mbps: float,
+        upload_mbps: float,
+        ping_ms: float,
+        server_name: str,
+        server_location: str = "",
+        server_id: str | int | None = None,
+        ping_jitter_ms: float | None = None,
+        packet_loss_percent: float | None = None,
+        isp: str | None = None,
+        result_url: str | None = None,
+        notes: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Convert a manually completed GUI test into the same field structure
+        used by CLI throughput results.
+
+        This preserves the existing Analytics/Excel pipeline.
+        """
+        self.completed_tests += 1
+
+        return {
+            "download_mbps": self._to_float(
+                download_mbps
+            ),
+            "upload_mbps": self._to_float(
+                upload_mbps
+            ),
+            "ping_ms": self._to_float(
+                ping_ms
+            ),
+            "ping_jitter_ms": self._to_float(
+                ping_jitter_ms
+            ),
+            "packet_loss_percent": self._to_float(
+                packet_loss_percent
+            ),
+            "isp": isp,
+            "external_ip": None,
+            "interface_name": self._get_interface_name(),
+            "server_name": (
+                server_name.strip()
+                if server_name
+                else None
+            ),
+            "server_location": (
+                server_location.strip()
+                if server_location
+                else None
+            ),
+            "server_id": (
+                str(server_id)
+                if server_id is not None
+                else None
+            ),
+            "server_host": None,
+            "result_url": result_url,
+            "test_duration_seconds": None,
+            "raw_speedtest_result": {
+                "source": "speedtest_gui",
+                "notes": notes,
+            },
+        }
+
 
     @staticmethod
     def _to_float(
@@ -144,25 +384,24 @@ class ThroughputTester:
 
         return parsed_output
 
-    def _build_command(
-        self,
-        server_id: str | None = None,
-    ) -> list[str]:
+    def _build_command(self) -> list[str]:
         """
         Create the command used to run the official Ookla CLI.
         """
+        speedtest_path = self._ensure_cli_ready()
+
         command = [
-            str(self.speedtest_path),
+            str(speedtest_path),
             "--accept-license",
             "--accept-gdpr",
             "--format=json",
         ]
 
-        if server_id:
+        if self.server_id:
             command.extend(
                 [
                     "--server-id",
-                    server_id,
+                    self.server_id,
                 ]
             )
 
@@ -181,9 +420,22 @@ class ThroughputTester:
         self,
     ) -> dict[str, Any]:
         """Run the official Ookla CLI and return its JSON output."""
+        command = self._build_command()
+
         print(
             f"Using Speedtest CLI: {self.speedtest_path}"
         )
+
+        if self.server_id:
+            print(
+                f"Using Speedtest server ID: "
+                f"{self.server_id}"
+            )
+        else:
+            print(
+                "Using the automatically selected "
+                "Speedtest server..."
+            )
 
         # A full download/upload test normally needs much longer than
         # the network timeout value supplied to the constructor.
@@ -192,60 +444,14 @@ class ThroughputTester:
             self.timeout_seconds,
         )
 
-        def run_command(
-            server_id: str | None,
-        ) -> subprocess.CompletedProcess[str]:
-            command = self._build_command(
-                server_id
-            )
-
-            return subprocess.run(
-                command,
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=process_timeout_seconds,
-                encoding="utf-8",
-                errors="replace",
-            )
-
-        if self.server_id:
-            print(
-                f"Using preferred Speedtest server: "
-                f"{DEFAULT_SERVER_NAME} "
-                f"(ID {self.server_id})"
-            )
-
-            completed_process = run_command(
-                self.server_id
-            )
-
-            if completed_process.returncode == 0:
-                return self._extract_json(
-                    completed_process.stdout.strip()
-                )
-
-            preferred_error = (
-                completed_process.stderr.strip()
-                or completed_process.stdout.strip()
-                or "No error details were returned."
-            )
-
-            print(
-                "Preferred server was unavailable. "
-                "Falling back to Ookla automatic server selection..."
-            )
-            print(
-                f"Preferred server error: {preferred_error}"
-            )
-
-        else:
-            print(
-                "Using Ookla automatic server selection..."
-            )
-
-        completed_process = run_command(
-            None
+        completed_process = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=process_timeout_seconds,
+            encoding="utf-8",
+            errors="replace",
         )
 
         standard_output = (
@@ -425,14 +631,29 @@ class ThroughputTester:
             "raw_speedtest_result": raw_results,
         }
 
+    def run(
+        self,
+    ) -> dict[str, Any] | Path:
+        """
+        Start the configured throughput workflow.
+
+        GUI mode returns the executable path after launching the desktop app.
+        CLI mode returns the structured throughput result.
+        """
+        if self.mode == "gui":
+            return self.launch_gui()
+
+        return self.run_full_test()
+
     def run_full_test(
         self,
     ) -> dict[str, Any]:
         """
-        Run a complete throughput test.
+        Run one complete CLI throughput test.
 
         If a test fails, retry according to maximum_retries.
         """
+        self._ensure_cli_ready()
         attempts = (
             self.maximum_retries
             + 1
@@ -487,23 +708,14 @@ class ThroughputTester:
         ) from last_error
 
 
+
 if __name__ == "__main__":
     throughput_tester = ThroughputTester(
+        mode="cli",
         timeout_seconds=15,
         maximum_retries=1,
         retry_delay_seconds=2,
         refresh_server_every=10,
-    )
-
-    print("\nSpeedtest Installation")
-    print("=" * 40)
-    print(
-        f"Executable: "
-        f"{throughput_tester.speedtest_path}"
-    )
-    print(
-        f"Version: "
-        f"{throughput_tester.speedtest_version}"
     )
 
     test_results = (

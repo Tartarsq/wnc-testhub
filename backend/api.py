@@ -10,9 +10,10 @@ from uuid import uuid4
 from fastapi import BackgroundTasks, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 
 from automation.automated_runner import AutomatedTestRunner
+from automation.throughput_test import ThroughputTester
 from config import (
     DEFAULT_TITAN_IP,
     QXDM_DEFAULT_LOG_FILENAME,
@@ -92,6 +93,57 @@ class ThroughputJob(BaseModel):
     excel_path: str | None = None
 
 
+class ThroughputGUILaunchRequest(BaseModel):
+    titan_ip: str = Field(
+        default=DEFAULT_TITAN_IP,
+        min_length=7,
+        max_length=45,
+    )
+
+
+class ThroughputGUIResultRequest(BaseModel):
+    job_id: str = Field(
+        min_length=1,
+        max_length=100,
+    )
+    download_mbps: float = Field(ge=0)
+    upload_mbps: float = Field(ge=0)
+    ping_ms: float = Field(ge=0)
+    ping_jitter_ms: float | None = Field(
+        default=None,
+        ge=0,
+    )
+    packet_loss_percent: float | None = Field(
+        default=None,
+        ge=0,
+        le=100,
+    )
+    server_name: str = Field(
+        min_length=1,
+        max_length=200,
+    )
+    server_location: str = Field(
+        default="",
+        max_length=200,
+    )
+    server_id: str | None = Field(
+        default=None,
+        max_length=100,
+    )
+    isp: str | None = Field(
+        default=None,
+        max_length=200,
+    )
+    result_url: str | None = Field(
+        default=None,
+        max_length=1000,
+    )
+    notes: str = Field(
+        default="",
+        max_length=2000,
+    )
+
+
 class SessionCreateRequest(BaseModel):
     session_name: str = Field(
         min_length=1,
@@ -160,6 +212,236 @@ def update_job(
             return
 
         current_job.update(changes)
+
+
+def write_gui_throughput_workbook(
+    workbook_path: Path,
+    result: dict[str, Any],
+) -> Path:
+    """
+    Save a GUI-entered throughput result using the same column layout
+    consumed by the existing Analytics page.
+    """
+    workbook_path = Path(workbook_path).resolve()
+    workbook_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "Throughput Results"
+
+    worksheet.append(ANALYTICS_FIELDS)
+    worksheet.append([
+        result.get(field)
+        for field in ANALYTICS_FIELDS
+    ])
+
+    workbook.save(workbook_path)
+    workbook.close()
+
+    return workbook_path
+
+
+def launch_speedtest_gui_job(
+    job_id: str,
+    request: ThroughputGUILaunchRequest,
+) -> None:
+    """
+    Create a throughput session and launch the Speedtest desktop GUI.
+
+    The engineer chooses/overrides the server directly in Speedtest and
+    presses GO manually. TestHub waits for the result to be entered/saved.
+    """
+    try:
+        update_job(
+            job_id,
+            status="launching",
+            message="Opening the Speedtest desktop app.",
+            completed_runs=0,
+            results=[],
+            error=None,
+        )
+
+        session_folder = create_session_folder(
+            RESULTS_FOLDER,
+            "Titan3_GUI",
+        )
+        create_session_folders(session_folder)
+
+        tester = ThroughputTester(
+            mode="gui",
+        )
+        executable = tester.launch_gui()
+
+        update_job(
+            job_id,
+            status="waiting_for_result",
+            message=(
+                "Speedtest is open. Choose the best/default server or "
+                "select another server, run the test, then enter the "
+                "result in TestHub."
+            ),
+            completed_runs=0,
+            results=[],
+            session_folder=str(
+                session_folder.resolve()
+            ),
+            excel_path=None,
+            speedtest_gui_executable=str(
+                Path(executable).resolve()
+            ),
+        )
+
+    except Exception as error:
+        update_job(
+            job_id,
+            status="failed",
+            message="Could not open the Speedtest desktop app.",
+            error=str(error),
+        )
+
+
+def save_speedtest_gui_result(
+    request: ThroughputGUIResultRequest,
+) -> ThroughputJob:
+    """
+    Normalize a completed Speedtest GUI result and save it into the same
+    workbook format used by Analytics.
+    """
+    with jobs_lock:
+        existing_job = jobs.get(request.job_id)
+
+        if existing_job is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Throughput GUI job was not found.",
+            )
+
+        job_snapshot = dict(existing_job)
+
+    session_folder_value = job_snapshot.get(
+        "session_folder"
+    )
+
+    if not session_folder_value:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "The GUI throughput session folder has not "
+                "been created yet."
+            ),
+        )
+
+    titan = Titan3(
+        ip_address=job_snapshot["titan_ip"],
+    )
+
+    try:
+        reachable = titan.ping()
+    except Exception:
+        reachable = False
+
+    radio_metrics: dict[str, Any] = {}
+
+    try:
+        if reachable:
+            metrics = titan.get_radio_metrics()
+
+            if isinstance(metrics, dict):
+                radio_metrics = metrics
+    except Exception as error:
+        radio_metrics = {
+            "metrics_error": str(error),
+        }
+
+    tester = ThroughputTester(
+        mode="gui",
+    )
+
+    normalized = tester.normalize_gui_result(
+        download_mbps=request.download_mbps,
+        upload_mbps=request.upload_mbps,
+        ping_ms=request.ping_ms,
+        ping_jitter_ms=request.ping_jitter_ms,
+        packet_loss_percent=request.packet_loss_percent,
+        server_name=request.server_name,
+        server_location=request.server_location,
+        server_id=request.server_id,
+        isp=request.isp,
+        result_url=request.result_url,
+        notes=request.notes,
+    )
+
+    result: dict[str, Any] = {
+        "timestamp": datetime.now().isoformat(
+            timespec="seconds"
+        ),
+        "run_number": 1,
+        "titan_ip": job_snapshot["titan_ip"],
+        "connection_status": (
+            "connected"
+            if reachable
+            else "disconnected"
+        ),
+        **normalized,
+        "firmware_version": radio_metrics.get(
+            "firmware_version"
+        ),
+        "carrier": radio_metrics.get("carrier"),
+        "technology": radio_metrics.get(
+            "technology"
+        ),
+        "mode": radio_metrics.get("mode"),
+        "serving_band": radio_metrics.get(
+            "serving_band"
+        ),
+        "rsrp_dbm": radio_metrics.get("rsrp_dbm"),
+        "rssi_dbm": radio_metrics.get("rssi_dbm"),
+        "sinr_db": radio_metrics.get("sinr_db"),
+        "metrics_error": radio_metrics.get(
+            "metrics_error"
+        ),
+        "notes": request.notes,
+    }
+
+    session_folder = Path(
+        session_folder_value
+    ).resolve()
+
+    workbook_path = (
+        session_folder
+        / "reports"
+        / "Titan3_GUI_Results.xlsx"
+    )
+
+    write_gui_throughput_workbook(
+        workbook_path,
+        result,
+    )
+
+    update_job(
+        request.job_id,
+        status="completed",
+        message=(
+            "Speedtest GUI result saved successfully. "
+            "It is now available to Analytics."
+        ),
+        completed_runs=1,
+        results=[result],
+        excel_path=str(
+            workbook_path.resolve()
+        ),
+        error=None,
+    )
+
+    with jobs_lock:
+        updated_job = dict(
+            jobs[request.job_id]
+        )
+
+    return ThroughputJob(**updated_job)
 
 
 def run_throughput_job(
@@ -1308,6 +1590,54 @@ def get_test_session(
 # ==========================================================
 # Throughput endpoints
 # ==========================================================
+
+@app.post(
+    "/api/throughput/gui/launch",
+    response_model=ThroughputJob,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def launch_throughput_gui(
+    request: ThroughputGUILaunchRequest,
+    background_tasks: BackgroundTasks,
+) -> ThroughputJob:
+    job_id = str(uuid4())
+
+    job = {
+        "job_id": job_id,
+        "status": "queued",
+        "message": "Preparing the Speedtest desktop app.",
+        "titan_ip": request.titan_ip,
+        "number_of_runs": 1,
+        "completed_runs": 0,
+        "results": [],
+        "error": None,
+        "session_folder": None,
+        "excel_path": None,
+    }
+
+    with jobs_lock:
+        jobs[job_id] = job
+
+    background_tasks.add_task(
+        launch_speedtest_gui_job,
+        job_id,
+        request,
+    )
+
+    return ThroughputJob(**job)
+
+
+@app.post(
+    "/api/throughput/gui/save",
+    response_model=ThroughputJob,
+)
+def save_throughput_gui_result(
+    request: ThroughputGUIResultRequest,
+) -> ThroughputJob:
+    return save_speedtest_gui_result(
+        request
+    )
+
 
 @app.post(
     "/api/throughput/start",
