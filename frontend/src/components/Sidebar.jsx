@@ -5,6 +5,7 @@ import {
   FiFileText,
   FiActivity,
   FiBarChart2,
+  FiLayers,
   FiSettings,
 } from 'react-icons/fi'
 import logo from '../assets/wnc-logo.png'
@@ -18,7 +19,7 @@ function Sidebar() {
       <div className="sidebar-brand">
         <img
           src={logo}
-          alt="WNC Logo"
+          alt="WNC"
           className="sidebar-logo"
         />
 
@@ -52,6 +53,11 @@ function Sidebar() {
         <NavLink to="/analytics" className={getLinkClass}>
           <FiBarChart2 className="sidebar-icon" />
           <span>Analytics</span>
+        </NavLink>
+
+        <NavLink to="/test-wrapper" className={getLinkClass}>
+          <FiLayers className="sidebar-icon" />
+          <span>Test Wrapper</span>
         </NavLink>
 
         <NavLink to="/settings" className={getLinkClass}>

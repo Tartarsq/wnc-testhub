@@ -1,10 +1,12 @@
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
+
 import Dashboard from './pages/Dashboard'
 import Devices from './pages/devices'
 import QXDMLogs from './pages/QXDMLogs'
 import Throughput from './pages/Throughput'
 import Analytics from './pages/Analytics'
 import TestResultDetails from './pages/TestResultDetails'
+import TestRunner from './pages/TestRunner'
 import Settings from './pages/Settings'
 
 function App() {
@@ -20,6 +22,7 @@ function App() {
           path="/analytics/results/:resultIndex"
           element={<TestResultDetails />}
         />
+        <Route path="/test-wrapper" element={<TestRunner />} />
         <Route path="/settings" element={<Settings />} />
       </Routes>
     </BrowserRouter>

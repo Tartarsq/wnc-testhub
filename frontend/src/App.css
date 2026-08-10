@@ -4086,3 +4086,137 @@ textarea:focus-visible {
     align-self: flex-start;
   }
 }
+
+/* ==========================================================
+   Unified Test Wrapper
+========================================================== */
+
+.wrapper-mode-grid,
+.wrapper-artifact-grid {
+  display: grid;
+  gap: 14px;
+  margin-top: 22px;
+}
+
+.wrapper-mode-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.wrapper-artifact-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.wrapper-mode-card,
+.wrapper-artifact-card {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: #f8fafc;
+}
+
+.wrapper-mode-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.wrapper-mode-card:hover:not(:disabled) {
+  border-color: #bfdbfe;
+  background: #f8fbff;
+}
+
+.wrapper-mode-card.selected {
+  border-color: #2563eb;
+  background: #eff6ff;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.08);
+}
+
+.wrapper-mode-card strong,
+.wrapper-artifact-card strong {
+  color: #0f172a;
+  font-size: 15px;
+}
+
+.wrapper-mode-card span,
+.wrapper-artifact-card span {
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.wrapper-artifact-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  cursor: pointer;
+}
+
+.wrapper-artifact-card input {
+  margin-top: 3px;
+}
+
+.wrapper-folder-input {
+  align-items: center;
+}
+
+.wrapper-folder-input input {
+  min-width: 0;
+  flex: 1;
+}
+
+.wrapper-throughput-options {
+  margin-top: 22px;
+}
+
+.wrapper-progress-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.wrapper-progress-item,
+.wrapper-progress-empty {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.wrapper-progress-item div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.wrapper-progress-item strong {
+  color: #0f172a;
+  font-size: 14px;
+  text-transform: capitalize;
+}
+
+.wrapper-progress-item span,
+.wrapper-progress-empty span {
+  color: #64748b;
+  font-size: 13px;
+}
+
+@media (max-width: 1000px) {
+  .wrapper-artifact-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 700px) {
+  .wrapper-mode-grid {
+    grid-template-columns: 1fr;
+  }
+}

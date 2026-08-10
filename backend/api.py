@@ -21,6 +21,8 @@ from config import (
     RESULTS_FOLDER,
 )
 from controllers.qxdm_controller import QXDMController
+from controllers.syslog_controller import SyslogController
+from wrapper.test_wrapper import TestWrapper
 from titan3 import Titan3
 from utils import (
     create_session_folder,
@@ -702,6 +704,163 @@ def run_qxdm_stop() -> None:
         )
 
 
+
+# ==========================================================
+# Unified test wrapper
+# ==========================================================
+
+class WrapperStartRequest(BaseModel):
+    session_name: str = Field(min_length=1, max_length=120)
+    save_root: str = Field(min_length=1, max_length=500)
+    mode: str = Field(default="manual", pattern="^(manual|automatic)$")
+    titan_ip: str = Field(
+        default=DEFAULT_TITAN_IP,
+        min_length=7,
+        max_length=45,
+    )
+    collect_qxdm: bool = True
+    collect_throughput: bool = True
+    collect_syslog: bool = True
+    number_of_runs: int = Field(default=5, ge=1, le=15)
+    delay_between_runs: int = Field(default=10, ge=0, le=3600)
+    timeout_seconds: int = Field(default=180, ge=1, le=1800)
+    qxdm_log_filename: str = Field(
+        default=QXDM_DEFAULT_LOG_FILENAME,
+        min_length=1,
+        max_length=180,
+    )
+    qxdm_max_log_size_mb: int = Field(
+        default=QXDM_MAX_LOG_SIZE_MB,
+        ge=1,
+        le=1024,
+    )
+    load_mask: bool = True
+    continue_without_mask: bool = True
+
+
+class WrapperJob(BaseModel):
+    job_id: str
+    status: str
+    message: str
+    mode: str
+    session_folder: str | None = None
+    progress: list[dict[str, Any]] = Field(default_factory=list)
+    result: dict[str, Any] | None = None
+    error: str | None = None
+
+
+syslog_controller = SyslogController()
+test_wrapper = TestWrapper(
+    qxdm=qxdm_controller,
+    syslog=syslog_controller,
+)
+
+wrapper_jobs: dict[str, dict[str, Any]] = {}
+wrapper_jobs_lock = Lock()
+
+
+def update_wrapper_job(
+    job_id: str,
+    **changes: Any,
+) -> None:
+    with wrapper_jobs_lock:
+        current = wrapper_jobs.get(job_id)
+        if current is None:
+            return
+        current.update(changes)
+
+
+def append_wrapper_progress(
+    job_id: str,
+    item: dict[str, Any],
+) -> None:
+    with wrapper_jobs_lock:
+        current = wrapper_jobs.get(job_id)
+        if current is None:
+            return
+        current.setdefault("progress", []).append(item)
+        current["message"] = item.get(
+            "message",
+            current.get("message", ""),
+        )
+
+
+def run_wrapper_job(
+    job_id: str,
+    request: WrapperStartRequest,
+) -> None:
+    try:
+        update_wrapper_job(
+            job_id,
+            status="running",
+            message="Wrapper test session is starting.",
+            error=None,
+        )
+
+        if request.mode == "manual":
+            result = test_wrapper.create_workspace(
+                save_root=Path(request.save_root),
+                session_name=request.session_name,
+                titan_ip=request.titan_ip,
+                mode="manual",
+            )
+
+            update_wrapper_job(
+                job_id,
+                status="ready",
+                message=(
+                    "Manual wrapper session created. Use the QXDM, "
+                    "Throughput, and Syslog tools with this result folder."
+                ),
+                session_folder=result["session_folder"],
+                result=result,
+            )
+            return
+
+        result = test_wrapper.run_automatic(
+            save_root=Path(request.save_root),
+            session_name=request.session_name,
+            titan_ip=request.titan_ip,
+            number_of_runs=request.number_of_runs,
+            delay_between_runs=request.delay_between_runs,
+            timeout_seconds=request.timeout_seconds,
+            collect_qxdm=request.collect_qxdm,
+            collect_throughput=request.collect_throughput,
+            collect_syslog=request.collect_syslog,
+            qxdm_log_filename=request.qxdm_log_filename,
+            qxdm_max_log_size_mb=request.qxdm_max_log_size_mb,
+            load_mask=request.load_mask,
+            continue_without_mask=request.continue_without_mask,
+            progress_callback=lambda item: append_wrapper_progress(
+                job_id,
+                item,
+            ),
+        )
+
+        update_wrapper_job(
+            job_id,
+            status=result.get("status", "completed"),
+            message=(
+                "Automatic wrapper workflow finished."
+                if result.get("status") == "completed"
+                else (
+                    "Automatic workflow finished and is waiting "
+                    "for QXDM finalization."
+                )
+            ),
+            session_folder=result.get("session_folder"),
+            result=result,
+        )
+
+    except Exception as error:
+        update_wrapper_job(
+            job_id,
+            status="failed",
+            message="Wrapper workflow failed.",
+            error=str(error),
+        )
+
+
 # ==========================================================
 # Analytics helpers
 # ==========================================================
@@ -814,6 +973,102 @@ def get_device_status(
     return device_status
 
 
+
+
+
+# ==========================================================
+# Wrapper endpoints
+# ==========================================================
+
+@app.post(
+    "/api/wrapper/start",
+    response_model=WrapperJob,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def start_wrapper_test(
+    request: WrapperStartRequest,
+    background_tasks: BackgroundTasks,
+) -> WrapperJob:
+    job_id = str(uuid4())
+
+    job = {
+        "job_id": job_id,
+        "status": "queued",
+        "message": "Wrapper test session queued.",
+        "mode": request.mode,
+        "session_folder": None,
+        "progress": [],
+        "result": None,
+        "error": None,
+    }
+
+    with wrapper_jobs_lock:
+        wrapper_jobs[job_id] = job
+
+    background_tasks.add_task(
+        run_wrapper_job,
+        job_id,
+        request,
+    )
+
+    return WrapperJob(**job)
+
+
+@app.get(
+    "/api/wrapper/status/{job_id}",
+    response_model=WrapperJob,
+)
+def get_wrapper_status(
+    job_id: str,
+) -> WrapperJob:
+    with wrapper_jobs_lock:
+        job = wrapper_jobs.get(job_id)
+
+        if job is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Wrapper job was not found.",
+            )
+
+        snapshot = dict(job)
+
+    return WrapperJob(**snapshot)
+
+
+@app.get("/api/wrapper/syslog/status")
+def get_wrapper_syslog_status() -> dict[str, Any]:
+    return syslog_controller.status()
+
+
+@app.get("/api/wrapper/browse-folder")
+def browse_wrapper_folder() -> dict[str, str | None]:
+    """
+    Open the native Windows folder picker on the backend/test computer.
+    """
+    try:
+        from tkinter import Tk
+        from tkinter.filedialog import askdirectory
+
+        root = Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+
+        try:
+            selected = askdirectory(
+                parent=root,
+                title="Choose WNC TestHub Result Folder",
+                mustexist=False,
+            )
+        finally:
+            root.destroy()
+
+        return {"path": selected or None}
+
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(error),
+        ) from error
 
 
 # ==========================================================
