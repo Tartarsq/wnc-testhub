@@ -1049,7 +1049,11 @@ class QXDMController:
             pause=0.03,
         )
 
-    def wait_for_manual_log_settings(self) -> None:
+    def wait_for_manual_log_settings(
+        self,
+        expected_directory: str,
+        expected_base_name: str,
+    ) -> None:
         """
         Show a small confirmation window while the user configures QXDM.
 
@@ -1068,9 +1072,6 @@ class QXDMController:
         root.title("WNC TestHub - QXDM Settings")
         root.attributes("-topmost", True)
         root.resizable(False, False)
-
-        expected_directory = str(log_path.parent)
-        expected_base_name = log_path.stem
 
         message = (
             "QXDM capture is PAUSED while you configure saving.\n\n"
@@ -1128,6 +1129,9 @@ class QXDMController:
             log_path
         )
 
+        expected_directory = str(log_path.parent)
+        expected_base_name = log_path.stem
+
         self.open_qxdm_settings()
 
         # Give QXDM a few seconds to fully render the Item Store File
@@ -1143,7 +1147,10 @@ class QXDMController:
             f"Suggested log path: {log_path}"
         )
 
-        self.wait_for_manual_log_settings()
+        self.wait_for_manual_log_settings(
+            expected_directory=expected_directory,
+            expected_base_name=expected_base_name,
+        )
 
         # Return focus to QXDM before the mode commands begin.
         self.focus_qxdm()
