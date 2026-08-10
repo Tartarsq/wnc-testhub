@@ -1,3 +1,6 @@
+QXDMLogs.jsx
+
+
 import { useEffect, useRef, useState } from 'react'
 import {
   FiActivity,
@@ -386,9 +389,10 @@ function QXDMLogs() {
           <div className="qxdm-manual-settings-banner">
             <strong>Complete the QXDM save setup</strong>
             <span>
-              In QXDM Settings, choose the actual filename, folder,
-              log path, and maximum size. Close Settings, then click
-              Continue in the WNC TestHub confirmation window.
+              QXDM capture is paused. Choose the actual filename,
+              folder, log path, and maximum size in QXDM. Take as much
+              time as needed, then close Settings and click Continue in
+              the WNC TestHub confirmation window.
             </span>
           </div>
         )}
@@ -766,16 +770,26 @@ function QXDMLogs() {
             </div>
 
             <div>
-              <h3>Latest Saved Log</h3>
+              <h3>QXDM Log File</h3>
               <p>
-                Track the actual QXDM log file saved on this test computer.
+                The expected path is only a TestHub suggestion. Saved log
+                details appear after the real QXDM file is detected or selected.
               </p>
             </div>
           </div>
 
           <dl className="qxdm-details-list">
             <div>
-              <dt>Filename</dt>
+              <dt>Expected Log Path</dt>
+              <dd>
+                {displayValue(
+                  qxdmStatus?.expected_log_path
+                )}
+              </dd>
+            </div>
+
+            <div>
+              <dt>Saved Filename</dt>
               <dd>
                 {displayValue(
                   qxdmStatus?.current_log_filename
@@ -784,7 +798,7 @@ function QXDMLogs() {
             </div>
 
             <div>
-              <dt>Path</dt>
+              <dt>Saved Path</dt>
               <dd>
                 {displayValue(
                   qxdmStatus?.current_log_path
@@ -795,9 +809,11 @@ function QXDMLogs() {
             <div>
               <dt>Size</dt>
               <dd>
-                {formatFileSize(
-                  qxdmStatus?.current_log_size_mb
-                )}
+                {qxdmStatus?.current_log_path
+                  ? formatFileSize(
+                      qxdmStatus?.current_log_size_mb
+                    )
+                  : 'Not available'}
               </dd>
             </div>
 

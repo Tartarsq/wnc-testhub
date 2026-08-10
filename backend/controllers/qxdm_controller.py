@@ -1070,10 +1070,11 @@ class QXDMController:
         root.resizable(False, False)
 
         message = (
-            "Configure QXDM Item Store File settings now.\n\n"
+            "QXDM capture is PAUSED while you configure saving.\n\n"
             "Choose the Base File Name, Log File Directory, "
-            "Log File Path, and Maximum Log File Size.\n\n"
-            "Close the QXDM Settings window, then click Continue."
+            "Log File Path, and Maximum Log File Size in QXDM.\n\n"
+            "Take as much time as you need. TestHub will NOT continue "
+            "until you close QXDM Settings and click Continue below."
         )
 
         label = Label(

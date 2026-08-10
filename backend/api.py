@@ -282,6 +282,7 @@ class QXDMStatus(BaseModel):
     logging_active: bool
     executable_path: str
     mask_path: str | None = None
+    expected_log_path: str | None = None
     current_log_path: str | None = None
     current_log_size_bytes: int = 0
     current_log_size_mb: float = 0.0
@@ -304,6 +305,7 @@ qxdm_state: dict[str, Any] = {
     "workflow_step": "idle",
     "manual_settings_required": False,
     "logging_active": False,
+    "expected_log_path": None,
     "current_log_path": None,
     "started_at": None,
     "stopped_at": None,
@@ -386,10 +388,13 @@ def build_qxdm_status() -> QXDMStatus:
             if configured_mask is not None
             else None
         ),
+        expected_log_path=state_snapshot.get(
+            "expected_log_path"
+        ),
         current_log_path=(
             str(current_log.resolve())
             if current_log is not None
-            else state_snapshot["current_log_path"]
+            else None
         ),
         current_log_size_bytes=current_size_bytes,
         current_log_size_mb=round(
@@ -582,7 +587,8 @@ def run_qxdm_start(
             message="Launching QXDM and waiting for the diagnostic USB connection.",
             manual_settings_required=False,
             logging_active=False,
-            current_log_path=str(suggested_log_path),
+            expected_log_path=str(suggested_log_path),
+            current_log_path=None,
             started_at=None,
             stopped_at=None,
             session_id=request.session_id,
@@ -609,10 +615,11 @@ def run_qxdm_start(
             continue_without_mask=request.continue_without_mask,
         )
 
+        detected_log = find_current_qxdm_log()
         actual_log_path = (
-            str(qxdm_controller.current_log_path)
-            if qxdm_controller.current_log_path is not None
-            else str(suggested_log_path)
+            str(detected_log.resolve())
+            if detected_log is not None
+            else None
         )
 
         update_qxdm_state(
@@ -682,7 +689,7 @@ def run_qxdm_stop() -> None:
             current_log_path=(
                 str(completed_log.resolve())
                 if completed_log is not None
-                else state_snapshot.get("current_log_path")
+                else None
             ),
             stopped_at=stopped_at,
             error=None,
