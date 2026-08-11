@@ -1,6 +1,3 @@
-
-
-
 import { useEffect, useRef, useState } from 'react'
 import {
   FiActivity,
@@ -46,7 +43,6 @@ function Throughput() {
   const [isImportingCsv, setIsImportingCsv] = useState(false)
   const [importedTestDate, setImportedTestDate] = useState('')
   const [importedTestCount, setImportedTestCount] = useState(0)
-  const [activeWrapperJob, setActiveWrapperJob] = useState(null)
   const [csvBatchSaved, setCsvBatchSaved] = useState(false)
 
   const pollingRef = useRef(null)
@@ -62,48 +58,11 @@ function Throughput() {
   }
 
   useEffect(() => {
-    const loadActiveWrapper = () => {
-      try {
-        const raw = window.localStorage.getItem(
-          'wncActiveWrapperJob'
-        )
-
-        if (!raw) {
-          setActiveWrapperJob(null)
-          return
-        }
-
-        const parsed = JSON.parse(raw)
-
-        if (!parsed?.job_id) {
-          setActiveWrapperJob(null)
-          return
-        }
-
-        setActiveWrapperJob(parsed)
-      } catch {
-        setActiveWrapperJob(null)
-      }
-    }
-
-    loadActiveWrapper()
-
-    // Refresh the wrapper link whenever the tab/page becomes active again.
-    // This matters when the engineer creates a wrapper first, then navigates
-    // to Throughput in the same React app.
-    window.addEventListener(
-      'focus',
-      loadActiveWrapper
-    )
-
     return () => {
       stopPolling()
-      window.removeEventListener(
-        'focus',
-        loadActiveWrapper
-      )
     }
   }, [])
+
 
   const updateFromJob = (job) => {
     setJobId(job.job_id)
@@ -224,29 +183,6 @@ function Throughput() {
   const optionalNumber = (value) =>
     value === '' ? null : Number(value)
 
-  const getActiveWrapperForImport = () => {
-    try {
-      const raw = window.localStorage.getItem(
-        'wncActiveWrapperJob'
-      )
-
-      if (!raw) {
-        return null
-      }
-
-      const parsed = JSON.parse(raw)
-
-      if (!parsed?.job_id) {
-        return null
-      }
-
-      setActiveWrapperJob(parsed)
-      return parsed
-    } catch {
-      return null
-    }
-  }
-
   const handleImportLatestCsv = async () => {
     if (isImportingCsv || !jobId) {
       return
@@ -257,15 +193,13 @@ function Throughput() {
     setMessage('Select the Speedtest Result History CSV...')
 
     try {
-      const wrapperForImport =
-        getActiveWrapperForImport()
-
       const response = await api.post(
         '/throughput/gui/import-csv-latest',
         {
           job_id: jobId,
-          wrapper_job_id:
-            wrapperForImport?.job_id ?? null,
+        },
+        {
+          timeout: 0,
         }
       )
 
@@ -328,10 +262,9 @@ function Throughput() {
 
       setMessage(
         response.data?.wrapper_csv_path
-          ? `${response.data.message} Wrapper copy saved to ${response.data.wrapper_csv_path}`
-          : activeWrapperJob?.job_id
-            ? `${response.data?.message || 'Speedtest results imported.'} The active wrapper was not linked to this import.`
-            : `${response.data?.message || 'Speedtest results imported.'} No active wrapper session was detected, so only the standalone throughput copy was saved.`
+          ? `${response.data.message} Saved to ${response.data.wrapper_csv_path}`
+          : response.data?.message ||
+              'Speedtest results imported.'
       )
     } catch (requestError) {
       setError(
@@ -602,9 +535,9 @@ function Throughput() {
             <div>
               <h3>Save GUI Result</h3>
               <p>
-                After Speedtest finishes, download/export Result History
-                as CSV. TestHub finds the most recent calendar date and imports
-                every test from that date into Analytics automatically.
+                After Speedtest finishes, export Result History as CSV.
+                TestHub imports every test from the newest date, then asks
+                which wrapper session folder should receive the report files.
               </p>
             </div>
           </div>
@@ -615,8 +548,8 @@ function Throughput() {
               <div className="configuration-note">
                 <FiExternalLink />
                 <span>
-                  In Speedtest, download/export Result History as CSV.
-                  TestHub imports every test from the newest calendar date.
+                  First select the Speedtest Result History CSV. Then select
+                  the wrapper test session folder where the results should go.
                 </span>
               </div>
             </div>
@@ -650,8 +583,8 @@ function Throughput() {
             <div className="configuration-note">
               <FiActivity />
               <span>
-                Older calendar dates are ignored. Every test on the
-                newest date is imported and saved to Analytics.
+                Select the wrapper session root folder, not the reports
+                subfolder. TestHub saves into reports automatically.
               </span>
             </div>
 
@@ -667,7 +600,7 @@ function Throughput() {
               <FiExternalLink />
               {isImportingCsv
                 ? 'Importing Latest Result...'
-                : 'Import Latest Date Results'}
+                : 'Import CSV to Wrapper'}
             </button>
           </div>
 

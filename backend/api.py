@@ -761,6 +761,101 @@ def prompt_for_speedtest_csv() -> Path | None:
 
 
 
+
+def prompt_for_wrapper_session_folder(
+    initial_path: str | Path | None = None,
+) -> Path | None:
+    try:
+        from tkinter import Tk
+        from tkinter.filedialog import askdirectory
+    except ImportError as error:
+        raise RuntimeError(
+            "Tkinter is required to browse for the wrapper session folder."
+        ) from error
+
+    initial_dir = None
+    if initial_path:
+        candidate = Path(initial_path).expanduser()
+        if candidate.exists() and candidate.is_dir():
+            initial_dir = candidate.resolve()
+
+    root = Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+
+    try:
+        selected = askdirectory(
+            parent=root,
+            title="Select Wrapper Test Session Folder",
+            initialdir=str(initial_dir) if initial_dir else None,
+            mustexist=True,
+        )
+    finally:
+        root.destroy()
+
+    if not selected:
+        return None
+
+    return Path(selected).resolve()
+
+
+def validate_wrapper_session_folder(
+    session_folder: Path,
+) -> Path:
+    session_folder = Path(session_folder).resolve()
+
+    metadata_file = (
+        session_folder
+        / "metadata"
+        / "wrapper_session.json"
+    )
+
+    if not metadata_file.exists():
+        raise ValueError(
+            "Select the wrapper test session root folder, not Downloads or reports."
+        )
+
+    (session_folder / "reports").mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    return session_folder
+
+
+def write_throughput_results_csv(
+    csv_path: Path,
+    results: list[dict[str, Any]],
+) -> Path:
+    csv_path = Path(csv_path).resolve()
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+
+    fieldnames = []
+    for result in results:
+        for key in result.keys():
+            if key not in fieldnames:
+                fieldnames.append(key)
+
+    with csv_path.open(
+        "w",
+        encoding="utf-8-sig",
+        newline="",
+    ) as csv_file:
+        if not fieldnames:
+            return csv_path
+
+        writer = csv.DictWriter(
+            csv_file,
+            fieldnames=fieldnames,
+            extrasaction="ignore",
+        )
+        writer.writeheader()
+        writer.writerows(results)
+
+    return csv_path
+
+
+
 def write_gui_throughput_workbook(
     workbook_path: Path,
     result: dict[str, Any],
@@ -2380,14 +2475,8 @@ def import_speedtest_result_link(
 def import_latest_speedtest_csv_results(
     request: ThroughputCSVImportRequest,
 ) -> dict[str, Any]:
-    """
-    Select a Speedtest Result History CSV, find the most recent calendar
-    date, import ALL tests from that date, and save all of them to Analytics.
-    """
     with jobs_lock:
-        existing_job = jobs.get(
-            request.job_id
-        )
+        existing_job = jobs.get(request.job_id)
 
         if existing_job is None:
             raise HTTPException(
@@ -2395,9 +2484,7 @@ def import_latest_speedtest_csv_results(
                 detail="Throughput GUI job was not found.",
             )
 
-        job_snapshot = dict(
-            existing_job
-        )
+        job_snapshot = dict(existing_job)
 
     try:
         selected_csv = prompt_for_speedtest_csv()
@@ -2406,16 +2493,12 @@ def import_latest_speedtest_csv_results(
             return {
                 "success": False,
                 "cancelled": True,
-                "message": (
-                    "Speedtest CSV selection was cancelled."
-                ),
+                "message": "Speedtest CSV selection was cancelled.",
                 "results": [],
             }
 
-        imported_results = (
-            read_latest_speedtest_csv_results(
-                selected_csv
-            )
+        imported_results = read_latest_speedtest_csv_results(
+            selected_csv
         )
 
         session_folder_value = job_snapshot.get(
@@ -2427,58 +2510,68 @@ def import_latest_speedtest_csv_results(
                 "The throughput session folder is not available yet."
             )
 
-        session_folder = Path(
+        throughput_session_folder = Path(
             session_folder_value
         ).resolve()
 
-        workbook_path = (
-            session_folder
+        analytics_workbook_path = (
+            throughput_session_folder
             / "reports"
             / "Titan3_GUI_Results.xlsx"
         )
 
         write_speedtest_csv_results_workbook(
-            workbook_path=workbook_path,
+            workbook_path=analytics_workbook_path,
             results=imported_results,
             titan_ip=job_snapshot["titan_ip"],
         )
 
-        wrapper_reports_path = None
-        wrapper_csv_path = None
-
-        wrapper_session_folder = resolve_wrapper_session_folder(
-            request.wrapper_job_id
+        selected_wrapper_folder = (
+            prompt_for_wrapper_session_folder(
+                RESULTS_FOLDER
+            )
         )
 
-        if wrapper_session_folder is not None:
-            wrapper_reports_folder = (
-                wrapper_session_folder / "reports"
-            ).resolve()
-            wrapper_reports_folder.mkdir(
-                parents=True,
-                exist_ok=True,
+        if selected_wrapper_folder is None:
+            return {
+                "success": False,
+                "cancelled": True,
+                "message": (
+                    "Results were imported to Analytics, but wrapper folder selection was cancelled."
+                ),
+                "results": imported_results,
+            }
+
+        wrapper_session_folder = (
+            validate_wrapper_session_folder(
+                selected_wrapper_folder
             )
+        )
 
-            wrapper_reports_path = (
-                wrapper_reports_folder
-                / "Titan3_GUI_Results.xlsx"
-            ).resolve()
+        wrapper_reports_folder = (
+            wrapper_session_folder / "reports"
+        ).resolve()
 
-            write_speedtest_csv_results_workbook(
-                workbook_path=wrapper_reports_path,
-                results=imported_results,
-                titan_ip=job_snapshot["titan_ip"],
-            )
+        wrapper_excel_path = (
+            wrapper_reports_folder
+            / "Titan3_GUI_Results.xlsx"
+        )
 
-            wrapper_csv_path = (
-                wrapper_reports_folder
-                / "throughput_results.csv"
-            ).resolve()
+        wrapper_csv_path = (
+            wrapper_reports_folder
+            / "throughput_results.csv"
+        )
 
-            write_throughput_results_csv(
-                csv_path=wrapper_csv_path,
-                results=imported_results,
-            )
+        write_speedtest_csv_results_workbook(
+            workbook_path=wrapper_excel_path,
+            results=imported_results,
+            titan_ip=job_snapshot["titan_ip"],
+        )
+
+        write_throughput_results_csv(
+            csv_path=wrapper_csv_path,
+            results=imported_results,
+        )
 
         latest_result = imported_results[-1]
 
@@ -2487,18 +2580,13 @@ def import_latest_speedtest_csv_results(
             status="completed",
             message=(
                 f"Imported {len(imported_results)} Speedtest result(s) "
-                f"from the newest date "
-                f"{latest_result.get('original_date', '').split(' ')[0]}."
+                "and saved them to the selected wrapper session."
             ),
-            completed_runs=len(
-                imported_results
-            ),
-            number_of_runs=len(
-                imported_results
-            ),
+            completed_runs=len(imported_results),
+            number_of_runs=len(imported_results),
             results=imported_results,
             excel_path=str(
-                workbook_path.resolve()
+                analytics_workbook_path.resolve()
             ),
             error=None,
         )
@@ -2507,8 +2595,7 @@ def import_latest_speedtest_csv_results(
             "success": True,
             "cancelled": False,
             "message": (
-                f"Imported and saved {len(imported_results)} test(s) "
-                "from the most recent calendar date in the CSV."
+                f"Imported and saved {len(imported_results)} test(s)."
             ),
             "latest_date": (
                 latest_result.get("original_date", "").split(" ")[0]
@@ -2517,26 +2604,28 @@ def import_latest_speedtest_csv_results(
             "latest_result": latest_result,
             "results": imported_results,
             "excel_path": str(
-                workbook_path.resolve()
+                analytics_workbook_path.resolve()
             ),
-            "wrapper_excel_path": (
-                str(wrapper_reports_path)
-                if wrapper_reports_path is not None
-                else None
+            "wrapper_session_folder": str(
+                wrapper_session_folder
             ),
-            "wrapper_csv_path": (
-                str(wrapper_csv_path)
-                if wrapper_csv_path is not None
-                else None
+            "wrapper_excel_path": str(
+                wrapper_excel_path.resolve()
+            ),
+            "wrapper_csv_path": str(
+                wrapper_csv_path.resolve()
             ),
         }
 
-    except HTTPException:
-        raise
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(error),
+        ) from error
 
     except Exception as error:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(error),
         ) from error
 
