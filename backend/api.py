@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 from io import BytesIO
+import csv
 import re
 import shutil
 from threading import Lock
@@ -424,6 +425,240 @@ def fetch_speedtest_png_result(
         result_url=result_url.strip(),
         png_url=png_url,
     )
+
+
+
+
+def parse_speedtest_csv_date(
+    value: str,
+) -> datetime:
+    """
+    Parse the Date format exported by the Speedtest desktop app.
+
+    Example:
+        Aug/10/2026 16:42
+    """
+    value = str(value).strip()
+
+    formats = (
+        "%b/%d/%Y %H:%M",
+        "%b/%d/%Y %I:%M %p",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+    )
+
+    for date_format in formats:
+        try:
+            return datetime.strptime(
+                value,
+                date_format,
+            )
+        except ValueError:
+            continue
+
+    raise ValueError(
+        f"Unsupported Speedtest Date value: {value}"
+    )
+
+
+def read_latest_speedtest_csv_result(
+    csv_path: Path,
+) -> dict[str, Any]:
+    """
+    Read a Speedtest Result History CSV and return ONLY the row with the
+    most recent Date value.
+
+    The CSV exported by the user's Speedtest desktop app contains:
+        Id, Date, Latency, Download, Upload, ConnType, ServerName,
+        Lat, Lon, InternalIp, ExternalIp
+
+    No older row is returned or merged.
+    """
+    csv_path = Path(csv_path).expanduser().resolve()
+
+    if not csv_path.exists() or not csv_path.is_file():
+        raise FileNotFoundError(
+            f"Speedtest CSV was not found: {csv_path}"
+        )
+
+    with csv_path.open(
+        "r",
+        encoding="utf-8-sig",
+        newline="",
+    ) as csv_file:
+        reader = csv.DictReader(
+            csv_file
+        )
+
+        fieldnames = reader.fieldnames or []
+
+        required_columns = {
+            "Date",
+            "Latency",
+            "Download",
+            "Upload",
+            "ServerName",
+        }
+
+        missing_columns = sorted(
+            required_columns.difference(
+                fieldnames
+            )
+        )
+
+        if missing_columns:
+            raise ValueError(
+                "The selected file does not look like the expected "
+                "Speedtest Result History CSV. Missing columns: "
+                + ", ".join(missing_columns)
+            )
+
+        latest_row: dict[str, str] | None = None
+        latest_date: datetime | None = None
+
+        for row in reader:
+            raw_date = (
+                row.get("Date")
+                or ""
+            ).strip()
+
+            if not raw_date:
+                continue
+
+            try:
+                parsed_date = (
+                    parse_speedtest_csv_date(
+                        raw_date
+                    )
+                )
+            except ValueError:
+                continue
+
+            if (
+                latest_date is None
+                or parsed_date > latest_date
+            ):
+                latest_date = parsed_date
+                latest_row = row
+
+    if latest_row is None or latest_date is None:
+        raise ValueError(
+            "No valid Speedtest result rows were found in the CSV."
+        )
+
+    def optional_float(
+        key: str,
+    ) -> float | None:
+        value = (
+            latest_row.get(key)
+            or ""
+        ).strip()
+
+        if not value:
+            return None
+
+        try:
+            return float(value)
+        except ValueError:
+            return None
+
+    server_name = (
+        latest_row.get("ServerName")
+        or ""
+    ).strip()
+
+    result = {
+        "source": "speedtest_result_history_csv",
+        "csv_path": str(csv_path),
+        "speedtest_id": (
+            latest_row.get("Id")
+            or ""
+        ).strip() or None,
+        "test_date": latest_date.isoformat(
+            timespec="minutes"
+        ),
+        "original_date": (
+            latest_row.get("Date")
+            or ""
+        ).strip(),
+        "download_mbps": optional_float(
+            "Download"
+        ),
+        "upload_mbps": optional_float(
+            "Upload"
+        ),
+        "ping_ms": optional_float(
+            "Latency"
+        ),
+        "ping_jitter_ms": None,
+        "packet_loss_percent": None,
+        "server_name": server_name or None,
+        "server_location": server_name or None,
+        "connection_type": (
+            latest_row.get("ConnType")
+            or ""
+        ).strip() or None,
+        "server_latitude": optional_float(
+            "Lat"
+        ),
+        "server_longitude": optional_float(
+            "Lon"
+        ),
+        "internal_ip": (
+            latest_row.get("InternalIp")
+            or ""
+        ).strip() or None,
+        "external_ip": (
+            latest_row.get("ExternalIp")
+            or ""
+        ).strip() or None,
+    }
+
+    return result
+
+
+def prompt_for_speedtest_csv() -> Path | None:
+    """
+    Open a Windows file picker and let the engineer select the Speedtest
+    Result History CSV that was just downloaded/exported.
+    """
+    try:
+        from tkinter import Tk
+        from tkinter.filedialog import askopenfilename
+    except ImportError as error:
+        raise RuntimeError(
+            "Tkinter is required to browse for the Speedtest CSV."
+        ) from error
+
+    root = Tk()
+    root.withdraw()
+    root.attributes(
+        "-topmost",
+        True,
+    )
+
+    try:
+        selected = askopenfilename(
+            parent=root,
+            title="Select Speedtest Result History CSV",
+            filetypes=[
+                (
+                    "CSV files",
+                    "*.csv",
+                ),
+                (
+                    "All files",
+                    "*.*",
+                ),
+            ],
+        )
+    finally:
+        root.destroy()
+
+    if not selected:
+        return None
+
+    return Path(selected).resolve()
 
 
 
@@ -1913,6 +2148,50 @@ def import_speedtest_result_link(
         "detected_fields": detected_fields,
         "result": extracted,
     }
+
+
+@app.post("/api/throughput/gui/import-csv-latest")
+def import_latest_speedtest_csv_result() -> dict[str, Any]:
+    """
+    Let the engineer select a Speedtest Result History CSV and return ONLY
+    the result row with the most recent Date value.
+    """
+    try:
+        selected_csv = (
+            prompt_for_speedtest_csv()
+        )
+
+        if selected_csv is None:
+            return {
+                "success": False,
+                "cancelled": True,
+                "message": (
+                    "Speedtest CSV selection was cancelled."
+                ),
+                "result": None,
+            }
+
+        latest_result = (
+            read_latest_speedtest_csv_result(
+                selected_csv
+            )
+        )
+
+        return {
+            "success": True,
+            "cancelled": False,
+            "message": (
+                "Latest Speedtest result imported from CSV. "
+                "Only the most recent test date was used."
+            ),
+            "result": latest_result,
+        }
+
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(error),
+        ) from error
 
 
 @app.post(

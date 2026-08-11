@@ -39,8 +39,8 @@ function Throughput() {
 
   const [isLaunching, setIsLaunching] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
-  const [speedtestResultUrl, setSpeedtestResultUrl] = useState('')
-  const [isImporting, setIsImporting] = useState(false)
+  const [isImportingCsv, setIsImportingCsv] = useState(false)
+  const [importedTestDate, setImportedTestDate] = useState('')
 
   const pollingRef = useRef(null)
 
@@ -176,22 +176,24 @@ function Throughput() {
   const optionalNumber = (value) =>
     value === '' ? null : Number(value)
 
-  const handleImportResultLink = async () => {
-    if (!speedtestResultUrl.trim() || isImporting) {
+  const handleImportLatestCsv = async () => {
+    if (isImportingCsv) {
       return
     }
 
     setError('')
-    setIsImporting(true)
-    setMessage('Importing Speedtest result...')
+    setIsImportingCsv(true)
+    setMessage('Select the Speedtest Result History CSV...')
 
     try {
       const response = await api.post(
-        '/throughput/gui/import-link',
-        {
-          result_url: speedtestResultUrl.trim(),
-        }
+        '/throughput/gui/import-csv-latest'
       )
+
+      if (response.data?.cancelled) {
+        setMessage('Speedtest CSV import cancelled.')
+        return
+      }
 
       const imported = response.data?.result ?? {}
 
@@ -207,14 +209,6 @@ function Throughput() {
         setPingMs(String(imported.ping_ms))
       }
 
-      if (imported.ping_jitter_ms != null) {
-        setJitterMs(String(imported.ping_jitter_ms))
-      }
-
-      if (imported.packet_loss_percent != null) {
-        setPacketLoss(String(imported.packet_loss_percent))
-      }
-
       if (imported.server_name) {
         setServerName(imported.server_name)
       }
@@ -223,21 +217,29 @@ function Throughput() {
         setServerLocation(imported.server_location)
       }
 
-      setResultUrl(speedtestResultUrl.trim())
+      if (imported.external_ip) {
+        setNotes(
+          `Speedtest CSV latest test. External IP: ${imported.external_ip}`
+        )
+      }
+
+      setImportedTestDate(
+        imported.test_date ?? ''
+      )
 
       setMessage(
         response.data?.message ||
-          'Speedtest result import finished.'
+          'Latest Speedtest result imported from CSV.'
       )
     } catch (requestError) {
       setError(
         requestError.response?.data?.detail ||
           requestError.message ||
-          'Unable to import the Speedtest result.'
+          'Unable to import the Speedtest CSV.'
       )
-      setMessage('Speedtest result import failed.')
+      setMessage('Speedtest CSV import failed.')
     } finally {
-      setIsImporting(false)
+      setIsImportingCsv(false)
     }
   }
 
@@ -421,61 +423,58 @@ function Throughput() {
             <div>
               <h3>Save GUI Result</h3>
               <p>
-                After Speedtest finishes, paste the copied result link
-                to auto-fill the fields. You can still correct or enter
-                any missing values manually before saving.
+                After Speedtest finishes, download/export Result History
+                as CSV. TestHub will use only the row with the most recent
+                test date and fill the available result fields automatically.
               </p>
             </div>
           </div>
 
           <div className="configuration-grid">
-            <label className="form-field">
-              <span>Speedtest Result Link</span>
-              <input
-                type="text"
-                value={speedtestResultUrl}
-                onChange={(event) =>
-                  setSpeedtestResultUrl(event.target.value)
-                }
-                disabled={!resultEntryEnabled || isImporting}
-                placeholder="https://www.speedtest.net/my-result/d/..."
-              />
-            </label>
-
             <div className="form-field">
-              <span>Import From Speedtest</span>
+              <span>Result History CSV</span>
               <div className="configuration-note">
                 <FiExternalLink />
                 <span>
-                  Click Share in Speedtest, copy the result link,
-                  paste it here, then import it.
+                  In Speedtest, download/export Result History as CSV.
+                  TestHub will select only the newest test by Date.
                 </span>
               </div>
+            </div>
+
+            <div className="form-field">
+              <span>Imported Test Date</span>
+              <input
+                type="text"
+                value={importedTestDate}
+                readOnly
+                placeholder="No CSV result imported yet"
+              />
             </div>
           </div>
 
           <div className="configuration-footer">
             <div className="configuration-note">
-              <FiExternalLink />
+              <FiActivity />
               <span>
-                TestHub will try to detect the result values automatically.
+                Older CSV rows are ignored. Only the maximum test Date
+                in the selected file is imported.
               </span>
             </div>
 
             <button
               type="button"
               className="start-throughput-button"
-              onClick={handleImportResultLink}
+              onClick={handleImportLatestCsv}
               disabled={
                 !resultEntryEnabled ||
-                isImporting ||
-                speedtestResultUrl.trim() === ''
+                isImportingCsv
               }
             >
               <FiExternalLink />
-              {isImporting
-                ? 'Importing...'
-                : 'Import Result'}
+              {isImportingCsv
+                ? 'Importing Latest Result...'
+                : 'Import Latest CSV Result'}
             </button>
           </div>
 
