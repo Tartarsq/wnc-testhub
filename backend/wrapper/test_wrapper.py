@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 import re
 from datetime import datetime
@@ -19,18 +20,18 @@ class TestWrapper:
     """
     Coordinate one WNC TestHub test session.
 
-    Every session has one root folder containing:
+    Every wrapper session produces one root folder with three artifact areas:
         qxdm/
         throughput/
         syslog/
-        metadata/
 
-    QXDM has its own mode:
-        manual
-        automatic
+    Manual mode:
+        Creates/owns the session folder and metadata. Individual tools can be
+        run by the engineer while keeping one common result location.
 
-    Throughput and syslog are independent collection options and are not
-    controlled by the QXDM manual/automatic choice.
+    Automatic mode:
+        Coordinates the configured collectors in order. QXDM still uses the
+        current safe TestHub workflow, including its manual Settings delay.
     """
 
     def __init__(
@@ -43,14 +44,8 @@ class TestWrapper:
 
     @staticmethod
     def _safe_name(value: str) -> str:
-        cleaned = re.sub(
-            r'[^A-Za-z0-9._ -]+',
-            '_',
-            value,
-        ).strip()
-
+        cleaned = re.sub(r'[^A-Za-z0-9._ -]+', '_', value).strip()
         cleaned = cleaned.replace(" ", "_")
-
         return cleaned or "WNC_Test"
 
     def create_workspace(
@@ -58,22 +53,16 @@ class TestWrapper:
         save_root: Path,
         session_name: str,
         titan_ip: str,
-        qxdm_mode: str,
+        mode: str,
     ) -> dict[str, Any]:
         save_root = Path(save_root).expanduser().resolve()
-        save_root.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
+        save_root.mkdir(parents=True, exist_ok=True)
 
         safe_name = self._safe_name(session_name)
-        timestamp = datetime.now().strftime(
-            "%Y%m%d_%H%M%S"
-        )
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
         session_folder = (
-            save_root /
-            f"{safe_name}_{timestamp}"
+            save_root / f"{safe_name}_{timestamp}"
         ).resolve()
 
         qxdm_folder = session_folder / "qxdm"
@@ -87,19 +76,14 @@ class TestWrapper:
             syslog_folder,
             metadata_folder,
         ):
-            folder.mkdir(
-                parents=True,
-                exist_ok=True,
-            )
+            folder.mkdir(parents=True, exist_ok=True)
 
         metadata = {
             "session_name": session_name,
             "safe_name": safe_name,
             "titan_ip": titan_ip,
-            "qxdm_mode": qxdm_mode,
-            "created_at": datetime.now().isoformat(
-                timespec="seconds"
-            ),
+            "mode": mode,
+            "created_at": datetime.now().isoformat(timespec="seconds"),
             "status": "created",
             "session_folder": str(session_folder),
             "artifacts": {
@@ -121,26 +105,88 @@ class TestWrapper:
         metadata_path: Path,
         metadata: dict[str, Any],
     ) -> None:
-        metadata_path.parent.mkdir(
+        metadata_path.parent.mkdir(parents=True, exist_ok=True)
+        metadata_path.write_text(
+            json.dumps(metadata, indent=2),
+            encoding="utf-8",
+        )
+
+    @staticmethod
+    def write_throughput_csv(
+        csv_path: Path,
+        results: list[dict[str, Any]],
+    ) -> Path:
+        """
+        Save the wrapper's throughput results as a CSV artifact.
+
+        The CSV is written inside the current wrapper session's throughput/
+        folder so it travels with the QXDM, syslog, metadata, and Excel
+        artifacts for that test session.
+        """
+        csv_path = Path(csv_path).resolve()
+        csv_path.parent.mkdir(
             parents=True,
             exist_ok=True,
         )
 
-        metadata_path.write_text(
-            json.dumps(
-                metadata,
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
+        if not results:
+            # Still create an empty CSV so the session artifact set is
+            # predictable even when no throughput rows were produced.
+            csv_path.write_text(
+                "",
+                encoding="utf-8",
+            )
+            return csv_path
 
-    def run(
+        fieldnames: list[str] = []
+
+        for result in results:
+            for key in result.keys():
+                if key not in fieldnames:
+                    fieldnames.append(key)
+
+        with csv_path.open(
+            "w",
+            encoding="utf-8-sig",
+            newline="",
+        ) as csv_file:
+            writer = csv.DictWriter(
+                csv_file,
+                fieldnames=fieldnames,
+                extrasaction="ignore",
+            )
+
+            writer.writeheader()
+
+            for result in results:
+                csv_row: dict[str, Any] = {}
+
+                for field in fieldnames:
+                    value = result.get(field)
+
+                    # Preserve nested values in a readable CSV-safe form.
+                    if isinstance(
+                        value,
+                        (dict, list, tuple),
+                    ):
+                        value = json.dumps(
+                            value,
+                            ensure_ascii=False,
+                        )
+
+                    csv_row[field] = value
+
+                writer.writerow(csv_row)
+
+        return csv_path
+
+
+    def run_automatic(
         self,
         *,
         save_root: Path,
         session_name: str,
         titan_ip: str,
-        qxdm_mode: str,
         number_of_runs: int,
         delay_between_runs: int,
         timeout_seconds: int,
@@ -151,85 +197,36 @@ class TestWrapper:
         qxdm_max_log_size_mb: int,
         load_mask: bool,
         continue_without_mask: bool,
-        progress_callback: Optional[
-            ProgressCallback
-        ] = None,
+        progress_callback: Optional[ProgressCallback] = None,
     ) -> dict[str, Any]:
-        normalized_qxdm_mode = (
-            qxdm_mode.strip().lower()
-        )
-
-        if normalized_qxdm_mode not in {
-            "manual",
-            "automatic",
-        }:
-            raise ValueError(
-                "QXDM mode must be either "
-                "'manual' or 'automatic'."
-            )
-
         session = self.create_workspace(
             save_root=save_root,
             session_name=session_name,
             titan_ip=titan_ip,
-            qxdm_mode=normalized_qxdm_mode,
+            mode="automatic",
         )
 
-        session_folder = Path(
-            session["session_folder"]
-        )
-        qxdm_folder = Path(
-            session["artifacts"]["qxdm"]
-        )
-        throughput_folder = Path(
-            session["artifacts"]["throughput"]
-        )
-        syslog_folder = Path(
-            session["artifacts"]["syslog"]
-        )
-        metadata_path = (
-            session_folder /
-            "metadata" /
-            "wrapper_session.json"
-        )
+        session_folder = Path(session["session_folder"])
+        qxdm_folder = Path(session["artifacts"]["qxdm"])
+        throughput_folder = Path(session["artifacts"]["throughput"])
+        syslog_folder = Path(session["artifacts"]["syslog"])
+        metadata_path = session_folder / "metadata" / "wrapper_session.json"
 
         session["status"] = "running"
-        session["started_at"] = (
-            datetime.now().isoformat(
-                timespec="seconds"
-            )
-        )
+        session["started_at"] = datetime.now().isoformat(timespec="seconds")
         session["steps"] = []
+        self.write_metadata(metadata_path, session)
 
-        self.write_metadata(
-            metadata_path,
-            session,
-        )
-
-        def report(
-            step: str,
-            status: str,
-            message: str,
-            **extra: Any,
-        ) -> None:
+        def report(step: str, status: str, message: str, **extra: Any) -> None:
             item = {
                 "step": step,
                 "status": status,
                 "message": message,
-                "timestamp": (
-                    datetime.now().isoformat(
-                        timespec="seconds"
-                    )
-                ),
+                "timestamp": datetime.now().isoformat(timespec="seconds"),
                 **extra,
             }
-
             session["steps"].append(item)
-
-            self.write_metadata(
-                metadata_path,
-                session,
-            )
+            self.write_metadata(metadata_path, session)
 
             if progress_callback is not None:
                 progress_callback(item)
@@ -246,124 +243,53 @@ class TestWrapper:
 
                 syslog_path = self.syslog.start(
                     syslog_folder,
-                    base_name=self._safe_name(
-                        session_name
-                    ),
+                    base_name=self._safe_name(session_name),
                 )
-
                 syslog_started = True
 
-                session["syslog_path"] = str(
-                    syslog_path.resolve()
-                )
-
+                session["syslog_path"] = str(syslog_path.resolve())
                 report(
                     "syslog",
                     "running",
                     "Syslog collection is active.",
-                    path=str(
-                        syslog_path.resolve()
-                    ),
+                    path=str(syslog_path.resolve()),
                 )
 
             if collect_qxdm:
-                qxdm_name = (
-                    Path(qxdm_log_filename)
-                    .name
-                    .strip()
-                )
-
+                qxdm_name = Path(qxdm_log_filename).name.strip()
                 if not qxdm_name:
-                    qxdm_name = (
-                        f"{self._safe_name(session_name)}.isf"
-                    )
-
+                    qxdm_name = f"{self._safe_name(session_name)}.isf"
                 if Path(qxdm_name).suffix == "":
                     qxdm_name += ".isf"
 
-                qxdm_path = (
-                    qxdm_folder /
-                    qxdm_name
-                ).resolve()
-
+                qxdm_path = (qxdm_folder / qxdm_name).resolve()
                 self.qxdm.max_log_size_mb = min(
-                    max(
-                        int(qxdm_max_log_size_mb),
-                        1,
-                    ),
+                    max(int(qxdm_max_log_size_mb), 1),
                     1024,
                 )
 
-                session["expected_qxdm_path"] = str(
-                    qxdm_path
+                report(
+                    "qxdm",
+                    "starting",
+                    (
+                        "Starting QXDM. The current safe workflow may pause "
+                        "for manual Item Store File setup before continuing."
+                    ),
+                    expected_path=str(qxdm_path),
                 )
 
-                if normalized_qxdm_mode == "manual":
-                    report(
-                        "qxdm",
-                        "manual_setup",
-                        (
-                            "Manual QXDM mode selected. TestHub is only "
-                            "launching QXDM. You control the mask, save "
-                            "location, logging, and modem commands manually."
-                        ),
-                        wrapper_qxdm_folder=str(qxdm_folder.resolve()),
-                    )
+                self.qxdm.start_logging(
+                    log_path=qxdm_path,
+                    load_mask=load_mask,
+                    continue_without_mask=continue_without_mask,
+                )
 
-                    self.qxdm.launch()
-
-                    # Give the engineer time to complete the QXDM setup before
-                    # the wrapper starts throughput testing. This does not open
-                    # Settings or send any modem commands.
-                    self.qxdm.wait_for_manual_log_settings(
-                        wait_seconds=60.0
-                    )
-
-                    report(
-                        "qxdm",
-                        "manual_ready",
-                        (
-                            "Manual QXDM setup window ended. TestHub will "
-                            "continue the wrapper workflow. QXDM remains "
-                            "under manual control."
-                        ),
-                        wrapper_qxdm_folder=str(qxdm_folder.resolve()),
-                    )
-
-                else:
-                    report(
-                        "qxdm",
-                        "automatic_starting",
-                        (
-                            "Automatic QXDM mode selected. TestHub will "
-                            "run the QXDM controller startup workflow, including "
-                            "USB detection, mask loading, logging setup, mode "
-                            "lpm, and mode online."
-                        ),
-                        expected_path=str(
-                            qxdm_path
-                        ),
-                    )
-
-                    self.qxdm.start_logging(
-                        log_path=qxdm_path,
-                        load_mask=load_mask,
-                        continue_without_mask=(
-                            continue_without_mask
-                        ),
-                    )
-
-                    report(
-                        "qxdm",
-                        "running",
-                        (
-                            "QXDM automatic-mode capture "
-                            "is active."
-                        ),
-                        expected_path=str(
-                            qxdm_path
-                        ),
-                    )
+                report(
+                    "qxdm",
+                    "running",
+                    "QXDM capture is active.",
+                    expected_path=str(qxdm_path),
+                )
 
             if collect_throughput:
                 report(
@@ -372,73 +298,74 @@ class TestWrapper:
                     "Starting throughput test runs.",
                 )
 
-                titan = Titan3(
-                    ip_address=titan_ip
-                )
+                titan = Titan3(ip_address=titan_ip)
 
+                # The existing AutomatedTestRunner creates its throughput
+                # report relative to session_folder. Giving it this dedicated
+                # wrapper subfolder keeps the final report under throughput/.
                 runner = AutomatedTestRunner(
                     titan=titan,
                     qxdm=None,
-                    session_folder=(
-                        throughput_folder
-                    ),
+                    session_folder=throughput_folder,
                     number_of_runs=number_of_runs,
-                    delay_between_runs=(
-                        delay_between_runs
-                    ),
-                    timeout_seconds=(
-                        timeout_seconds
-                    ),
+                    delay_between_runs=delay_between_runs,
+                    timeout_seconds=timeout_seconds,
                     open_results_after_run=False,
                     progress_callback=None,
                 )
 
                 results = runner.run()
 
-                session[
-                    "throughput_results"
-                ] = results
+                throughput_csv_path = (
+                    throughput_folder
+                    / "throughput_results.csv"
+                ).resolve()
 
-                session[
-                    "throughput_report"
-                ] = str(
+                self.write_throughput_csv(
+                    csv_path=throughput_csv_path,
+                    results=results,
+                )
+
+                session["throughput_results"] = results
+                session["throughput_report"] = str(
                     runner.excel_path.resolve()
+                )
+                session["throughput_csv"] = str(
+                    throughput_csv_path
                 )
 
                 report(
                     "throughput",
                     "completed",
-                    "Throughput testing completed.",
-                    report_path=str(
-                        runner.excel_path.resolve()
-                    ),
+                    "Throughput testing completed. Excel and CSV results were saved.",
+                    report_path=str(runner.excel_path.resolve()),
+                    csv_path=str(throughput_csv_path),
                     completed_runs=len(results),
                 )
 
+            # Do not invent a QXDM stop method here. The currently tested QXDM
+            # build does not expose a reliable programmatic Stop Logging menu.
+            # The wrapper therefore records that a manual stop is required.
             if collect_qxdm:
                 report(
                     "qxdm",
                     "manual_stop_required",
                     (
-                        "When the QXDM log is finished, use Finalize "
-                        "QXDM Log in TestHub. You can select the actual saved "
-                        "QXDM file from any location, and TestHub will copy it "
-                        "into this wrapper session's qxdm folder."
+                        "Throughput work is complete. Stop/finalize QXDM using "
+                        "the current validated QXDM workflow, then select the "
+                        "saved log in TestHub if automatic detection misses it."
                     ),
                 )
 
             if syslog_started:
                 syslog_path = self.syslog.stop()
                 syslog_started = False
-
                 report(
                     "syslog",
                     "completed",
                     "Syslog collection stopped.",
                     path=(
-                        str(
-                            syslog_path.resolve()
-                        )
+                        str(syslog_path.resolve())
                         if syslog_path is not None
                         else None
                     ),
@@ -449,18 +376,10 @@ class TestWrapper:
                 if collect_qxdm
                 else "completed"
             )
-
-            session["finished_at"] = (
-                datetime.now().isoformat(
-                    timespec="seconds"
-                )
+            session["finished_at"] = datetime.now().isoformat(
+                timespec="seconds"
             )
-
-            self.write_metadata(
-                metadata_path,
-                session,
-            )
-
+            self.write_metadata(metadata_path, session)
             return session
 
         except Exception as error:
@@ -472,15 +391,8 @@ class TestWrapper:
 
             session["status"] = "failed"
             session["error"] = str(error)
-            session["finished_at"] = (
-                datetime.now().isoformat(
-                    timespec="seconds"
-                )
+            session["finished_at"] = datetime.now().isoformat(
+                timespec="seconds"
             )
-
-            self.write_metadata(
-                metadata_path,
-                session,
-            )
-
+            self.write_metadata(metadata_path, session)
             raise

@@ -2043,13 +2043,47 @@ def get_wrapper_syslog_status() -> dict[str, Any]:
 
 
 @app.get("/api/wrapper/browse-folder")
-def browse_wrapper_folder() -> dict[str, str | None]:
+def browse_wrapper_folder(
+    current_path: str | None = None,
+) -> dict[str, str | None]:
     """
     Open the native Windows folder picker on the backend/test computer.
+
+    The picker starts in the folder currently shown by the frontend when
+    current_path is supplied. If no current path is supplied, it opens in
+    TestHub's configured RESULTS_FOLDER instead of defaulting to Downloads.
     """
     try:
         from tkinter import Tk
         from tkinter.filedialog import askdirectory
+
+        initial_folder: Path | None = None
+
+        if current_path:
+            candidate = Path(
+                current_path
+            ).expanduser()
+
+            if candidate.exists() and candidate.is_dir():
+                initial_folder = candidate.resolve()
+
+            elif candidate.parent.exists():
+                initial_folder = candidate.parent.resolve()
+
+        if initial_folder is None:
+            results_candidate = Path(
+                RESULTS_FOLDER
+            ).expanduser()
+
+            if results_candidate.exists():
+                initial_folder = results_candidate.resolve()
+
+            else:
+                results_candidate.mkdir(
+                    parents=True,
+                    exist_ok=True,
+                )
+                initial_folder = results_candidate.resolve()
 
         root = Tk()
         root.withdraw()
@@ -2059,12 +2093,15 @@ def browse_wrapper_folder() -> dict[str, str | None]:
             selected = askdirectory(
                 parent=root,
                 title="Choose WNC TestHub Result Folder",
+                initialdir=str(initial_folder),
                 mustexist=False,
             )
         finally:
             root.destroy()
 
-        return {"path": selected or None}
+        return {
+            "path": selected or None,
+        }
 
     except Exception as error:
         raise HTTPException(
