@@ -162,9 +162,9 @@ class ThroughputCSVImportRequest(BaseModel):
         min_length=1,
         max_length=100,
     )
-    wrapper_job_id: str | None = Field(
+    wrapper_session_folder: str | None = Field(
         default=None,
-        max_length=100,
+        max_length=500,
     )
 
 
@@ -1459,6 +1459,83 @@ def write_throughput_results_csv(
 
 
 
+
+def prompt_for_qxdm_wrapper_session_folder(
+    initial_path: str | Path | None = None,
+) -> Path | None:
+    """
+    Let the engineer select the wrapper session ROOT folder for QXDM.
+
+    TestHub automatically uses:
+        <wrapper session>\qxdm\
+    """
+    try:
+        from tkinter import Tk
+        from tkinter.filedialog import askdirectory
+    except ImportError as error:
+        raise RuntimeError(
+            "Tkinter is required to browse for the wrapper session folder."
+        ) from error
+
+    initial_dir = None
+
+    if initial_path:
+        candidate = Path(initial_path).expanduser()
+
+        if candidate.exists() and candidate.is_dir():
+            initial_dir = candidate.resolve()
+
+    root = Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+
+    try:
+        selected = askdirectory(
+            parent=root,
+            title="Select Wrapper Test Session Folder for QXDM",
+            initialdir=(
+                str(initial_dir)
+                if initial_dir is not None
+                else None
+            ),
+            mustexist=True,
+        )
+    finally:
+        root.destroy()
+
+    if not selected:
+        return None
+
+    return Path(selected).resolve()
+
+
+def validate_qxdm_wrapper_session_folder(
+    session_folder: Path,
+) -> Path:
+    session_folder = Path(session_folder).resolve()
+
+    metadata_file = (
+        session_folder
+        / "metadata"
+        / "wrapper_session.json"
+    )
+
+    if not metadata_file.exists():
+        raise ValueError(
+            "Select the wrapper test session root folder, "
+            "not the qxdm subfolder or another directory."
+        )
+
+    qxdm_folder = session_folder / "qxdm"
+    qxdm_folder.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    return session_folder
+
+
+
 def save_qxdm_log_to_session(
     session_id: str | None,
     log_path: Path | None,
@@ -1542,14 +1619,41 @@ def run_qxdm_start(
             request.session_id
         )
 
-        wrapper_session_folder = resolve_wrapper_session_folder(
-            request.wrapper_job_id
-        )
+        wrapper_session_folder = None
 
-        # When a wrapper session is active, keep QXDM with that wrapper.
-        # Otherwise preserve the normal standalone QXDM behavior.
+        if request.wrapper_session_folder:
+            candidate = Path(
+                request.wrapper_session_folder
+            ).expanduser()
+
+            if candidate.exists() and candidate.is_dir():
+                wrapper_session_folder = (
+                    validate_qxdm_wrapper_session_folder(
+                        candidate
+                    )
+                )
+
+        # When no wrapper folder was supplied by the frontend, ask the
+        # engineer where this QXDM log should belong.
+        if wrapper_session_folder is None:
+            selected_wrapper = (
+                prompt_for_qxdm_wrapper_session_folder(
+                    RESULTS_FOLDER
+                )
+            )
+
+            if selected_wrapper is not None:
+                wrapper_session_folder = (
+                    validate_qxdm_wrapper_session_folder(
+                        selected_wrapper
+                    )
+                )
+
         if wrapper_session_folder is not None:
-            output_folder = wrapper_session_folder / "qxdm"
+            output_folder = (
+                wrapper_session_folder
+                / "qxdm"
+            )
         else:
             output_folder = (
                 Path(request.output_folder).expanduser()
