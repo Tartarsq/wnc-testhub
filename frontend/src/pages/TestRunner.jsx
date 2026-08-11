@@ -1,10 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import {
+  FiActivity,
   FiCheckCircle,
+  FiDatabase,
+  FiFileText,
   FiFolder,
   FiPlay,
   FiRadio,
   FiRefreshCw,
+  FiSettings,
 } from 'react-icons/fi'
 import Sidebar from '../components/Sidebar'
 import Topbar from '../components/Topbar'
@@ -18,9 +22,15 @@ function TestRunner() {
   )
   const [titanIp, setTitanIp] = useState('192.168.100.1')
 
+  const [collectQxdm, setCollectQxdm] = useState(true)
+  const [qxdmMode, setQxdmMode] = useState('manual')
+  const [collectThroughput, setCollectThroughput] = useState(true)
+  const [collectPcat, setCollectPcat] = useState(true)
+
   const [job, setJob] = useState(null)
   const [error, setError] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isFinalizingQxdm, setIsFinalizingQxdm] = useState(false)
 
   const pollingRef = useRef(null)
 
@@ -37,22 +47,6 @@ function TestRunner() {
     }
   }, [])
 
-  const saveActiveWrapper = (wrapperJob) => {
-    if (!wrapperJob?.job_id) {
-      return
-    }
-
-    window.localStorage.setItem(
-      'wncActiveWrapperJob',
-      JSON.stringify({
-        job_id: wrapperJob.job_id,
-        session_folder: wrapperJob.session_folder ?? null,
-        status: wrapperJob.status ?? null,
-        session_name: sessionName.trim(),
-      })
-    )
-  }
-
   const startPolling = (jobId) => {
     stopPolling()
 
@@ -66,14 +60,27 @@ function TestRunner() {
         )
 
         const updatedJob = response.data
-
         setJob(updatedJob)
-        saveActiveWrapper(updatedJob)
+
+        if (updatedJob?.job_id) {
+          window.localStorage.setItem(
+            'wncActiveWrapperJob',
+            JSON.stringify({
+              job_id: updatedJob.job_id,
+              session_folder: updatedJob.session_folder ?? null,
+              status: updatedJob.status ?? null,
+              session_name: sessionName,
+            })
+          )
+        }
 
         if (
-          ['ready', 'completed', 'failed'].includes(
-            updatedJob.status
-          )
+          [
+            'completed',
+            'failed',
+            'ready',
+            'awaiting_qxdm_stop',
+          ].includes(updatedJob.status)
         ) {
           stopPolling()
           setIsSubmitting(false)
@@ -81,14 +88,13 @@ function TestRunner() {
       } catch (requestError) {
         stopPolling()
         setIsSubmitting(false)
-
         setError(
           requestError.response?.data?.detail ||
             requestError.message ||
             'Unable to retrieve wrapper status.'
         )
       }
-    }, 1000)
+    }, 2000)
   }
 
   const browseFolder = async () => {
@@ -101,6 +107,7 @@ function TestRunner() {
           params: {
             current_path: saveRoot,
           },
+          // Keep this request alive while the Windows folder picker is open.
           timeout: 0,
         }
       )
@@ -127,45 +134,43 @@ function TestRunner() {
       return
     }
 
-    if (!titanIp.trim()) {
-      setError('Enter the Titan 3 IP address.')
-      return
-    }
-
     if (!saveRoot.trim()) {
       setError('Choose a result save location.')
       return
     }
 
+    if (!collectQxdm && !collectThroughput && !collectPcat) {
+      setError('Select at least one test artifact.')
+      return
+    }
+
     setError('')
-    setJob(null)
     setIsSubmitting(true)
+    setJob(null)
 
     try {
-      /*
-       * The wrapper now only creates and activates the shared test session.
-       *
-       * QXDM and Speedtest are controlled from their own GUI pages.
-       * These values remain in the request only because the backend request
-       * model still expects them. The wrapper does not automatically run
-       * throughput or QXDM from this page.
-       */
       const payload = {
         session_name: sessionName.trim(),
         save_root: saveRoot.trim(),
         titan_ip: titanIp.trim(),
 
-        collect_qxdm: true,
-        qxdm_mode: 'manual',
-        collect_throughput: true,
-        collect_syslog: true,
+        collect_qxdm: collectQxdm,
+        qxdm_mode: collectQxdm ? qxdmMode : 'manual',
 
+        collect_throughput: collectThroughput,
+
+        // The backend still names this field collect_syslog while PCAT
+        // integration is being completed. In the UI this represents the
+        // PCAT CrashDump / syslog artifact selection.
+        collect_syslog: collectPcat,
+
+        // Hidden compatibility defaults. Speedtest GUI now controls how
+        // many tests are actually performed.
         number_of_runs: 1,
         delay_between_runs: 0,
         timeout_seconds: 180,
 
-        qxdm_log_filename:
-          `${sessionName.trim()}_QXDM.isf`,
+        qxdm_log_filename: `${sessionName.trim()}_QXDM.isf`,
         qxdm_max_log_size_mb: 1024,
         load_mask: true,
         continue_without_mask: true,
@@ -180,25 +185,59 @@ function TestRunner() {
       )
 
       setJob(response.data)
-      saveActiveWrapper(response.data)
-
+      window.localStorage.setItem(
+        'wncActiveWrapperJob',
+        JSON.stringify({
+          job_id: response.data.job_id,
+          session_folder: response.data.session_folder ?? null,
+          status: response.data.status ?? 'queued',
+          session_name: sessionName.trim(),
+        })
+      )
       startPolling(response.data.job_id)
     } catch (requestError) {
       setIsSubmitting(false)
-
       setError(
         requestError.response?.data?.detail ||
           requestError.message ||
-          'Unable to create the wrapper session.'
+          'Unable to start the wrapper test.'
       )
     }
   }
 
+  const finalizeQxdmLog = async () => {
+    if (!job?.job_id || isFinalizingQxdm) {
+      return
+    }
+
+    setError('')
+    setIsFinalizingQxdm(true)
+
+    try {
+      const response = await api.post(
+        `/wrapper/qxdm/finalize/${job.job_id}`
+      )
+
+      const statusResponse = await api.get(
+        `/wrapper/status/${job.job_id}`,
+        {
+          timeout: 30000,
+        }
+      )
+
+      setJob(statusResponse.data)
+    } catch (requestError) {
+      setError(
+        requestError.response?.data?.detail ||
+          requestError.message ||
+          'Unable to finalize the QXDM log.'
+      )
+    } finally {
+      setIsFinalizingQxdm(false)
+    }
+  }
+
   const statusLabel = job?.status ?? 'Idle'
-  const sessionFolder =
-    job?.session_folder ??
-    job?.result?.session_folder ??
-    null
 
   return (
     <div className="dashboard-layout">
@@ -211,8 +250,8 @@ function TestRunner() {
           <div>
             <h2>Unified Test Session</h2>
             <p>
-              Create one active result folder, then use the
-              Throughput, QXDM, and PCAT pages for the actual GUI testing.
+              Choose QXDM, Speedtest, and PCAT for one shared
+              wrapper result folder.
             </p>
           </div>
 
@@ -231,14 +270,14 @@ function TestRunner() {
           <article className="qxdm-control-card">
             <div className="section-heading">
               <div className="section-icon">
-                <FiFolder />
+                <FiSettings />
               </div>
 
               <div>
-                <h3>Start Test Session</h3>
+                <h3>Test Configuration</h3>
                 <p>
-                  This only creates and activates the shared wrapper
-                  folder. It does not automatically run Speedtest or QXDM.
+                  Choose the test destination and the GUI tools you want
+                  linked to this wrapper session.
                 </p>
               </div>
             </div>
@@ -246,7 +285,6 @@ function TestRunner() {
             <div className="qxdm-form-grid">
               <label className="form-field">
                 <span>Test Name</span>
-
                 <input
                   value={sessionName}
                   onChange={(event) =>
@@ -258,7 +296,6 @@ function TestRunner() {
 
               <label className="form-field">
                 <span>Titan 3 IP</span>
-
                 <input
                   value={titanIp}
                   onChange={(event) =>
@@ -269,7 +306,7 @@ function TestRunner() {
               </label>
 
               <label className="form-field qxdm-folder-field">
-                <span>Result Folder</span>
+                <span>Save Location</span>
 
                 <div className="qxdm-folder-input">
                   <FiFolder />
@@ -294,6 +331,122 @@ function TestRunner() {
               </label>
             </div>
 
+            <div className="wrapper-artifact-grid">
+              <label className="wrapper-artifact-card">
+                <input
+                  type="checkbox"
+                  checked={collectQxdm}
+                  onChange={(event) =>
+                    setCollectQxdm(event.target.checked)
+                  }
+                  disabled={isSubmitting}
+                />
+
+                <FiDatabase />
+
+                <div>
+                  <strong>QXDM Log</strong>
+                  <span>Qualcomm diagnostic capture</span>
+                </div>
+              </label>
+
+              <label className="wrapper-artifact-card">
+                <input
+                  type="checkbox"
+                  checked={collectThroughput}
+                  onChange={(event) =>
+                    setCollectThroughput(event.target.checked)
+                  }
+                  disabled={isSubmitting}
+                />
+
+                <FiActivity />
+
+                <div>
+                  <strong>Speedtest</strong>
+                  <span>GUI throughput testing and CSV results</span>
+                </div>
+              </label>
+
+              <label className="wrapper-artifact-card">
+                <input
+                  type="checkbox"
+                  checked={collectPcat}
+                  onChange={(event) =>
+                    setCollectPcat(event.target.checked)
+                  }
+                  disabled={isSubmitting}
+                />
+
+                <FiFileText />
+
+                <div>
+                  <strong>PCAT CrashDump</strong>
+                  <span>
+                    Open PCAT and collect the CrashDump / syslog artifact
+                  </span>
+                </div>
+              </label>
+            </div>
+
+            {collectQxdm && (
+              <div className="qxdm-control-card wrapper-qxdm-mode-panel">
+                <div className="section-heading">
+                  <div className="section-icon">
+                    <FiDatabase />
+                  </div>
+
+                  <div>
+                    <h3>QXDM Logging Mode</h3>
+                    <p>
+                      Choose whether the QXDM portion of this test should
+                      use manual setup or the automatic QXDM workflow.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="wrapper-mode-grid">
+                  <button
+                    type="button"
+                    className={`wrapper-mode-card ${
+                      qxdmMode === 'manual' ? 'selected' : ''
+                    }`}
+                    onClick={() => setQxdmMode('manual')}
+                    disabled={isSubmitting}
+                  >
+                    <FiSettings />
+
+                    <strong>Manual QXDM</strong>
+
+                    <span>
+                      TestHub only opens QXDM and gives you 60 seconds.
+                      You control the mask, save location, logging, and modem
+                      commands yourself.
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    className={`wrapper-mode-card ${
+                      qxdmMode === 'automatic' ? 'selected' : ''
+                    }`}
+                    onClick={() => setQxdmMode('automatic')}
+                    disabled={isSubmitting}
+                  >
+                    <FiActivity />
+
+                    <strong>Automatic QXDM</strong>
+
+                    <span>
+                      TestHub runs the QXDM controller startup sequence.
+                      The current controller may still pause for QXDM Item
+                      Store File setup if your build cannot set it reliably.
+                    </span>
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div className="qxdm-action-row">
               <button
                 type="button"
@@ -304,29 +457,32 @@ function TestRunner() {
                 <FiPlay />
 
                 {isSubmitting
-                  ? 'Creating Session...'
+                  ? 'Starting...'
                   : 'Start Test'}
               </button>
+
+              {collectQxdm && job?.job_id && (
+                <button
+                  type="button"
+                  className="qxdm-refresh-button"
+                  onClick={finalizeQxdmLog}
+                  disabled={isFinalizingQxdm}
+                >
+                  <FiFolder />
+                  {isFinalizingQxdm
+                    ? 'Finalizing...'
+                    : 'Finalize QXDM Log'}
+                </button>
+              )}
             </div>
-
-            {sessionFolder && (
-              <div className="qxdm-manual-settings-banner">
-                <strong>Active wrapper session</strong>
-
-                <span>
-                  {sessionFolder}
-                </span>
-              </div>
-            )}
           </article>
 
           <article className="qxdm-monitor-card">
             <div className="panel-header">
               <div>
-                <h3>Session Status</h3>
-
+                <h3>Wrapper Progress</h3>
                 <p>
-                  Once Ready, open the individual GUI testing pages.
+                  One active session for the selected GUI tools.
                 </p>
               </div>
 
@@ -340,18 +496,28 @@ function TestRunner() {
               </div>
 
               <div>
-                <dt>Session Folder</dt>
+                <dt>QXDM Mode</dt>
                 <dd>
-                  {sessionFolder ?? 'Not created yet'}
+                  {collectQxdm
+                    ? job?.result?.qxdm_mode ?? qxdmMode
+                    : 'Not selected'}
                 </dd>
               </div>
 
               <div>
-                <dt>Next Step</dt>
+                <dt>Session Folder</dt>
                 <dd>
-                  {job?.status === 'ready'
-                    ? 'Open Throughput, QXDM, or PCAT and run the GUI test.'
-                    : 'Create the wrapper session first.'}
+                  {job?.session_folder ??
+                    job?.result?.session_folder ??
+                    'Not created yet'}
+                </dd>
+              </div>
+
+              <div>
+                <dt>Collected QXDM Log</dt>
+                <dd>
+                  {job?.result?.qxdm_log_path ??
+                    'Not finalized yet'}
                 </dd>
               </div>
             </dl>
@@ -379,9 +545,7 @@ function TestRunner() {
                   <FiRadio />
 
                   <span>
-                    {job?.status === 'ready'
-                      ? 'Session is active and ready for GUI testing.'
-                      : 'Choose the result folder and click Start Test.'}
+                    Configure the session and start when ready.
                   </span>
                 </div>
               )}
