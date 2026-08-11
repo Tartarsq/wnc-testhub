@@ -69,7 +69,10 @@ function TestRunner() {
     pollingRef.current = window.setInterval(async () => {
       try {
         const response = await api.get(
-          `/wrapper/status/${jobId}`
+          `/wrapper/status/${jobId}`,
+          {
+            timeout: 30000,
+          }
         )
 
         const updatedJob = response.data
@@ -102,7 +105,16 @@ function TestRunner() {
     setError('')
 
     try {
-      const response = await api.get('/wrapper/browse-folder')
+      const response = await api.get(
+        '/wrapper/browse-folder',
+        {
+          params: {
+            current_path: saveRoot,
+          },
+          // Keep this request alive while the Windows folder picker is open.
+          timeout: 0,
+        }
+      )
 
       if (response.data?.path) {
         setSaveRoot(response.data.path)
@@ -164,7 +176,10 @@ function TestRunner() {
 
       const response = await api.post(
         '/wrapper/start',
-        payload
+        payload,
+        {
+          timeout: 30000,
+        }
       )
 
       setJob(response.data)
@@ -193,7 +208,10 @@ function TestRunner() {
       )
 
       const statusResponse = await api.get(
-        `/wrapper/status/${job.job_id}`
+        `/wrapper/status/${job.job_id}`,
+        {
+          timeout: 30000,
+        }
       )
 
       setJob(statusResponse.data)

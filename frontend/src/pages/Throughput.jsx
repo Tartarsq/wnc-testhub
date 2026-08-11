@@ -4,6 +4,7 @@ import {
   FiArrowDown,
   FiArrowUp,
   FiClock,
+  FiDownload,
   FiExternalLink,
   FiPlay,
   FiSave,
@@ -269,6 +270,83 @@ function Throughput() {
     } finally {
       setIsImportingCsv(false)
     }
+  }
+
+  const handleDownloadCsv = () => {
+    if (results.length === 0) {
+      setError('There are no throughput results to download yet.')
+      return
+    }
+
+    setError('')
+
+    const columns = [
+      ['timestamp', 'Timestamp'],
+      ['run_number', 'Run'],
+      ['download_mbps', 'Download Mbps'],
+      ['upload_mbps', 'Upload Mbps'],
+      ['ping_ms', 'Ping ms'],
+      ['ping_jitter_ms', 'Jitter ms'],
+      ['packet_loss_percent', 'Packet Loss %'],
+      ['server_name', 'Server Name'],
+      ['server_location', 'Server Location'],
+      ['connection_type', 'Connection Type'],
+      ['external_ip', 'External IP'],
+      ['internal_ip', 'Internal IP'],
+      ['speedtest_id', 'Speedtest ID'],
+    ]
+
+    const escapeCsv = (value) => {
+      const normalized =
+        value === null || value === undefined
+          ? ''
+          : String(value)
+
+      return `"${normalized.replaceAll('"', '""')}"`
+    }
+
+    const header = columns
+      .map(([, label]) => escapeCsv(label))
+      .join(',')
+
+    const rows = results.map((result) =>
+      columns
+        .map(([key]) => escapeCsv(result?.[key]))
+        .join(',')
+    )
+
+    const csvText = [header, ...rows].join('\r\n')
+
+    // Add UTF-8 BOM so Excel opens the CSV cleanly on Windows.
+    const csvBlob = new Blob(
+      ['\uFEFF', csvText],
+      {
+        type: 'text/csv;charset=utf-8;',
+      }
+    )
+
+    const objectUrl = URL.createObjectURL(csvBlob)
+    const downloadLink = document.createElement('a')
+
+    const dateSuffix =
+      importedTestDate
+        ? importedTestDate.replaceAll('/', '-')
+        : new Date().toISOString().slice(0, 10)
+
+    downloadLink.href = objectUrl
+    downloadLink.download =
+      `throughput_results_${dateSuffix}.csv`
+
+    document.body.appendChild(downloadLink)
+    downloadLink.click()
+    downloadLink.remove()
+    URL.revokeObjectURL(objectUrl)
+
+    setMessage(
+      `Downloaded ${results.length} throughput result${
+        results.length === 1 ? '' : 's'
+      } as CSV.`
+    )
   }
 
   const handleSaveResult = async () => {
@@ -759,9 +837,22 @@ function Throughput() {
               </p>
             </div>
 
-            <span className="history-count">
-              {results.length} {results.length === 1 ? 'result' : 'results'}
-            </span>
+            <div className="throughput-history-actions">
+              <span className="history-count">
+                {results.length}{' '}
+                {results.length === 1 ? 'result' : 'results'}
+              </span>
+
+              <button
+                type="button"
+                className="throughput-export-button"
+                onClick={handleDownloadCsv}
+                disabled={results.length === 0}
+              >
+                <FiDownload />
+                Download CSV
+              </button>
+            </div>
           </div>
 
           <div className="table-container">
