@@ -26,6 +26,7 @@ function Dashboard() {
   const [qxdmStatus, setQxdmStatus] = useState(null)
   const [sessions, setSessions] = useState([])
   const [latestThroughput, setLatestThroughput] = useState(null)
+  const [throughputRunCount, setThroughputRunCount] = useState(0)
   const [throughputStatus, setThroughputStatus] = useState('idle')
   const [isLoading, setIsLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -35,14 +36,19 @@ function Dashboard() {
     if (showRefreshState) setIsRefreshing(true)
 
     try {
-      const [deviceResponse, qxdmResponse, sessionsResponse] =
-        await Promise.allSettled([
-          api.get('/device/status', {
-            params: { titan_ip: '192.168.100.1' },
-          }),
-          api.get('/qxdm/status'),
-          api.get('/sessions'),
-        ])
+      const [
+        deviceResponse,
+        qxdmResponse,
+        sessionsResponse,
+        analyticsResponse,
+      ] = await Promise.allSettled([
+        api.get('/device/status', {
+          params: { titan_ip: '192.168.100.1' },
+        }),
+        api.get('/qxdm/status'),
+        api.get('/sessions'),
+        api.get('/analytics'),
+      ])
 
       if (deviceResponse.status === 'fulfilled') {
         setDevice(deviceResponse.value.data)
@@ -56,13 +62,37 @@ function Dashboard() {
         setSessions(sessionsResponse.value.data ?? [])
       }
 
+      if (analyticsResponse.status === 'fulfilled') {
+        const analytics = analyticsResponse.value.data
+        const history = analytics?.history ?? []
+
+        setThroughputRunCount(
+          analytics?.summary?.total_runs ?? history.length
+        )
+
+        if (history.length > 0) {
+          setLatestThroughput(history[0])
+          setThroughputStatus('completed')
+
+          window.localStorage.setItem(
+            'wncLatestThroughputResult',
+            JSON.stringify(history[0])
+          )
+          window.localStorage.setItem(
+            'wncThroughputStatus',
+            'completed'
+          )
+        }
+      }
+
       const failures = [
         deviceResponse,
         qxdmResponse,
         sessionsResponse,
+        analyticsResponse,
       ].filter((result) => result.status === 'rejected')
 
-      if (failures.length === 3) {
+      if (failures.length === 4) {
         throw new Error('Unable to load dashboard data.')
       }
 
@@ -195,7 +225,7 @@ function Dashboard() {
             ? 'Throughput test running'
             : 'Throughput testing idle',
       detail: latestThroughput
-        ? `Latest download: ${currentDownload}`
+        ? `Latest download: ${currentDownload} · ${throughputRunCount} saved run${throughputRunCount === 1 ? '' : 's'}`
         : 'No throughput result has been saved yet.',
       active:
         throughputStatus === 'running' ||
@@ -335,40 +365,14 @@ function Dashboard() {
         <section className="mission-secondary-grid">
           <article className="dashboard-panel throughput-panel">
             <div className="panel-header">
-              <div><h3>Throughput Summary</h3><p>Latest download, upload, and latency result.</p></div>
+              <div><h3>Throughput Summary</h3><p>Latest result · {throughputRunCount} saved run{throughputRunCount === 1 ? '' : 's'}.</p></div>
               <span className={`status-badge ${throughputBadgeClass}`}>{throughputBadgeLabel}</span>
             </div>
 
             <div className="dashboard-throughput-results">
-              <div className="dashboard-throughput-row">
-                <span className="dashboard-throughput-icon download">
-                  <FiArrowDown />
-                </span>
-                <div className="dashboard-throughput-info">
-                  <p>Download</p>
-                  <strong>{currentDownload}</strong>
-                </div>
-              </div>
-
-              <div className="dashboard-throughput-row">
-                <span className="dashboard-throughput-icon upload">
-                  <FiActivity />
-                </span>
-                <div className="dashboard-throughput-info">
-                  <p>Upload</p>
-                  <strong>{currentUpload}</strong>
-                </div>
-              </div>
-
-              <div className="dashboard-throughput-row">
-                <span className="dashboard-throughput-icon ping">
-                  <FiWifi />
-                </span>
-                <div className="dashboard-throughput-info">
-                  <p>Ping</p>
-                  <strong>{currentPing}</strong>
-                </div>
-              </div>
+              <div className="dashboard-throughput-item"><span className="dashboard-throughput-icon download"><FiArrowDown /></span><div><p>Download</p><strong>{currentDownload}</strong></div></div>
+              <div className="dashboard-throughput-item"><span className="dashboard-throughput-icon upload"><FiActivity /></span><div><p>Upload</p><strong>{currentUpload}</strong></div></div>
+              <div className="dashboard-throughput-item"><span className="dashboard-throughput-icon ping"><FiWifi /></span><div><p>Ping</p><strong>{currentPing}</strong></div></div>
             </div>
 
             <button type="button" className="dashboard-panel-link" onClick={() => navigate('/throughput')}>

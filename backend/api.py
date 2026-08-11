@@ -157,6 +157,13 @@ class SpeedtestResultLinkRequest(BaseModel):
     )
 
 
+class ThroughputCSVImportRequest(BaseModel):
+    job_id: str = Field(
+        min_length=1,
+        max_length=100,
+    )
+
+
 class SessionCreateRequest(BaseModel):
     session_name: str = Field(
         min_length=1,
@@ -461,18 +468,22 @@ def parse_speedtest_csv_date(
     )
 
 
-def read_latest_speedtest_csv_result(
+def read_latest_speedtest_csv_results(
     csv_path: Path,
-) -> dict[str, Any]:
+) -> list[dict[str, Any]]:
     """
-    Read a Speedtest Result History CSV and return ONLY the row with the
-    most recent Date value.
+    Read the Speedtest Result History CSV and return ALL tests from the
+    most recent calendar date in the file.
 
-    The CSV exported by the user's Speedtest desktop app contains:
-        Id, Date, Latency, Download, Upload, ConnType, ServerName,
-        Lat, Lon, InternalIp, ExternalIp
+    Example:
+        Aug/10/2026 09:00
+        Aug/10/2026 10:15
+        Aug/10/2026 12:30
+        Aug/10/2026 14:00
+        Aug/10/2026 16:42
 
-    No older row is returned or merged.
+    If Aug/10/2026 is the newest date, all five rows are returned.
+    Older dates are ignored.
     """
     csv_path = Path(csv_path).expanduser().resolve()
 
@@ -481,14 +492,14 @@ def read_latest_speedtest_csv_result(
             f"Speedtest CSV was not found: {csv_path}"
         )
 
+    parsed_rows: list[tuple[datetime, dict[str, str]]] = []
+
     with csv_path.open(
         "r",
         encoding="utf-8-sig",
         newline="",
     ) as csv_file:
-        reader = csv.DictReader(
-            csv_file
-        )
+        reader = csv.DictReader(csv_file)
 
         fieldnames = reader.fieldnames or []
 
@@ -501,9 +512,7 @@ def read_latest_speedtest_csv_result(
         }
 
         missing_columns = sorted(
-            required_columns.difference(
-                fieldnames
-            )
+            required_columns.difference(fieldnames)
         )
 
         if missing_columns:
@@ -513,46 +522,50 @@ def read_latest_speedtest_csv_result(
                 + ", ".join(missing_columns)
             )
 
-        latest_row: dict[str, str] | None = None
-        latest_date: datetime | None = None
-
         for row in reader:
-            raw_date = (
-                row.get("Date")
-                or ""
-            ).strip()
+            raw_date = (row.get("Date") or "").strip()
 
             if not raw_date:
                 continue
 
             try:
-                parsed_date = (
-                    parse_speedtest_csv_date(
-                        raw_date
-                    )
+                parsed_date = parse_speedtest_csv_date(
+                    raw_date
                 )
             except ValueError:
                 continue
 
-            if (
-                latest_date is None
-                or parsed_date > latest_date
-            ):
-                latest_date = parsed_date
-                latest_row = row
+            parsed_rows.append(
+                (parsed_date, row)
+            )
 
-    if latest_row is None or latest_date is None:
+    if not parsed_rows:
         raise ValueError(
             "No valid Speedtest result rows were found in the CSV."
         )
 
+    newest_calendar_date = max(
+        parsed_date.date()
+        for parsed_date, _ in parsed_rows
+    )
+
+    newest_rows = [
+        (parsed_date, row)
+        for parsed_date, row in parsed_rows
+        if parsed_date.date() == newest_calendar_date
+    ]
+
+    newest_rows.sort(
+        key=lambda item: item[0]
+    )
+
+    results: list[dict[str, Any]] = []
+
     def optional_float(
+        row: dict[str, str],
         key: str,
     ) -> float | None:
-        value = (
-            latest_row.get(key)
-            or ""
-        ).strip()
+        value = (row.get(key) or "").strip()
 
         if not value:
             return None
@@ -562,59 +575,141 @@ def read_latest_speedtest_csv_result(
         except ValueError:
             return None
 
-    server_name = (
-        latest_row.get("ServerName")
-        or ""
-    ).strip()
+    for run_number, (parsed_date, row) in enumerate(
+        newest_rows,
+        start=1,
+    ):
+        server_name = (
+            row.get("ServerName")
+            or ""
+        ).strip()
 
-    result = {
-        "source": "speedtest_result_history_csv",
-        "csv_path": str(csv_path),
-        "speedtest_id": (
-            latest_row.get("Id")
-            or ""
-        ).strip() or None,
-        "test_date": latest_date.isoformat(
-            timespec="minutes"
-        ),
-        "original_date": (
-            latest_row.get("Date")
-            or ""
-        ).strip(),
-        "download_mbps": optional_float(
-            "Download"
-        ),
-        "upload_mbps": optional_float(
-            "Upload"
-        ),
-        "ping_ms": optional_float(
-            "Latency"
-        ),
-        "ping_jitter_ms": None,
-        "packet_loss_percent": None,
-        "server_name": server_name or None,
-        "server_location": server_name or None,
-        "connection_type": (
-            latest_row.get("ConnType")
-            or ""
-        ).strip() or None,
-        "server_latitude": optional_float(
-            "Lat"
-        ),
-        "server_longitude": optional_float(
-            "Lon"
-        ),
-        "internal_ip": (
-            latest_row.get("InternalIp")
-            or ""
-        ).strip() or None,
-        "external_ip": (
-            latest_row.get("ExternalIp")
-            or ""
-        ).strip() or None,
-    }
+        result = {
+            "source": "speedtest_result_history_csv",
+            "csv_path": str(csv_path),
+            "speedtest_id": (
+                row.get("Id")
+                or ""
+            ).strip() or None,
+            "timestamp": parsed_date.isoformat(
+                timespec="minutes"
+            ),
+            "run_number": run_number,
+            "test_date": parsed_date.isoformat(
+                timespec="minutes"
+            ),
+            "original_date": (
+                row.get("Date")
+                or ""
+            ).strip(),
+            "download_mbps": optional_float(
+                row,
+                "Download",
+            ),
+            "upload_mbps": optional_float(
+                row,
+                "Upload",
+            ),
+            "ping_ms": optional_float(
+                row,
+                "Latency",
+            ),
+            "ping_jitter_ms": None,
+            "packet_loss_percent": None,
+            "server_name": server_name or None,
+            "server_location": server_name or None,
+            "connection_type": (
+                row.get("ConnType")
+                or ""
+            ).strip() or None,
+            "server_latitude": optional_float(
+                row,
+                "Lat",
+            ),
+            "server_longitude": optional_float(
+                row,
+                "Lon",
+            ),
+            "internal_ip": (
+                row.get("InternalIp")
+                or ""
+            ).strip() or None,
+            "external_ip": (
+                row.get("ExternalIp")
+                or ""
+            ).strip() or None,
+        }
 
-    return result
+        results.append(result)
+
+    return results
+
+
+def write_speedtest_csv_results_workbook(
+    workbook_path: Path,
+    results: list[dict[str, Any]],
+    titan_ip: str,
+) -> Path:
+    """
+    Save every imported result from the newest Speedtest calendar date
+    into the same Throughput Results sheet consumed by Analytics.
+    """
+    workbook_path = Path(workbook_path).resolve()
+    workbook_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "Throughput Results"
+
+    worksheet.append(ANALYTICS_FIELDS)
+
+    for result in results:
+        analytics_result = {
+            "timestamp": result.get("timestamp"),
+            "run_number": result.get("run_number"),
+            "titan_ip": titan_ip,
+            "connection_status": None,
+            "download_mbps": result.get("download_mbps"),
+            "upload_mbps": result.get("upload_mbps"),
+            "ping_ms": result.get("ping_ms"),
+            "ping_jitter_ms": result.get("ping_jitter_ms"),
+            "packet_loss_percent": result.get(
+                "packet_loss_percent"
+            ),
+            "test_duration_seconds": None,
+            "isp": None,
+            "external_ip": result.get("external_ip"),
+            "interface_name": result.get("connection_type"),
+            "server_name": result.get("server_name"),
+            "server_location": result.get("server_location"),
+            "result_url": None,
+            "firmware_version": None,
+            "carrier": None,
+            "technology": None,
+            "mode": None,
+            "serving_band": None,
+            "rsrp_dbm": None,
+            "rssi_dbm": None,
+            "sinr_db": None,
+            "metrics_error": None,
+            "notes": (
+                "Imported from Speedtest Result History CSV. "
+                f"Speedtest ID: {result.get('speedtest_id') or 'N/A'}"
+            ),
+        }
+
+        worksheet.append([
+            analytics_result.get(field)
+            for field in ANALYTICS_FIELDS
+        ])
+
+    workbook.save(workbook_path)
+    workbook.close()
+
+    return workbook_path
 
 
 def prompt_for_speedtest_csv() -> Path | None:
@@ -2151,15 +2246,30 @@ def import_speedtest_result_link(
 
 
 @app.post("/api/throughput/gui/import-csv-latest")
-def import_latest_speedtest_csv_result() -> dict[str, Any]:
+def import_latest_speedtest_csv_results(
+    request: ThroughputCSVImportRequest,
+) -> dict[str, Any]:
     """
-    Let the engineer select a Speedtest Result History CSV and return ONLY
-    the result row with the most recent Date value.
+    Select a Speedtest Result History CSV, find the most recent calendar
+    date, import ALL tests from that date, and save all of them to Analytics.
     """
-    try:
-        selected_csv = (
-            prompt_for_speedtest_csv()
+    with jobs_lock:
+        existing_job = jobs.get(
+            request.job_id
         )
+
+        if existing_job is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Throughput GUI job was not found.",
+            )
+
+        job_snapshot = dict(
+            existing_job
+        )
+
+    try:
+        selected_csv = prompt_for_speedtest_csv()
 
         if selected_csv is None:
             return {
@@ -2168,24 +2278,83 @@ def import_latest_speedtest_csv_result() -> dict[str, Any]:
                 "message": (
                     "Speedtest CSV selection was cancelled."
                 ),
-                "result": None,
+                "results": [],
             }
 
-        latest_result = (
-            read_latest_speedtest_csv_result(
+        imported_results = (
+            read_latest_speedtest_csv_results(
                 selected_csv
             )
+        )
+
+        session_folder_value = job_snapshot.get(
+            "session_folder"
+        )
+
+        if not session_folder_value:
+            raise RuntimeError(
+                "The throughput session folder is not available yet."
+            )
+
+        session_folder = Path(
+            session_folder_value
+        ).resolve()
+
+        workbook_path = (
+            session_folder
+            / "reports"
+            / "Titan3_GUI_Results.xlsx"
+        )
+
+        write_speedtest_csv_results_workbook(
+            workbook_path=workbook_path,
+            results=imported_results,
+            titan_ip=job_snapshot["titan_ip"],
+        )
+
+        latest_result = imported_results[-1]
+
+        update_job(
+            request.job_id,
+            status="completed",
+            message=(
+                f"Imported {len(imported_results)} Speedtest result(s) "
+                f"from the newest date "
+                f"{latest_result.get('original_date', '').split(' ')[0]}."
+            ),
+            completed_runs=len(
+                imported_results
+            ),
+            number_of_runs=len(
+                imported_results
+            ),
+            results=imported_results,
+            excel_path=str(
+                workbook_path.resolve()
+            ),
+            error=None,
         )
 
         return {
             "success": True,
             "cancelled": False,
             "message": (
-                "Latest Speedtest result imported from CSV. "
-                "Only the most recent test date was used."
+                f"Imported and saved {len(imported_results)} test(s) "
+                "from the most recent calendar date in the CSV."
             ),
-            "result": latest_result,
+            "latest_date": (
+                latest_result.get("original_date", "").split(" ")[0]
+            ),
+            "count": len(imported_results),
+            "latest_result": latest_result,
+            "results": imported_results,
+            "excel_path": str(
+                workbook_path.resolve()
+            ),
         }
+
+    except HTTPException:
+        raise
 
     except Exception as error:
         raise HTTPException(

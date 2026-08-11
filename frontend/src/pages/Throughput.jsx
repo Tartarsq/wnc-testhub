@@ -41,6 +41,7 @@ function Throughput() {
   const [isSaving, setIsSaving] = useState(false)
   const [isImportingCsv, setIsImportingCsv] = useState(false)
   const [importedTestDate, setImportedTestDate] = useState('')
+  const [importedTestCount, setImportedTestCount] = useState(0)
 
   const pollingRef = useRef(null)
 
@@ -177,7 +178,7 @@ function Throughput() {
     value === '' ? null : Number(value)
 
   const handleImportLatestCsv = async () => {
-    if (isImportingCsv) {
+    if (isImportingCsv || !jobId) {
       return
     }
 
@@ -187,7 +188,10 @@ function Throughput() {
 
     try {
       const response = await api.post(
-        '/throughput/gui/import-csv-latest'
+        '/throughput/gui/import-csv-latest',
+        {
+          job_id: jobId,
+        }
       )
 
       if (response.data?.cancelled) {
@@ -195,41 +199,59 @@ function Throughput() {
         return
       }
 
-      const imported = response.data?.result ?? {}
+      const importedResults =
+        response.data?.results ?? []
 
-      if (imported.download_mbps != null) {
-        setDownloadMbps(String(imported.download_mbps))
+      const newest =
+        response.data?.latest_result ??
+        importedResults[importedResults.length - 1] ??
+        {}
+
+      setResults(importedResults)
+      setJobStatus('completed')
+
+      if (newest.download_mbps != null) {
+        setDownloadMbps(String(newest.download_mbps))
       }
 
-      if (imported.upload_mbps != null) {
-        setUploadMbps(String(imported.upload_mbps))
+      if (newest.upload_mbps != null) {
+        setUploadMbps(String(newest.upload_mbps))
       }
 
-      if (imported.ping_ms != null) {
-        setPingMs(String(imported.ping_ms))
+      if (newest.ping_ms != null) {
+        setPingMs(String(newest.ping_ms))
       }
 
-      if (imported.server_name) {
-        setServerName(imported.server_name)
+      if (newest.server_name) {
+        setServerName(newest.server_name)
       }
 
-      if (imported.server_location) {
-        setServerLocation(imported.server_location)
-      }
-
-      if (imported.external_ip) {
-        setNotes(
-          `Speedtest CSV latest test. External IP: ${imported.external_ip}`
-        )
+      if (newest.server_location) {
+        setServerLocation(newest.server_location)
       }
 
       setImportedTestDate(
-        imported.test_date ?? ''
+        response.data?.latest_date ?? ''
       )
+
+      setImportedTestCount(
+        response.data?.count ?? importedResults.length
+      )
+
+      if (importedResults.length > 0) {
+        window.localStorage.setItem(
+          'wncLatestThroughputResult',
+          JSON.stringify(newest)
+        )
+        window.localStorage.setItem(
+          'wncThroughputStatus',
+          'completed'
+        )
+      }
 
       setMessage(
         response.data?.message ||
-          'Latest Speedtest result imported from CSV.'
+          'Latest-date Speedtest results imported.'
       )
     } catch (requestError) {
       setError(
@@ -424,8 +446,8 @@ function Throughput() {
               <h3>Save GUI Result</h3>
               <p>
                 After Speedtest finishes, download/export Result History
-                as CSV. TestHub will use only the row with the most recent
-                test date and fill the available result fields automatically.
+                as CSV. TestHub finds the most recent calendar date and imports
+                every test from that date into Analytics automatically.
               </p>
             </div>
           </div>
@@ -437,7 +459,7 @@ function Throughput() {
                 <FiExternalLink />
                 <span>
                   In Speedtest, download/export Result History as CSV.
-                  TestHub will select only the newest test by Date.
+                  TestHub imports every test from the newest calendar date.
                 </span>
               </div>
             </div>
@@ -451,14 +473,28 @@ function Throughput() {
                 placeholder="No CSV result imported yet"
               />
             </div>
+
+            <div className="form-field">
+              <span>Tests Imported</span>
+              <input
+                type="text"
+                value={
+                  importedTestCount > 0
+                    ? String(importedTestCount)
+                    : ''
+                }
+                readOnly
+                placeholder="0"
+              />
+            </div>
           </div>
 
           <div className="configuration-footer">
             <div className="configuration-note">
               <FiActivity />
               <span>
-                Older CSV rows are ignored. Only the maximum test Date
-                in the selected file is imported.
+                Older calendar dates are ignored. Every test on the
+                newest date is imported and saved to Analytics.
               </span>
             </div>
 
@@ -474,7 +510,7 @@ function Throughput() {
               <FiExternalLink />
               {isImportingCsv
                 ? 'Importing Latest Result...'
-                : 'Import Latest CSV Result'}
+                : 'Import Latest Date Results'}
             </button>
           </div>
 
