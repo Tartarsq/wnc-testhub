@@ -864,6 +864,25 @@ def save_speedtest_gui_result(
 
         job_snapshot = dict(existing_job)
 
+    existing_results = job_snapshot.get("results") or []
+    csv_batch_already_saved = (
+        len(existing_results) > 1
+        and all(
+            result.get("source") == "speedtest_result_history_csv"
+            for result in existing_results
+        )
+    )
+
+    if csv_batch_already_saved:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "This CSV batch is already saved to Analytics. "
+                "Do not use Save Result after importing the CSV, because "
+                "that would replace the batch with one manual result."
+            ),
+        )
+
     session_folder_value = job_snapshot.get(
         "session_folder"
     )

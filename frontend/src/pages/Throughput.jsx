@@ -42,6 +42,7 @@ function Throughput() {
   const [isImportingCsv, setIsImportingCsv] = useState(false)
   const [importedTestDate, setImportedTestDate] = useState('')
   const [importedTestCount, setImportedTestCount] = useState(0)
+  const [csvBatchSaved, setCsvBatchSaved] = useState(false)
 
   const pollingRef = useRef(null)
 
@@ -136,6 +137,9 @@ function Throughput() {
 
     setError('')
     setResults([])
+    setCsvBatchSaved(false)
+    setImportedTestCount(0)
+    setImportedTestDate('')
     setJobStatus('queued')
     setMessage('Opening Speedtest...')
     setIsLaunching(true)
@@ -237,6 +241,8 @@ function Throughput() {
       setImportedTestCount(
         response.data?.count ?? importedResults.length
       )
+
+      setCsvBatchSaved(importedResults.length > 0)
 
       if (importedResults.length > 0) {
         window.localStorage.setItem(
@@ -665,8 +671,8 @@ function Throughput() {
             <div className="configuration-note">
               <FiActivity />
               <span>
-                Saving creates an Excel report that the existing Analytics
-                page can read automatically.
+                CSV imports are saved to Analytics automatically. Use
+                Save Result only when entering one result manually.
               </span>
             </div>
 
@@ -674,12 +680,18 @@ function Throughput() {
               type="button"
               className="start-throughput-button"
               onClick={handleSaveResult}
-              disabled={!resultEntryEnabled || isSaving}
+              disabled={
+                !resultEntryEnabled ||
+                isSaving ||
+                csvBatchSaved
+              }
             >
               <FiSave />
-              {isSaving
-                ? 'Saving Result...'
-                : 'Save Result'}
+              {csvBatchSaved
+                ? `${importedTestCount} CSV Tests Already Saved`
+                : isSaving
+                  ? 'Saving Result...'
+                  : 'Save Manual Result'}
             </button>
           </div>
         </section>
@@ -748,7 +760,7 @@ function Throughput() {
             </div>
 
             <span className="history-count">
-              {results.length} result
+              {results.length} {results.length === 1 ? 'result' : 'results'}
             </span>
           </div>
 
