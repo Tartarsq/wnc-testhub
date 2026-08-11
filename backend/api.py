@@ -1740,79 +1740,73 @@ def run_wrapper_job(
     job_id: str,
     request: WrapperStartRequest,
 ) -> None:
+    """
+    Create the wrapper workspace immediately and mark it READY.
+
+    The wrapper is now the shared session/container for the individual
+    TestHub tools. Throughput and QXDM are launched from their own pages,
+    and those pages use this wrapper job_id to save artifacts back into
+    the same wrapper session folder.
+
+    This avoids running a second automatic throughput/QXDM workflow inside
+    the wrapper itself and guarantees that pressing Start Test creates the
+    session folder right away.
+    """
     try:
         update_wrapper_job(
             job_id,
-            status="running",
-            message=(
-                "Wrapper test session is starting."
-            ),
+            status="creating",
+            message="Creating wrapper session folder.",
             error=None,
         )
 
-        result = test_wrapper.run(
-            save_root=Path(
-                request.save_root
-            ),
+        result = test_wrapper.create_workspace(
+            save_root=Path(request.save_root),
             session_name=request.session_name,
             titan_ip=request.titan_ip,
-            qxdm_mode=request.qxdm_mode,
-            number_of_runs=request.number_of_runs,
-            delay_between_runs=(
-                request.delay_between_runs
-            ),
-            timeout_seconds=(
-                request.timeout_seconds
-            ),
-            collect_qxdm=request.collect_qxdm,
-            collect_throughput=(
-                request.collect_throughput
-            ),
-            collect_syslog=request.collect_syslog,
-            qxdm_log_filename=(
-                request.qxdm_log_filename
-            ),
-            qxdm_max_log_size_mb=(
-                request.qxdm_max_log_size_mb
-            ),
-            load_mask=request.load_mask,
-            continue_without_mask=(
-                request.continue_without_mask
-            ),
-            progress_callback=lambda item: (
-                append_wrapper_progress(
-                    job_id,
-                    item,
-                )
-            ),
+            mode="linked",
+        )
+
+        # Keep the engineer's requested configuration in wrapper metadata so
+        # the session still records what was selected on the Wrapper page.
+        result = dict(result)
+        result["qxdm_mode"] = request.qxdm_mode
+        result["collect_qxdm"] = request.collect_qxdm
+        result["collect_throughput"] = request.collect_throughput
+        result["collect_syslog"] = request.collect_syslog
+        result["number_of_runs"] = request.number_of_runs
+        result["delay_between_runs"] = request.delay_between_runs
+        result["timeout_seconds"] = request.timeout_seconds
+        result["status"] = "ready"
+
+        metadata_path = (
+            Path(result["session_folder"])
+            / "metadata"
+            / "wrapper_session.json"
+        )
+        test_wrapper.write_metadata(
+            metadata_path,
+            result,
         )
 
         update_wrapper_job(
             job_id,
-            status=result.get(
-                "status",
-                "completed",
-            ),
+            status="ready",
             message=(
-                "Wrapper workflow completed."
-                if result.get("status")
-                == "completed"
-                else (
-                    "Wrapper workflow finished and "
-                    "is waiting for QXDM finalization."
-                )
+                "Wrapper session created. Open Throughput or QXDM to run "
+                "the selected tools; their results will be linked to this "
+                "wrapper session automatically."
             ),
-            session_folder=result.get(
-                "session_folder"
-            ),
+            session_folder=result["session_folder"],
             result=result,
+            error=None,
         )
 
     except Exception as error:
         update_wrapper_job(
             job_id,
             status="failed",
-            message="Wrapper workflow failed.",
+            message="Wrapper session could not be created.",
             error=str(error),
         )
 
