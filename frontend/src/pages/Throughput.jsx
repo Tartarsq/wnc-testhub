@@ -1,3 +1,6 @@
+
+
+
 import { useEffect, useRef, useState } from 'react'
 import {
   FiActivity,
@@ -59,8 +62,46 @@ function Throughput() {
   }
 
   useEffect(() => {
+    const loadActiveWrapper = () => {
+      try {
+        const raw = window.localStorage.getItem(
+          'wncActiveWrapperJob'
+        )
+
+        if (!raw) {
+          setActiveWrapperJob(null)
+          return
+        }
+
+        const parsed = JSON.parse(raw)
+
+        if (!parsed?.job_id) {
+          setActiveWrapperJob(null)
+          return
+        }
+
+        setActiveWrapperJob(parsed)
+      } catch {
+        setActiveWrapperJob(null)
+      }
+    }
+
+    loadActiveWrapper()
+
+    // Refresh the wrapper link whenever the tab/page becomes active again.
+    // This matters when the engineer creates a wrapper first, then navigates
+    // to Throughput in the same React app.
+    window.addEventListener(
+      'focus',
+      loadActiveWrapper
+    )
+
     return () => {
       stopPolling()
+      window.removeEventListener(
+        'focus',
+        loadActiveWrapper
+      )
     }
   }, [])
 
@@ -183,6 +224,29 @@ function Throughput() {
   const optionalNumber = (value) =>
     value === '' ? null : Number(value)
 
+  const getActiveWrapperForImport = () => {
+    try {
+      const raw = window.localStorage.getItem(
+        'wncActiveWrapperJob'
+      )
+
+      if (!raw) {
+        return null
+      }
+
+      const parsed = JSON.parse(raw)
+
+      if (!parsed?.job_id) {
+        return null
+      }
+
+      setActiveWrapperJob(parsed)
+      return parsed
+    } catch {
+      return null
+    }
+  }
+
   const handleImportLatestCsv = async () => {
     if (isImportingCsv || !jobId) {
       return
@@ -193,11 +257,15 @@ function Throughput() {
     setMessage('Select the Speedtest Result History CSV...')
 
     try {
+      const wrapperForImport =
+        getActiveWrapperForImport()
+
       const response = await api.post(
         '/throughput/gui/import-csv-latest',
         {
           job_id: jobId,
-          wrapper_job_id: activeWrapperJob?.job_id ?? null,
+          wrapper_job_id:
+            wrapperForImport?.job_id ?? null,
         }
       )
 
@@ -261,8 +329,9 @@ function Throughput() {
       setMessage(
         response.data?.wrapper_csv_path
           ? `${response.data.message} Wrapper copy saved to ${response.data.wrapper_csv_path}`
-          : response.data?.message ||
-              'Latest-date Speedtest results imported.'
+          : activeWrapperJob?.job_id
+            ? `${response.data?.message || 'Speedtest results imported.'} The active wrapper was not linked to this import.`
+            : `${response.data?.message || 'Speedtest results imported.'} No active wrapper session was detected, so only the standalone throughput copy was saved.`
       )
     } catch (requestError) {
       setError(
