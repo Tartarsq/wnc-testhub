@@ -162,6 +162,10 @@ class ThroughputCSVImportRequest(BaseModel):
         min_length=1,
         max_length=100,
     )
+    wrapper_job_id: str | None = Field(
+        default=None,
+        max_length=100,
+    )
 
 
 class SessionCreateRequest(BaseModel):
@@ -1117,6 +1121,10 @@ class QXDMStartRequest(BaseModel):
         default=None,
         max_length=64,
     )
+    wrapper_job_id: str | None = Field(
+        default=None,
+        max_length=100,
+    )
 
 
 class QXDMStatus(BaseModel):
@@ -1289,6 +1297,73 @@ def resolve_qxdm_session(
     return session
 
 
+
+def resolve_wrapper_session_folder(
+    wrapper_job_id: str | None,
+) -> Path | None:
+    """Return the wrapper session folder for a valid active wrapper job."""
+    if not wrapper_job_id:
+        return None
+
+    with wrapper_jobs_lock:
+        wrapper_job = wrapper_jobs.get(wrapper_job_id)
+
+        if wrapper_job is None:
+            raise ValueError(
+                "The selected wrapper session was not found."
+            )
+
+        snapshot = dict(wrapper_job)
+
+    result = snapshot.get("result") or {}
+    session_folder_value = (
+        snapshot.get("session_folder")
+        or result.get("session_folder")
+    )
+
+    if not session_folder_value:
+        raise ValueError(
+            "The wrapper session exists but its result folder is not ready yet."
+        )
+
+    return Path(session_folder_value).expanduser().resolve()
+
+
+def write_throughput_results_csv(
+    csv_path: Path,
+    results: list[dict[str, Any]],
+) -> Path:
+    """Write every throughput result row to a UTF-8 CSV file."""
+    csv_path = Path(csv_path).resolve()
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+
+    fieldnames: list[str] = []
+
+    for result in results:
+        for key in result.keys():
+            if key not in fieldnames:
+                fieldnames.append(key)
+
+    with csv_path.open(
+        "w",
+        encoding="utf-8-sig",
+        newline="",
+    ) as csv_file:
+        if not fieldnames:
+            return csv_path
+
+        writer = csv.DictWriter(
+            csv_file,
+            fieldnames=fieldnames,
+            extrasaction="ignore",
+        )
+        writer.writeheader()
+        writer.writerows(results)
+
+    return csv_path
+
+
+
 def save_qxdm_log_to_session(
     session_id: str | None,
     log_path: Path | None,
@@ -1372,14 +1447,20 @@ def run_qxdm_start(
             request.session_id
         )
 
-        # The user controls the QXDM save folder. Selecting a TestHub
-        # session links metadata to the session but does not override the
-        # folder entered on the QXDM Logs page.
-        output_folder = (
-            Path(request.output_folder).expanduser()
-            if request.output_folder
-            else RESULTS_FOLDER / "qxdm_logs"
+        wrapper_session_folder = resolve_wrapper_session_folder(
+            request.wrapper_job_id
         )
+
+        # When a wrapper session is active, keep QXDM with that wrapper.
+        # Otherwise preserve the normal standalone QXDM behavior.
+        if wrapper_session_folder is not None:
+            output_folder = wrapper_session_folder / "qxdm"
+        else:
+            output_folder = (
+                Path(request.output_folder).expanduser()
+                if request.output_folder
+                else RESULTS_FOLDER / "qxdm_logs"
+            )
 
         output_folder = output_folder.resolve()
         output_folder.mkdir(
@@ -2368,6 +2449,43 @@ def import_latest_speedtest_csv_results(
             titan_ip=job_snapshot["titan_ip"],
         )
 
+        wrapper_reports_path = None
+        wrapper_csv_path = None
+
+        wrapper_session_folder = resolve_wrapper_session_folder(
+            request.wrapper_job_id
+        )
+
+        if wrapper_session_folder is not None:
+            wrapper_reports_folder = (
+                wrapper_session_folder / "reports"
+            ).resolve()
+            wrapper_reports_folder.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
+
+            wrapper_reports_path = (
+                wrapper_reports_folder
+                / "Titan3_GUI_Results.xlsx"
+            ).resolve()
+
+            write_speedtest_csv_results_workbook(
+                workbook_path=wrapper_reports_path,
+                results=imported_results,
+                titan_ip=job_snapshot["titan_ip"],
+            )
+
+            wrapper_csv_path = (
+                wrapper_reports_folder
+                / "throughput_results.csv"
+            ).resolve()
+
+            write_throughput_results_csv(
+                csv_path=wrapper_csv_path,
+                results=imported_results,
+            )
+
         latest_result = imported_results[-1]
 
         update_job(
@@ -2406,6 +2524,16 @@ def import_latest_speedtest_csv_results(
             "results": imported_results,
             "excel_path": str(
                 workbook_path.resolve()
+            ),
+            "wrapper_excel_path": (
+                str(wrapper_reports_path)
+                if wrapper_reports_path is not None
+                else None
+            ),
+            "wrapper_csv_path": (
+                str(wrapper_csv_path)
+                if wrapper_csv_path is not None
+                else None
             ),
         }
 

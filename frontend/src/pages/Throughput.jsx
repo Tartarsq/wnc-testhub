@@ -43,6 +43,7 @@ function Throughput() {
   const [isImportingCsv, setIsImportingCsv] = useState(false)
   const [importedTestDate, setImportedTestDate] = useState('')
   const [importedTestCount, setImportedTestCount] = useState(0)
+  const [activeWrapperJob, setActiveWrapperJob] = useState(null)
   const [csvBatchSaved, setCsvBatchSaved] = useState(false)
 
   const pollingRef = useRef(null)
@@ -196,6 +197,7 @@ function Throughput() {
         '/throughput/gui/import-csv-latest',
         {
           job_id: jobId,
+          wrapper_job_id: activeWrapperJob?.job_id ?? null,
         }
       )
 
@@ -257,8 +259,10 @@ function Throughput() {
       }
 
       setMessage(
-        response.data?.message ||
-          'Latest-date Speedtest results imported.'
+        response.data?.wrapper_csv_path
+          ? `${response.data.message} Wrapper copy saved to ${response.data.wrapper_csv_path}`
+          : response.data?.message ||
+              'Latest-date Speedtest results imported.'
       )
     } catch (requestError) {
       setError(

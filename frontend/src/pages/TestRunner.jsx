@@ -78,6 +78,18 @@ function TestRunner() {
         const updatedJob = response.data
         setJob(updatedJob)
 
+        if (updatedJob?.job_id) {
+          window.localStorage.setItem(
+            'wncActiveWrapperJob',
+            JSON.stringify({
+              job_id: updatedJob.job_id,
+              session_folder: updatedJob.session_folder ?? null,
+              status: updatedJob.status ?? null,
+              session_name: sessionName,
+            })
+          )
+        }
+
         if (
           [
             'completed',
@@ -183,6 +195,15 @@ function TestRunner() {
       )
 
       setJob(response.data)
+      window.localStorage.setItem(
+        'wncActiveWrapperJob',
+        JSON.stringify({
+          job_id: response.data.job_id,
+          session_folder: response.data.session_folder ?? null,
+          status: response.data.status ?? 'queued',
+          session_name: sessionName.trim(),
+        })
+      )
       startPolling(response.data.job_id)
     } catch (requestError) {
       setIsSubmitting(false)

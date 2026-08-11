@@ -20,13 +20,14 @@ function QXDMLogs() {
   const [logFilename, setLogFilename] = useState(
     'Titan3_QXDM_Log.isf'
   )
-  const [outputFolder, setOutputFolder] = useState('C:\\Users\\niket\\Documents\\GitHub\\wnc-testhub\\results\\qxdm_logs')
+  const [outputFolder, setOutputFolder] = useState('')
   const [maxLogSizeMb, setMaxLogSizeMb] = useState(1024)
   const [loadMask, setLoadMask] = useState(true)
   const [continueWithoutMask, setContinueWithoutMask] =
     useState(true)
   const [sessions, setSessions] = useState([])
   const [selectedSessionId, setSelectedSessionId] = useState('')
+  const [activeWrapperJob, setActiveWrapperJob] = useState(null)
 
   const [qxdmStatus, setQxdmStatus] = useState(null)
   const [isLoading, setIsLoading] = useState(true)
@@ -106,6 +107,7 @@ function QXDMLogs() {
         load_mask: loadMask,
         continue_without_mask: continueWithoutMask,
         session_id: selectedSessionId || null,
+        wrapper_job_id: activeWrapperJob?.job_id ?? null,
       }
 
       const response = await api.post(
@@ -150,57 +152,6 @@ function QXDMLogs() {
     }
   }
 
-  const handleSelectSavedLog = async () => {
-    if (isSubmitting || loggingActive) {
-      return
-    }
-
-    setIsSubmitting(true)
-    setError('')
-
-    try {
-      const response = await api.post(
-        '/qxdm/saved-log/select'
-      )
-
-      setQxdmStatus(response.data)
-      startPolling()
-    } catch (requestError) {
-      setError(
-        requestError.response?.data?.detail ||
-          requestError.message ||
-          'Unable to select the saved QXDM log.'
-      )
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
-  const handleOpenSavedLogFolder = async () => {
-    if (isSubmitting) {
-      return
-    }
-
-    setIsSubmitting(true)
-    setError('')
-
-    try {
-      const response = await api.post(
-        '/qxdm/saved-log/open-folder'
-      )
-
-      setQxdmStatus(response.data)
-    } catch (requestError) {
-      setError(
-        requestError.response?.data?.detail ||
-          requestError.message ||
-          'Unable to open the saved QXDM log folder.'
-      )
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
   const formatDateTime = (value) => {
     if (!value) {
       return 'Not available'
@@ -225,18 +176,6 @@ function QXDMLogs() {
     }
 
     return value
-  }
-
-  const formatFileSize = (sizeMb) => {
-    if (
-      sizeMb === null ||
-      sizeMb === undefined ||
-      Number.isNaN(Number(sizeMb))
-    ) {
-      return 'Not available'
-    }
-
-    return `${Number(sizeMb).toFixed(2)} MB`
   }
 
   const loggingStatusClass =
@@ -386,9 +325,9 @@ function QXDMLogs() {
           <div className="qxdm-manual-settings-banner">
             <strong>Complete the QXDM save setup</strong>
             <span>
-              QXDM capture is paused while Settings is open. Enter the
-              filename, folder, log path, and maximum size manually. When you
-              close QXDM Settings, TestHub continues automatically.
+              In QXDM Settings, choose the actual filename, folder,
+              log path, and maximum size. Close Settings, then click
+              Continue in the WNC TestHub confirmation window.
             </span>
           </div>
         )}
@@ -458,9 +397,8 @@ function QXDMLogs() {
               <div>
                 <h3>Logging Configuration</h3>
                 <p>
-                  Choose the filename and save folder here. When QXDM
-                  Settings opens, enter the values manually and close Settings
-                  when finished. The test then continues automatically.
+                  Choose a suggested filename and session, then confirm
+                  the actual save location inside QXDM Settings.
                 </p>
               </div>
             </div>
@@ -491,8 +429,9 @@ function QXDMLogs() {
                 </select>
 
                 <small className="qxdm-session-help">
-                  Selecting a session links the capture metadata to
-                  that session. It does not change the QXDM save folder.
+                  {activeWrapperJob?.session_folder
+                    ? `Active wrapper: ${activeWrapperJob.session_folder}\qxdm`
+                    : 'Selecting a session suggests its captures/qxdm folder and links the capture to that session.'}
                 </small>
               </label>
 
@@ -535,7 +474,7 @@ function QXDMLogs() {
               </label>
 
               <label className="form-field qxdm-folder-field">
-                <span>QXDM Log Folder</span>
+                <span>Suggested Output Folder</span>
 
                 <div className="qxdm-folder-input">
                   <FiFolder />
@@ -547,11 +486,14 @@ function QXDMLogs() {
                       setOutputFolder(event.target.value)
                     }
                     placeholder={
-                      'Enter the Windows folder QXDM should use'
+                      selectedSessionId
+                        ? 'Managed automatically by the selected session'
+                        : 'Leave blank to use the default results folder'
                     }
                     disabled={
                       loggingActive ||
-                      isSubmitting
+                      isSubmitting ||
+                      Boolean(selectedSessionId)
                     }
                   />
                 </div>
@@ -564,8 +506,7 @@ function QXDMLogs() {
                 <strong>Suggested destination</strong>
                 <span>{suggestedDestination}</span>
                 <small>
-                  Enter this same folder in QXDM Item Store File Settings.
-                  Close Settings when finished and TestHub continues automatically.
+                  The final save location is confirmed manually in QXDM.
                 </small>
               </div>
             </div>
@@ -756,99 +697,6 @@ function QXDMLogs() {
               </div>
             )}
           </article>
-        </section>
-
-        <section className="qxdm-control-card">
-          <div className="section-heading">
-            <div className="section-icon">
-              <FiHardDrive />
-            </div>
-
-            <div>
-              <h3>QXDM Log File</h3>
-              <p>
-                The expected path is only a TestHub suggestion. Saved log
-                details appear after the real QXDM file is detected or selected.
-              </p>
-            </div>
-          </div>
-
-          <dl className="qxdm-details-list">
-            <div>
-              <dt>Expected Log Path</dt>
-              <dd>
-                {displayValue(
-                  qxdmStatus?.expected_log_path
-                )}
-              </dd>
-            </div>
-
-            <div>
-              <dt>Saved Filename</dt>
-              <dd>
-                {displayValue(
-                  qxdmStatus?.current_log_filename
-                )}
-              </dd>
-            </div>
-
-            <div>
-              <dt>Saved Path</dt>
-              <dd>
-                {displayValue(
-                  qxdmStatus?.current_log_path
-                )}
-              </dd>
-            </div>
-
-            <div>
-              <dt>Size</dt>
-              <dd>
-                {qxdmStatus?.current_log_path
-                  ? formatFileSize(
-                      qxdmStatus?.current_log_size_mb
-                    )
-                  : 'Not available'}
-              </dd>
-            </div>
-
-            <div>
-              <dt>Last Modified</dt>
-              <dd>
-                {formatDateTime(
-                  qxdmStatus?.current_log_modified_at
-                )}
-              </dd>
-            </div>
-          </dl>
-
-          <div className="qxdm-action-row">
-            <button
-              type="button"
-              className="qxdm-refresh-button"
-              onClick={handleSelectSavedLog}
-              disabled={
-                isSubmitting ||
-                loggingActive
-              }
-            >
-              <FiFileText />
-              Select Saved Log
-            </button>
-
-            <button
-              type="button"
-              className="qxdm-refresh-button"
-              onClick={handleOpenSavedLogFolder}
-              disabled={
-                isSubmitting ||
-                !qxdmStatus?.current_log_path
-              }
-            >
-              <FiFolder />
-              Open Folder
-            </button>
-          </div>
         </section>
       </main>
     </div>
