@@ -20,9 +20,9 @@ class TestWrapper:
     """
     Coordinate one WNC TestHub test session.
 
-    Every wrapper session produces one root folder with three artifact areas:
+    Every wrapper session produces one root folder with artifact areas including:
         qxdm/
-        throughput/
+        reports/
         syslog/
 
     Manual mode:
@@ -66,13 +66,13 @@ class TestWrapper:
         ).resolve()
 
         qxdm_folder = session_folder / "qxdm"
-        throughput_folder = session_folder / "throughput"
+        reports_folder = session_folder / "reports"
         syslog_folder = session_folder / "syslog"
         metadata_folder = session_folder / "metadata"
 
         for folder in (
             qxdm_folder,
-            throughput_folder,
+            reports_folder,
             syslog_folder,
             metadata_folder,
         ):
@@ -88,7 +88,7 @@ class TestWrapper:
             "session_folder": str(session_folder),
             "artifacts": {
                 "qxdm": str(qxdm_folder),
-                "throughput": str(throughput_folder),
+                "reports": str(reports_folder),
                 "syslog": str(syslog_folder),
             },
         }
@@ -119,9 +119,9 @@ class TestWrapper:
         """
         Save the wrapper's throughput results as a CSV artifact.
 
-        The CSV is written inside the current wrapper session's throughput/
-        folder so it travels with the QXDM, syslog, metadata, and Excel
-        artifacts for that test session.
+        The CSV is written inside the current wrapper session's reports/
+        folder so it stays beside the Excel throughput report and travels
+        with the QXDM, syslog, metadata, and other session artifacts.
         """
         csv_path = Path(csv_path).resolve()
         csv_path.parent.mkdir(
@@ -208,7 +208,7 @@ class TestWrapper:
 
         session_folder = Path(session["session_folder"])
         qxdm_folder = Path(session["artifacts"]["qxdm"])
-        throughput_folder = Path(session["artifacts"]["throughput"])
+        reports_folder = Path(session["artifacts"]["reports"])
         syslog_folder = Path(session["artifacts"]["syslog"])
         metadata_path = session_folder / "metadata" / "wrapper_session.json"
 
@@ -300,13 +300,13 @@ class TestWrapper:
 
                 titan = Titan3(ip_address=titan_ip)
 
-                # The existing AutomatedTestRunner creates its throughput
-                # report relative to session_folder. Giving it this dedicated
-                # wrapper subfolder keeps the final report under throughput/.
+                # The existing AutomatedTestRunner creates its Excel report
+                # relative to session_folder. Point it at reports/ so the
+                # generated workbook and CSV stay together in one place.
                 runner = AutomatedTestRunner(
                     titan=titan,
                     qxdm=None,
-                    session_folder=throughput_folder,
+                    session_folder=reports_folder,
                     number_of_runs=number_of_runs,
                     delay_between_runs=delay_between_runs,
                     timeout_seconds=timeout_seconds,
@@ -317,7 +317,7 @@ class TestWrapper:
                 results = runner.run()
 
                 throughput_csv_path = (
-                    throughput_folder
+                    reports_folder
                     / "throughput_results.csv"
                 ).resolve()
 
