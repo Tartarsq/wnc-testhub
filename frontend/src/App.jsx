@@ -4,6 +4,8 @@ import Dashboard from './pages/Dashboard'
 import Devices from './pages/devices'
 import QXDMLogs from './pages/QXDMLogs'
 import Throughput from './pages/Throughput'
+import Syslog from './pages/Syslog'
+import PCAT from './pages/PCAT'
 import Analytics from './pages/Analytics'
 import TestResultDetails from './pages/TestResultDetails'
 import TestRunner from './pages/TestRunner'
@@ -17,6 +19,8 @@ function App() {
         <Route path="/devices" element={<Devices />} />
         <Route path="/qxdm-logs" element={<QXDMLogs />} />
         <Route path="/throughput" element={<Throughput />} />
+        <Route path="/syslog" element={<Syslog />} />
+        <Route path="/pcat" element={<PCAT />} />
         <Route path="/analytics" element={<Analytics />} />
         <Route
           path="/analytics/results/:resultIndex"

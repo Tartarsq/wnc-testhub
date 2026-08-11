@@ -4,6 +4,8 @@ import {
   FiCpu,
   FiFileText,
   FiActivity,
+  FiTerminal,
+  FiHardDrive,
   FiBarChart2,
   FiLayers,
   FiSettings,
@@ -48,6 +50,16 @@ function Sidebar() {
         <NavLink to="/throughput" className={getLinkClass}>
           <FiActivity className="sidebar-icon" />
           <span>Throughput</span>
+        </NavLink>
+
+        <NavLink to="/syslog" className={getLinkClass}>
+          <FiTerminal className="sidebar-icon" />
+          <span>Syslog</span>
+        </NavLink>
+
+        <NavLink to="/pcat" className={getLinkClass}>
+          <FiHardDrive className="sidebar-icon" />
+          <span>PCAT</span>
         </NavLink>
 
         <NavLink to="/analytics" className={getLinkClass}>
