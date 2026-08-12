@@ -1,3 +1,9 @@
+
+
+
+
+
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -1865,6 +1871,68 @@ pcat_state: dict[str, Any] = {
 }
 
 
+
+def find_adb_executable() -> Path | None:
+    """Try to locate adb.exe automatically on Windows."""
+    resolved = shutil.which("adb")
+
+    if resolved:
+        candidate = Path(resolved).resolve()
+        if candidate.exists() and candidate.is_file():
+            return candidate
+
+    candidates = [
+        Path.home() / "AppData" / "Local" / "Android" / "Sdk" / "platform-tools" / "adb.exe",
+        Path.home() / "Android" / "Sdk" / "platform-tools" / "adb.exe",
+        Path("C:/platform-tools/adb.exe"),
+        Path("C:/adb/adb.exe"),
+        Path("C:/Android/platform-tools/adb.exe"),
+    ]
+
+    for candidate in candidates:
+        try:
+            resolved_candidate = candidate.expanduser().resolve()
+            if resolved_candidate.exists() and resolved_candidate.is_file():
+                return resolved_candidate
+        except OSError:
+            continue
+
+    try:
+        for candidate in Path.home().rglob("adb.exe"):
+            try:
+                if candidate.parent.name.lower() not in {"platform-tools", "adb"}:
+                    continue
+                if candidate.is_file():
+                    return candidate.resolve()
+            except OSError:
+                continue
+    except OSError:
+        pass
+
+    return None
+
+
+def open_visible_cmd_with_adb(
+    adb_executable: Path,
+) -> None:
+    """Open Command Prompt in the folder containing adb.exe."""
+    adb_folder = adb_executable.parent.resolve()
+
+    subprocess.Popen(
+        [
+            "cmd.exe",
+            "/k",
+            f'cd /d "{adb_folder}"',
+        ],
+        cwd=str(adb_folder),
+        creationflags=(
+            subprocess.CREATE_NEW_CONSOLE
+            if os.name == "nt"
+            else 0
+        ),
+    )
+
+
 def validate_adb_folder(
     adb_folder: str | Path,
 ) -> tuple[Path, Path]:
@@ -1994,6 +2062,81 @@ def prompt_for_pcat_executable() -> Path | None:
 @app.get("/api/pcat/status")
 def get_pcat_status() -> dict[str, Any]:
     return dict(pcat_state)
+
+
+
+@app.get("/api/pcat/find-adb")
+def find_pcat_adb() -> dict[str, Any]:
+    try:
+        adb_executable = find_adb_executable()
+
+        if adb_executable is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=(
+                    "TestHub could not find adb.exe automatically. "
+                    "Use Browse and select the platform-tools folder manually."
+                ),
+            )
+
+        adb_folder = adb_executable.parent.resolve()
+
+        pcat_state.update(
+            {
+                "adb_folder": str(adb_folder),
+                "adb_executable": str(adb_executable),
+                "status": "adb_configured",
+                "message": "ADB was found automatically.",
+                "error": None,
+            }
+        )
+
+        return {
+            "success": True,
+            "adb_folder": str(adb_folder),
+            "adb_executable": str(adb_executable),
+            "message": "ADB was found automatically.",
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(error),
+        ) from error
+
+
+@app.post("/api/pcat/open-adb-terminal")
+def open_pcat_adb_terminal(
+    request: PCATPathRequest,
+) -> dict[str, Any]:
+    try:
+        folder, adb_executable = validate_adb_folder(
+            request.adb_folder
+        )
+
+        open_visible_cmd_with_adb(adb_executable)
+
+        return {
+            "success": True,
+            "adb_folder": str(folder),
+            "adb_executable": str(adb_executable),
+            "message": "Opened Command Prompt in the platform-tools folder.",
+        }
+
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(error),
+        ) from error
+
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(error),
+        ) from error
 
 
 @app.get("/api/pcat/browse-adb")
