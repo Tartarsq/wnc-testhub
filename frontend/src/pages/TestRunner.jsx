@@ -25,7 +25,7 @@ function TestRunner() {
   const [collectQxdm, setCollectQxdm] = useState(true)
   const [qxdmMode, setQxdmMode] = useState('manual')
   const [collectThroughput, setCollectThroughput] = useState(true)
-  const [collectPcat, setCollectPcat] = useState(true)
+  const [collectSyslog, setCollectSyslog] = useState(true)
 
   const [job, setJob] = useState(null)
   const [error, setError] = useState('')
@@ -139,7 +139,7 @@ function TestRunner() {
       return
     }
 
-    if (!collectQxdm && !collectThroughput && !collectPcat) {
+    if (!collectQxdm && !collectThroughput && !collectSyslog) {
       setError('Select at least one test artifact.')
       return
     }
@@ -158,11 +158,7 @@ function TestRunner() {
         qxdm_mode: collectQxdm ? qxdmMode : 'manual',
 
         collect_throughput: collectThroughput,
-
-        // The backend still names this field collect_syslog while PCAT
-        // integration is being completed. In the UI this represents the
-        // PCAT CrashDump / syslog artifact selection.
-        collect_syslog: collectPcat,
+        collect_syslog: collectSyslog,
 
         // Hidden compatibility defaults. Speedtest GUI now controls how
         // many tests are actually performed.
@@ -250,7 +246,7 @@ function TestRunner() {
           <div>
             <h2>Unified Test Session</h2>
             <p>
-              Choose QXDM, Speedtest, and PCAT for one shared
+              Choose QXDM, Speedtest, and Syslog for one shared
               wrapper result folder.
             </p>
           </div>
@@ -371,9 +367,9 @@ function TestRunner() {
               <label className="wrapper-artifact-card">
                 <input
                   type="checkbox"
-                  checked={collectPcat}
+                  checked={collectSyslog}
                   onChange={(event) =>
-                    setCollectPcat(event.target.checked)
+                    setCollectSyslog(event.target.checked)
                   }
                   disabled={isSubmitting}
                 />
@@ -381,9 +377,10 @@ function TestRunner() {
                 <FiFileText />
 
                 <div>
-                  <strong>PCAT CrashDump</strong>
+                  <strong>Syslog</strong>
                   <span>
-                    Open PCAT and collect the CrashDump / syslog artifact
+                    Collect the Verizon GUI system log and save it
+                    into this wrapper session
                   </span>
                 </div>
               </label>
