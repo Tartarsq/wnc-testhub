@@ -17,7 +17,7 @@ function Syslog() {
   const [wrapperFolder, setWrapperFolder] = useState('')
   const [status, setStatus] = useState('idle')
   const [notes, setNotes] = useState('')
-  const [executablePath, setExecutablePath] = useState('')
+  const [titanIp, setTitanIp] = useState('192.168.100.1')
   const [syslogFolder, setSyslogFolder] = useState('')
   const [error, setError] = useState('')
   const [syslogFiles, setSyslogFiles] = useState([])
@@ -58,27 +58,6 @@ function Syslog() {
     }
   }
 
-  const handleBrowseExecutable = async () => {
-    setError('')
-
-    try {
-      const response = await api.get(
-        '/syslog/verizon/browse-executable',
-        { timeout: 0 }
-      )
-
-      if (response.data?.path) {
-        setExecutablePath(response.data.path)
-      }
-    } catch (requestError) {
-      setError(
-        requestError.response?.data?.detail ||
-          requestError.message ||
-          'Unable to select the Verizon GUI executable.'
-      )
-    }
-  }
-
   const handleOpenVerizonGui = async () => {
     if (!wrapperFolder.trim()) {
       setError('Select the wrapper session first.')
@@ -93,15 +72,12 @@ function Syslog() {
         '/syslog/verizon/open',
         {
           wrapper_session_folder: wrapperFolder.trim(),
-          executable_path: executablePath.trim() || null,
+          titan_ip: titanIp.trim(),
         },
         { timeout: 0 }
       )
 
       setStatus('collecting')
-      setExecutablePath(
-        response.data?.executable_path ?? executablePath
-      )
       setSyslogFolder(
         response.data?.syslog_folder ?? ''
       )
@@ -184,8 +160,8 @@ function Syslog() {
         setSyslogFolder(response.data.syslog_folder)
       }
 
-      if (response.data?.executable_path) {
-        setExecutablePath(response.data.executable_path)
+      if (response.data?.titan_ip) {
+        setTitanIp(response.data.titan_ip)
       }
 
       if (response.data?.syslog_folder) {
@@ -280,7 +256,7 @@ function Syslog() {
               <div>
                 <h3>Syslog Configuration</h3>
                 <p>
-                  Select the wrapper session before opening the Verizon GUI.
+                  Select the wrapper session and Titan IP before opening the Verizon GUI.
                 </p>
               </div>
             </div>
@@ -316,29 +292,21 @@ function Syslog() {
                 </small>
               </label>
 
-              <label className="form-field qxdm-folder-field">
-                <span>Verizon GUI Executable</span>
+              <label className="form-field">
+                <span>Titan IP</span>
 
-                <div className="qxdm-folder-input">
-                  <FiFileText />
+                <input
+                  type="text"
+                  value={titanIp}
+                  onChange={(event) =>
+                    setTitanIp(event.target.value)
+                  }
+                  placeholder="192.168.100.1"
+                />
 
-                  <input
-                    type="text"
-                    value={executablePath}
-                    onChange={(event) =>
-                      setExecutablePath(event.target.value)
-                    }
-                    placeholder="Select the Verizon GUI .exe"
-                  />
-
-                  <button
-                    type="button"
-                    className="qxdm-refresh-button"
-                    onClick={handleBrowseExecutable}
-                  >
-                    Browse
-                  </button>
-                </div>
+                <small className="qxdm-session-help">
+                  Open Verizon GUI at https://&lt;Titan-IP&gt;/#/login/
+                </small>
               </label>
 
               <label className="form-field">

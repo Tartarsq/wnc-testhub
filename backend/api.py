@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import subprocess
+import webbrowser
 from threading import Lock
 from typing import Any
 from uuid import uuid4
@@ -1842,16 +1843,18 @@ class VerizonSyslogLaunchRequest(BaseModel):
         min_length=1,
         max_length=500,
     )
-    executable_path: str | None = Field(
-        default=None,
-        max_length=500,
+    titan_ip: str = Field(
+        default=DEFAULT_TITAN_IP,
+        min_length=7,
+        max_length=45,
     )
 
 
 verizon_syslog_state: dict[str, Any] = {
     "status": "idle",
     "process_running": False,
-    "executable_path": None,
+    "titan_ip": DEFAULT_TITAN_IP,
+    "gui_url": None,
     "wrapper_session_folder": None,
     "syslog_folder": None,
     "message": "Verizon GUI syslog workflow is idle.",
@@ -1881,104 +1884,6 @@ def validate_syslog_wrapper_session(
 
     return session_folder
 
-
-def prompt_for_verizon_gui_executable() -> Path | None:
-    try:
-        from tkinter import Tk
-        from tkinter.filedialog import askopenfilename
-    except ImportError as error:
-        raise RuntimeError(
-            "Tkinter is required to browse for the Verizon GUI executable."
-        ) from error
-
-    root = Tk()
-    root.withdraw()
-    root.attributes("-topmost", True)
-
-    try:
-        selected = askopenfilename(
-            parent=root,
-            title="Select Verizon GUI Executable",
-            filetypes=[
-                ("Windows applications", "*.exe"),
-                ("All files", "*.*"),
-            ],
-        )
-    finally:
-        root.destroy()
-
-    if not selected:
-        return None
-
-    return Path(selected).resolve()
-
-
-
-def list_saved_syslog_files(syslog_folder: str | Path) -> list[dict[str, Any]]:
-    folder = Path(syslog_folder).expanduser().resolve()
-    folder.mkdir(parents=True, exist_ok=True)
-
-    items: list[dict[str, Any]] = []
-    for path in folder.iterdir():
-        if not path.is_file():
-            continue
-        try:
-            stat = path.stat()
-        except OSError:
-            continue
-
-        items.append({
-            "filename": path.name,
-            "path": str(path.resolve()),
-            "size_bytes": stat.st_size,
-            "modified_at": datetime.fromtimestamp(
-                stat.st_mtime
-            ).isoformat(timespec="seconds"),
-        })
-
-    items.sort(
-        key=lambda item: item["modified_at"],
-        reverse=True,
-    )
-    return items
-
-
-def resolve_verizon_gui_executable(
-    requested_path: str | None = None,
-) -> Path:
-    candidates: list[Path] = []
-
-    if requested_path:
-        candidates.append(Path(requested_path).expanduser())
-
-    env_path = os.environ.get(
-        "WNC_VERIZON_GUI_EXECUTABLE",
-        "",
-    ).strip()
-
-    if env_path:
-        candidates.append(Path(env_path).expanduser())
-
-    for candidate in candidates:
-        try:
-            resolved = candidate.resolve()
-            if (
-                resolved.exists()
-                and resolved.is_file()
-                and resolved.suffix.lower() == ".exe"
-            ):
-                return resolved
-        except OSError:
-            continue
-
-    selected = prompt_for_verizon_gui_executable()
-
-    if selected is None:
-        raise ValueError(
-            "Verizon GUI executable selection was cancelled."
-        )
-
-    return selected
 
 
 
@@ -2455,20 +2360,6 @@ def browse_verizon_syslog_wrapper() -> dict[str, str | None]:
         ) from error
 
 
-@app.get("/api/syslog/verizon/browse-executable")
-def browse_verizon_gui_executable() -> dict[str, str | None]:
-    try:
-        selected = prompt_for_verizon_gui_executable()
-        return {
-            "path": str(selected) if selected is not None else None
-        }
-    except Exception as error:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(error),
-        ) from error
-
-
 @app.post("/api/syslog/verizon/open")
 def open_verizon_gui_for_syslog(
     request: VerizonSyslogLaunchRequest,
@@ -2481,26 +2372,26 @@ def open_verizon_gui_for_syslog(
             wrapper_folder / "syslog"
         ).resolve()
 
-        executable = resolve_verizon_gui_executable(
-            request.executable_path
-        )
+        titan_ip = request.titan_ip.strip()
+        gui_url = f"https://{titan_ip}/#/login/"
 
-        subprocess.Popen(
-            [str(executable)],
-            cwd=str(executable.parent),
+        opened = webbrowser.open(
+            gui_url,
+            new=2,
         )
 
         verizon_syslog_state.update(
             {
                 "status": "gui_opened",
-                "process_running": True,
-                "executable_path": str(executable),
+                "process_running": bool(opened),
+                "titan_ip": titan_ip,
+                "gui_url": gui_url,
                 "wrapper_session_folder": str(wrapper_folder),
                 "syslog_folder": str(syslog_folder),
                 "message": (
-                    "Verizon GUI opened. Navigate to Diagnostic "
-                    "Monitoring > System Logging. Save to: "
-                    f"{syslog_folder}"
+                    "Verizon GUI opened in the default browser. "
+                    "Navigate to Diagnostic Monitoring > System Logging, "
+                    f"then save the log to: {syslog_folder}"
                 ),
                 "error": None,
             }
