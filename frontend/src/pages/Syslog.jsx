@@ -10,12 +10,16 @@ import {
 } from 'react-icons/fi'
 import Sidebar from '../components/Sidebar'
 import Topbar from '../components/Topbar'
+import api from '../services/api'
 import '../App.css'
 
 function Syslog() {
   const [wrapperFolder, setWrapperFolder] = useState('')
   const [status, setStatus] = useState('idle')
   const [notes, setNotes] = useState('')
+  const [executablePath, setExecutablePath] = useState('')
+  const [syslogFolder, setSyslogFolder] = useState('')
+  const [error, setError] = useState('')
 
   const statusLabel =
     status === 'opening'
@@ -26,25 +30,122 @@ function Syslog() {
           ? 'Completed'
           : 'Idle'
 
-  const handleBrowseWrapper = () => {
-    setWrapperFolder(
-      'Wrapper folder picker will be connected to the backend.'
-    )
+  const handleBrowseWrapper = async () => {
+    setError('')
+
+    try {
+      const response = await api.get(
+        '/syslog/verizon/browse-wrapper',
+        { timeout: 0 }
+      )
+
+      if (response.data?.path) {
+        setWrapperFolder(response.data.path)
+        setSyslogFolder(response.data.syslog_folder ?? '')
+      }
+    } catch (requestError) {
+      setError(
+        requestError.response?.data?.detail ||
+          requestError.message ||
+          'Unable to select the wrapper session.'
+      )
+    }
   }
 
-  const handleOpenVerizonGui = () => {
+  const handleBrowseExecutable = async () => {
+    setError('')
+
+    try {
+      const response = await api.get(
+        '/syslog/verizon/browse-executable',
+        { timeout: 0 }
+      )
+
+      if (response.data?.path) {
+        setExecutablePath(response.data.path)
+      }
+    } catch (requestError) {
+      setError(
+        requestError.response?.data?.detail ||
+          requestError.message ||
+          'Unable to select the Verizon GUI executable.'
+      )
+    }
+  }
+
+  const handleOpenVerizonGui = async () => {
+    if (!wrapperFolder.trim()) {
+      setError('Select the wrapper session first.')
+      return
+    }
+
+    setError('')
     setStatus('opening')
+
+    try {
+      const response = await api.post(
+        '/syslog/verizon/open',
+        {
+          wrapper_session_folder: wrapperFolder.trim(),
+          executable_path: executablePath.trim() || null,
+        },
+        { timeout: 0 }
+      )
+
+      setStatus('collecting')
+      setExecutablePath(
+        response.data?.executable_path ?? executablePath
+      )
+      setSyslogFolder(
+        response.data?.syslog_folder ?? ''
+      )
+    } catch (requestError) {
+      setStatus('idle')
+      setError(
+        requestError.response?.data?.detail ||
+          requestError.message ||
+          'Unable to open the Verizon GUI.'
+      )
+    }
   }
 
   const handleStartCollection = () => {
     setStatus('collecting')
   }
 
-  const handleSaveSyslog = () => {
-    setStatus('completed')
+  const handleSaveSyslog = async () => {
+    if (!syslogFolder) {
+      setError('Open the Verizon GUI with a wrapper session first.')
+      return
+    }
+
+    try {
+      await api.get('/syslog/verizon/open-folder')
+      setStatus('completed')
+    } catch (requestError) {
+      setError(
+        requestError.response?.data?.detail ||
+          requestError.message ||
+          'Unable to open the syslog output folder.'
+      )
+    }
   }
 
-  const handleRefresh = () => {}
+  const handleRefresh = async () => {
+    try {
+      const response = await api.get('/syslog/verizon/status')
+
+      if (response.data?.syslog_folder) {
+        setSyslogFolder(response.data.syslog_folder)
+      }
+
+      if (response.data?.executable_path) {
+        setExecutablePath(response.data.executable_path)
+      }
+    } catch {
+      // Keep page usable if backend is not running.
+    }
+  }
 
   return (
     <div className="dashboard-layout">
@@ -157,6 +258,31 @@ function Syslog() {
                 </small>
               </label>
 
+              <label className="form-field qxdm-folder-field">
+                <span>Verizon GUI Executable</span>
+
+                <div className="qxdm-folder-input">
+                  <FiFileText />
+
+                  <input
+                    type="text"
+                    value={executablePath}
+                    onChange={(event) =>
+                      setExecutablePath(event.target.value)
+                    }
+                    placeholder="Select the Verizon GUI .exe"
+                  />
+
+                  <button
+                    type="button"
+                    className="qxdm-refresh-button"
+                    onClick={handleBrowseExecutable}
+                  >
+                    Browse
+                  </button>
+                </div>
+              </label>
+
               <label className="form-field">
                 <span>Notes</span>
 
@@ -180,6 +306,19 @@ function Syslog() {
               </span>
             </div>
 
+            {syslogFolder && (
+              <div className="qxdm-manual-settings-banner">
+                <strong>Syslog Save Folder</strong>
+                <span>{syslogFolder}</span>
+              </div>
+            )}
+
+            {error && (
+              <div className="api-error-message">
+                <strong>Syslog error:</strong> {error}
+              </div>
+            )}
+
             <div className="qxdm-action-row">
               <button
                 type="button"
@@ -196,7 +335,7 @@ function Syslog() {
                 onClick={handleStartCollection}
               >
                 <FiActivity />
-                Start Syslog
+                Mark System Logging Open
               </button>
 
               <button
@@ -205,7 +344,7 @@ function Syslog() {
                 onClick={handleSaveSyslog}
               >
                 <FiSave />
-                Save Syslog
+                Open Syslog Folder
               </button>
 
               <button

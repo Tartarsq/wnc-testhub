@@ -1913,6 +1913,36 @@ def prompt_for_verizon_gui_executable() -> Path | None:
     return Path(selected).resolve()
 
 
+
+def list_saved_syslog_files(syslog_folder: str | Path) -> list[dict[str, Any]]:
+    folder = Path(syslog_folder).expanduser().resolve()
+    folder.mkdir(parents=True, exist_ok=True)
+
+    items: list[dict[str, Any]] = []
+    for path in folder.iterdir():
+        if not path.is_file():
+            continue
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+
+        items.append({
+            "filename": path.name,
+            "path": str(path.resolve()),
+            "size_bytes": stat.st_size,
+            "modified_at": datetime.fromtimestamp(
+                stat.st_mtime
+            ).isoformat(timespec="seconds"),
+        })
+
+    items.sort(
+        key=lambda item: item["modified_at"],
+        reverse=True,
+    )
+    return items
+
+
 def resolve_verizon_gui_executable(
     requested_path: str | None = None,
 ) -> Path:
@@ -2516,6 +2546,46 @@ def open_verizon_syslog_folder() -> dict[str, Any]:
     return {
         "success": True,
         "path": str(folder),
+    }
+
+
+
+
+@app.get("/api/syslog/verizon/files")
+def get_verizon_syslog_files() -> dict[str, Any]:
+    folder_value = verizon_syslog_state.get("syslog_folder")
+
+    if not folder_value:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Select a wrapper and open the Verizon GUI first.",
+        )
+
+    folder = Path(folder_value).resolve()
+    files = list_saved_syslog_files(folder)
+
+    message = (
+        f"Detected {len(files)} syslog file(s) in {folder}."
+        if files
+        else (
+            "No syslog files detected yet. Save the Verizon GUI syslog "
+            "into this wrapper folder and try again."
+        )
+    )
+
+    verizon_syslog_state.update({
+        "status": "file_detected" if files else verizon_syslog_state.get("status", "idle"),
+        "message": message,
+        "error": None,
+    })
+
+    return {
+        "success": True,
+        "syslog_folder": str(folder),
+        "count": len(files),
+        "latest_file": files[0] if files else None,
+        "files": files,
+        "message": message,
     }
 
 
