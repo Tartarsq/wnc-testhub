@@ -20,6 +20,8 @@ function Syslog() {
   const [executablePath, setExecutablePath] = useState('')
   const [syslogFolder, setSyslogFolder] = useState('')
   const [error, setError] = useState('')
+  const [syslogFiles, setSyslogFiles] = useState([])
+  const [message, setMessage] = useState('')
 
   const statusLabel =
     status === 'opening'
@@ -42,6 +44,10 @@ function Syslog() {
       if (response.data?.path) {
         setWrapperFolder(response.data.path)
         setSyslogFolder(response.data.syslog_folder ?? '')
+        setMessage(
+          `Syslog destination: ${response.data.syslog_folder ?? ''}`
+        )
+        setError('')
       }
     } catch (requestError) {
       setError(
@@ -109,10 +115,6 @@ function Syslog() {
     }
   }
 
-  const handleStartCollection = () => {
-    setStatus('collecting')
-  }
-
   const handleSaveSyslog = async () => {
     if (!syslogFolder) {
       setError('Open the Verizon GUI with a wrapper session first.')
@@ -120,13 +122,56 @@ function Syslog() {
     }
 
     try {
-      await api.get('/syslog/verizon/open-folder')
+      await api.get(
+        '/syslog/verizon/open-folder',
+        {
+          params: {
+            syslog_folder: syslogFolder,
+          },
+        }
+      )
       setStatus('completed')
     } catch (requestError) {
       setError(
         requestError.response?.data?.detail ||
           requestError.message ||
           'Unable to open the syslog output folder.'
+      )
+    }
+  }
+
+  const handleDetectSavedSyslog = async () => {
+    if (!syslogFolder) {
+      setError('Select a wrapper and open the Verizon GUI first.')
+      return
+    }
+
+    setError('')
+    setMessage('Checking the wrapper syslog folder...')
+
+    try {
+      const response = await api.get(
+        '/syslog/verizon/files',
+        {
+          params: {
+            syslog_folder: syslogFolder,
+          },
+        }
+      )
+      const files = response.data?.files ?? []
+
+      setSyslogFiles(files)
+      setMessage(response.data?.message ?? '')
+
+      if (files.length > 0) {
+        setStatus('completed')
+      }
+    } catch (requestError) {
+      setMessage('')
+      setError(
+        requestError.response?.data?.detail ||
+          requestError.message ||
+          'Unable to detect the saved syslog.'
       )
     }
   }
@@ -141,6 +186,19 @@ function Syslog() {
 
       if (response.data?.executable_path) {
         setExecutablePath(response.data.executable_path)
+      }
+
+      if (response.data?.syslog_folder) {
+        const filesResponse = await api.get(
+          '/syslog/verizon/files',
+          {
+            params: {
+              syslog_folder:
+                response.data.syslog_folder,
+            },
+          }
+        )
+        setSyslogFiles(filesResponse.data?.files ?? [])
       }
     } catch {
       // Keep page usable if backend is not running.
@@ -300,9 +358,7 @@ function Syslog() {
             <div className="configuration-note">
               <FiSave />
               <span>
-                Planned save location: &lt;wrapper&gt;/syslog/. The backend
-                will later help set this destination when the Verizon GUI
-                Save dialog appears.
+                Save the Verizon GUI syslog manually into the folder shown below. After saving, click Detect Saved Syslog so TestHub can confirm it landed in the wrapper.
               </span>
             </div>
 
@@ -331,20 +387,20 @@ function Syslog() {
 
               <button
                 type="button"
-                className="qxdm-start-button"
-                onClick={handleStartCollection}
-              >
-                <FiActivity />
-                Mark System Logging Open
-              </button>
-
-              <button
-                type="button"
                 className="qxdm-stop-button"
                 onClick={handleSaveSyslog}
               >
                 <FiSave />
                 Open Syslog Folder
+              </button>
+
+              <button
+                type="button"
+                className="qxdm-start-button"
+                onClick={handleDetectSavedSyslog}
+              >
+                <FiCheckCircle />
+                Detect Saved Syslog
               </button>
 
               <button
@@ -376,7 +432,8 @@ function Syslog() {
                 ['2. Open Verizon GUI', 'Launch or focus the Verizon diagnostic application.'],
                 ['3. Diagnostic Monitoring', 'Navigate to Diagnostic Monitoring.'],
                 ['4. System Logging', 'Open the System Logging section.'],
-                ['5. Save', 'Click Save and target the wrapper/syslog folder.'],
+                ['5. Save', 'Click Save and target the displayed wrapper/syslog folder.'],
+                ['6. Detect Saved Syslog', 'Return to TestHub and confirm the file was detected.'],
               ].map(([title, detail]) => (
                 <div className="wrapper-progress-item" key={title}>
                   <FiCheckCircle />
@@ -390,6 +447,13 @@ function Syslog() {
           </article>
         </section>
 
+        {message && (
+          <div className="qxdm-manual-settings-banner">
+            <strong>Syslog Status</strong>
+            <span>{message}</span>
+          </div>
+        )}
+
         <section className="dashboard-panel throughput-history-panel">
           <div className="panel-header">
             <div>
@@ -400,7 +464,10 @@ function Syslog() {
               </p>
             </div>
 
-            <span className="history-count">0 files</span>
+            <span className="history-count">
+              {syslogFiles.length}{' '}
+              {syslogFiles.length === 1 ? 'file' : 'files'}
+            </span>
           </div>
 
           <div className="table-container">
@@ -416,11 +483,31 @@ function Syslog() {
               </thead>
 
               <tbody>
-                <tr>
-                  <td colSpan="5" className="empty-table-message">
-                    No syslog files collected yet.
-                  </td>
-                </tr>
+                {syslogFiles.length === 0 ? (
+                  <tr>
+                    <td colSpan="5" className="empty-table-message">
+                      No syslog files detected yet.
+                    </td>
+                  </tr>
+                ) : (
+                  syslogFiles.map((file) => (
+                    <tr key={file.path}>
+                      <td>{file.filename}</td>
+                      <td>{file.modified_at ?? 'Unknown'}</td>
+                      <td>
+                        {file.size_bytes != null
+                          ? `${(file.size_bytes / 1024).toFixed(1)} KB`
+                          : 'Unknown'}
+                      </td>
+                      <td>{file.path}</td>
+                      <td>
+                        <span className="table-status completed">
+                          Detected
+                        </span>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>

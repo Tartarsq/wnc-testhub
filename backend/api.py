@@ -2421,11 +2421,26 @@ def browse_verizon_syslog_wrapper() -> dict[str, str | None]:
             selected
         )
 
+        syslog_folder = (
+            session_folder / "syslog"
+        ).resolve()
+
+        verizon_syslog_state.update(
+            {
+                "wrapper_session_folder": str(session_folder),
+                "syslog_folder": str(syslog_folder),
+                "status": "wrapper_selected",
+                "message": (
+                    "Wrapper session selected. "
+                    f"Syslog destination: {syslog_folder}"
+                ),
+                "error": None,
+            }
+        )
+
         return {
             "path": str(session_folder),
-            "syslog_folder": str(
-                (session_folder / "syslog").resolve()
-            ),
+            "syslog_folder": str(syslog_folder),
         }
 
     except ValueError as error:
@@ -2523,8 +2538,13 @@ def open_verizon_gui_for_syslog(
 
 
 @app.get("/api/syslog/verizon/open-folder")
-def open_verizon_syslog_folder() -> dict[str, Any]:
-    folder_value = verizon_syslog_state.get("syslog_folder")
+def open_verizon_syslog_folder(
+    syslog_folder: str | None = None,
+) -> dict[str, Any]:
+    folder_value = (
+        syslog_folder
+        or verizon_syslog_state.get("syslog_folder")
+    )
 
     if not folder_value:
         raise HTTPException(
@@ -2552,8 +2572,13 @@ def open_verizon_syslog_folder() -> dict[str, Any]:
 
 
 @app.get("/api/syslog/verizon/files")
-def get_verizon_syslog_files() -> dict[str, Any]:
-    folder_value = verizon_syslog_state.get("syslog_folder")
+def get_verizon_syslog_files(
+    syslog_folder: str | None = None,
+) -> dict[str, Any]:
+    folder_value = (
+        syslog_folder
+        or verizon_syslog_state.get("syslog_folder")
+    )
 
     if not folder_value:
         raise HTTPException(
