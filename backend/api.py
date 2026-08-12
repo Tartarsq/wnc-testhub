@@ -1,3 +1,6 @@
+
+
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -2518,6 +2521,97 @@ def list_saved_syslog_files(
     return items
 
 
+
+def import_latest_downloaded_syslog(
+    destination_folder: str | Path,
+) -> Path | None:
+    """
+    Look in the Windows Downloads folder for Verizon GUI syslogs and copy
+    the newest matching file into the selected wrapper's syslog folder.
+
+    Expected filenames:
+        messages_SYS.log
+        messages_SYS(1).log
+        messages_SYS(2).log
+        ...
+    """
+    destination = Path(
+        destination_folder
+    ).expanduser().resolve()
+    destination.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    downloads_candidates = [
+        Path.home() / "Downloads",
+    ]
+
+    # OneDrive can redirect Downloads on some test PCs.
+    onedrive = os.environ.get("OneDrive")
+    if onedrive:
+        downloads_candidates.append(
+            Path(onedrive) / "Downloads"
+        )
+
+    syslog_pattern = re.compile(
+        r"^messages_SYS(?:\(\d+\))?\.log$",
+        re.IGNORECASE,
+    )
+
+    candidates: list[Path] = []
+
+    for downloads_folder in downloads_candidates:
+        if not downloads_folder.exists():
+            continue
+
+        for path in downloads_folder.iterdir():
+            if (
+                path.is_file()
+                and syslog_pattern.fullmatch(path.name)
+            ):
+                candidates.append(path)
+
+    if not candidates:
+        return None
+
+    newest = max(
+        candidates,
+        key=lambda path: path.stat().st_mtime,
+    )
+
+    target = destination / newest.name
+
+    # If a file with the same name already exists in the wrapper, preserve
+    # both instead of overwriting the prior capture.
+    if target.exists():
+        if (
+            target.stat().st_size == newest.stat().st_size
+            and int(target.stat().st_mtime)
+            == int(newest.stat().st_mtime)
+        ):
+            return target
+
+        stem = newest.stem
+        suffix = newest.suffix
+        counter = 1
+
+        while target.exists():
+            target = (
+                destination
+                / f"{stem}_imported_{counter}{suffix}"
+            )
+            counter += 1
+
+    shutil.copy2(
+        newest,
+        target,
+    )
+
+    return target
+
+
+
 @app.get("/api/syslog/verizon/files")
 def get_verizon_syslog_files(
     syslog_folder: str | None = None,
@@ -2534,17 +2628,27 @@ def get_verizon_syslog_files(
         )
 
     folder = Path(folder_value).resolve()
+
+    imported_file = import_latest_downloaded_syslog(
+        folder
+    )
+
     files = list_saved_syslog_files(folder)
 
-    message = (
-        f"Detected {len(files)} Verizon syslog file(s) in {folder}."
-        if files
-        else (
-            "No Verizon syslog files detected yet. Save messages_SYS.log, "
-            "messages_SYS(1).log, or another messages_SYS(number).log "
-            "file into this wrapper syslog folder and try again."
+    if imported_file is not None:
+        message = (
+            "Detected the newest Verizon syslog from Downloads and copied "
+            f"it into the wrapper: {imported_file}"
         )
-    )
+    elif files:
+        message = (
+            f"Detected {len(files)} Verizon syslog file(s) in {folder}."
+        )
+    else:
+        message = (
+            "No Verizon syslog was found in the wrapper or Downloads. "
+            "Expected a file such as messages_SYS.log or messages_SYS(1).log."
+        )
 
     verizon_syslog_state.update({
         "status": "file_detected" if files else verizon_syslog_state.get("status", "idle"),
@@ -2557,6 +2661,11 @@ def get_verizon_syslog_files(
         "syslog_folder": str(folder),
         "count": len(files),
         "latest_file": files[0] if files else None,
+        "imported_file": (
+            str(imported_file)
+            if imported_file is not None
+            else None
+        ),
         "files": files,
         "message": message,
     }

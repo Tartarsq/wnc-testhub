@@ -454,7 +454,7 @@ function Syslog() {
                 {syslogFiles.length === 0 ? (
                   <tr>
                     <td colSpan="5" className="empty-table-message">
-                      No messages_SYS*.log files detected yet.
+                      No messages_SYS*.log files detected in the wrapper or Downloads yet.
                     </td>
                   </tr>
                 ) : (
