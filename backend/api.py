@@ -2462,6 +2462,62 @@ def open_verizon_syslog_folder(
 
 
 
+
+def list_saved_syslog_files(
+    syslog_folder: str | Path,
+) -> list[dict[str, Any]]:
+    """
+    Return Verizon GUI syslog files saved in the wrapper syslog folder.
+
+    Expected filename formats:
+        messages_SYS.log
+        messages_SYS(1).log
+        messages_SYS(2).log
+        ...
+
+    Unrelated files in the folder are ignored.
+    """
+    folder = Path(syslog_folder).expanduser().resolve()
+    folder.mkdir(parents=True, exist_ok=True)
+
+    syslog_pattern = re.compile(
+        r"^messages_SYS(?:\(\d+\))?\.log$",
+        re.IGNORECASE,
+    )
+
+    items: list[dict[str, Any]] = []
+
+    for path in folder.iterdir():
+        if not path.is_file():
+            continue
+
+        if not syslog_pattern.fullmatch(path.name):
+            continue
+
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+
+        items.append(
+            {
+                "filename": path.name,
+                "path": str(path.resolve()),
+                "size_bytes": stat.st_size,
+                "modified_at": datetime.fromtimestamp(
+                    stat.st_mtime
+                ).isoformat(timespec="seconds"),
+            }
+        )
+
+    items.sort(
+        key=lambda item: item["modified_at"],
+        reverse=True,
+    )
+
+    return items
+
+
 @app.get("/api/syslog/verizon/files")
 def get_verizon_syslog_files(
     syslog_folder: str | None = None,
@@ -2481,11 +2537,12 @@ def get_verizon_syslog_files(
     files = list_saved_syslog_files(folder)
 
     message = (
-        f"Detected {len(files)} syslog file(s) in {folder}."
+        f"Detected {len(files)} Verizon syslog file(s) in {folder}."
         if files
         else (
-            "No syslog files detected yet. Save the Verizon GUI syslog "
-            "into this wrapper folder and try again."
+            "No Verizon syslog files detected yet. Save messages_SYS.log, "
+            "messages_SYS(1).log, or another messages_SYS(number).log "
+            "file into this wrapper syslog folder and try again."
         )
     )
 

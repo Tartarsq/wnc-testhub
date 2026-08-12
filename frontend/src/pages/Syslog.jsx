@@ -326,7 +326,7 @@ function Syslog() {
             <div className="configuration-note">
               <FiSave />
               <span>
-                Save the Verizon GUI syslog manually into the folder shown below. After saving, click Detect Saved Syslog so TestHub can confirm it landed in the wrapper.
+                Save the Verizon GUI syslog manually into the folder shown below. TestHub looks for messages_SYS.log, messages_SYS(1).log, messages_SYS(2).log, and the same numbered pattern. After saving, click Detect Saved Syslog.
               </span>
             </div>
 
@@ -427,8 +427,8 @@ function Syslog() {
             <div>
               <h3>Collected Syslog Files</h3>
               <p>
-                Generated Verizon GUI syslogs will appear here after backend
-                integration.
+                Detected Verizon GUI messages_SYS*.log files from the selected wrapper
+                will appear here.
               </p>
             </div>
 
@@ -454,7 +454,7 @@ function Syslog() {
                 {syslogFiles.length === 0 ? (
                   <tr>
                     <td colSpan="5" className="empty-table-message">
-                      No syslog files detected yet.
+                      No messages_SYS*.log files detected yet.
                     </td>
                   </tr>
                 ) : (
