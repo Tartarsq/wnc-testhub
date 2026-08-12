@@ -4,8 +4,10 @@ from datetime import datetime
 from pathlib import Path
 from io import BytesIO
 import csv
+import os
 import re
 import shutil
+import subprocess
 from threading import Lock
 from typing import Any
 from uuid import uuid4
@@ -1830,6 +1832,126 @@ def run_qxdm_stop() -> None:
 
 
 
+
+# ==========================================================
+# Verizon GUI syslog models/state
+# ==========================================================
+
+class VerizonSyslogLaunchRequest(BaseModel):
+    wrapper_session_folder: str = Field(
+        min_length=1,
+        max_length=500,
+    )
+    executable_path: str | None = Field(
+        default=None,
+        max_length=500,
+    )
+
+
+verizon_syslog_state: dict[str, Any] = {
+    "status": "idle",
+    "process_running": False,
+    "executable_path": None,
+    "wrapper_session_folder": None,
+    "syslog_folder": None,
+    "message": "Verizon GUI syslog workflow is idle.",
+    "error": None,
+}
+
+
+def validate_syslog_wrapper_session(
+    session_folder: str | Path,
+) -> Path:
+    session_folder = Path(session_folder).expanduser().resolve()
+
+    metadata_file = (
+        session_folder
+        / "metadata"
+        / "wrapper_session.json"
+    )
+
+    if not metadata_file.exists():
+        raise ValueError(
+            "Select the wrapper test session root folder. "
+            "The folder must contain metadata/wrapper_session.json."
+        )
+
+    syslog_folder = session_folder / "syslog"
+    syslog_folder.mkdir(parents=True, exist_ok=True)
+
+    return session_folder
+
+
+def prompt_for_verizon_gui_executable() -> Path | None:
+    try:
+        from tkinter import Tk
+        from tkinter.filedialog import askopenfilename
+    except ImportError as error:
+        raise RuntimeError(
+            "Tkinter is required to browse for the Verizon GUI executable."
+        ) from error
+
+    root = Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+
+    try:
+        selected = askopenfilename(
+            parent=root,
+            title="Select Verizon GUI Executable",
+            filetypes=[
+                ("Windows applications", "*.exe"),
+                ("All files", "*.*"),
+            ],
+        )
+    finally:
+        root.destroy()
+
+    if not selected:
+        return None
+
+    return Path(selected).resolve()
+
+
+def resolve_verizon_gui_executable(
+    requested_path: str | None = None,
+) -> Path:
+    candidates: list[Path] = []
+
+    if requested_path:
+        candidates.append(Path(requested_path).expanduser())
+
+    env_path = os.environ.get(
+        "WNC_VERIZON_GUI_EXECUTABLE",
+        "",
+    ).strip()
+
+    if env_path:
+        candidates.append(Path(env_path).expanduser())
+
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+            if (
+                resolved.exists()
+                and resolved.is_file()
+                and resolved.suffix.lower() == ".exe"
+            ):
+                return resolved
+        except OSError:
+            continue
+
+    selected = prompt_for_verizon_gui_executable()
+
+    if selected is None:
+        raise ValueError(
+            "Verizon GUI executable selection was cancelled."
+        )
+
+    return selected
+
+
+
 # ==========================================================
 # Unified test wrapper
 # ==========================================================
@@ -2230,6 +2352,172 @@ def finalize_wrapper_qxdm_log(
         "saved_path": str(destination),
         "filename": destination.name,
     }
+
+
+
+# ==========================================================
+# Verizon GUI syslog endpoints
+# ==========================================================
+
+@app.get("/api/syslog/verizon/status")
+def get_verizon_syslog_status() -> dict[str, Any]:
+    return dict(verizon_syslog_state)
+
+
+@app.get("/api/syslog/verizon/browse-wrapper")
+def browse_verizon_syslog_wrapper() -> dict[str, str | None]:
+    try:
+        from tkinter import Tk
+        from tkinter.filedialog import askdirectory
+
+        root = Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+
+        try:
+            selected = askdirectory(
+                parent=root,
+                title="Select WNC TestHub Wrapper Session",
+                initialdir=str(Path(RESULTS_FOLDER).resolve()),
+                mustexist=True,
+            )
+        finally:
+            root.destroy()
+
+        if not selected:
+            return {"path": None}
+
+        session_folder = validate_syslog_wrapper_session(
+            selected
+        )
+
+        return {
+            "path": str(session_folder),
+            "syslog_folder": str(
+                (session_folder / "syslog").resolve()
+            ),
+        }
+
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(error),
+        ) from error
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(error),
+        ) from error
+
+
+@app.get("/api/syslog/verizon/browse-executable")
+def browse_verizon_gui_executable() -> dict[str, str | None]:
+    try:
+        selected = prompt_for_verizon_gui_executable()
+        return {
+            "path": str(selected) if selected is not None else None
+        }
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(error),
+        ) from error
+
+
+@app.post("/api/syslog/verizon/open")
+def open_verizon_gui_for_syslog(
+    request: VerizonSyslogLaunchRequest,
+) -> dict[str, Any]:
+    try:
+        wrapper_folder = validate_syslog_wrapper_session(
+            request.wrapper_session_folder
+        )
+        syslog_folder = (
+            wrapper_folder / "syslog"
+        ).resolve()
+
+        executable = resolve_verizon_gui_executable(
+            request.executable_path
+        )
+
+        subprocess.Popen(
+            [str(executable)],
+            cwd=str(executable.parent),
+        )
+
+        verizon_syslog_state.update(
+            {
+                "status": "gui_opened",
+                "process_running": True,
+                "executable_path": str(executable),
+                "wrapper_session_folder": str(wrapper_folder),
+                "syslog_folder": str(syslog_folder),
+                "message": (
+                    "Verizon GUI opened. Navigate to Diagnostic "
+                    "Monitoring > System Logging. Save to: "
+                    f"{syslog_folder}"
+                ),
+                "error": None,
+            }
+        )
+
+        return dict(verizon_syslog_state)
+
+    except ValueError as error:
+        verizon_syslog_state.update(
+            {
+                "status": "failed",
+                "process_running": False,
+                "message": "Verizon GUI could not be opened.",
+                "error": str(error),
+            }
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(error),
+        ) from error
+
+    except Exception as error:
+        verizon_syslog_state.update(
+            {
+                "status": "failed",
+                "process_running": False,
+                "message": "Verizon GUI could not be opened.",
+                "error": str(error),
+            }
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(error),
+        ) from error
+
+
+@app.get("/api/syslog/verizon/open-folder")
+def open_verizon_syslog_folder() -> dict[str, Any]:
+    folder_value = verizon_syslog_state.get("syslog_folder")
+
+    if not folder_value:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="No wrapper syslog folder has been selected yet.",
+        )
+
+    folder = Path(folder_value).resolve()
+    folder.mkdir(parents=True, exist_ok=True)
+
+    try:
+        os.startfile(str(folder))
+    except AttributeError as error:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Opening folders is supported on Windows only.",
+        ) from error
+
+    return {
+        "success": True,
+        "path": str(folder),
+    }
+
 
 
 # ==========================================================
