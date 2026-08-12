@@ -1,6 +1,3 @@
-
-
-
 from __future__ import annotations
 
 from datetime import datetime
@@ -1835,6 +1832,438 @@ def run_qxdm_stop() -> None:
         )
 
 
+
+
+
+# ==========================================================
+# Standalone PCAT / ADB RAM dump integration
+# ==========================================================
+
+class PCATPathRequest(BaseModel):
+    adb_folder: str = Field(
+        min_length=1,
+        max_length=500,
+    )
+
+
+class PCATLaunchRequest(BaseModel):
+    pcat_executable: str | None = Field(
+        default=None,
+        max_length=500,
+    )
+
+
+pcat_state: dict[str, Any] = {
+    "status": "idle",
+    "message": "PCAT RAM dump workflow is idle.",
+    "adb_folder": None,
+    "adb_executable": None,
+    "pcat_executable": None,
+    "download_mode_result": None,
+    "ramdump_result": None,
+    "error": None,
+}
+
+
+def validate_adb_folder(
+    adb_folder: str | Path,
+) -> tuple[Path, Path]:
+    folder = Path(adb_folder).expanduser().resolve()
+    adb_executable = folder / "adb.exe"
+
+    if not folder.exists() or not folder.is_dir():
+        raise ValueError(
+            "The selected platform-tools folder does not exist."
+        )
+
+    if not adb_executable.exists() or not adb_executable.is_file():
+        raise ValueError(
+            "adb.exe was not found in the selected folder. "
+            "Select the Android platform-tools folder that contains adb.exe."
+        )
+
+    return folder, adb_executable.resolve()
+
+
+def run_adb_command(
+    adb_folder: str | Path,
+    shell_arguments: list[str],
+    timeout_seconds: int = 30,
+) -> dict[str, Any]:
+    folder, adb_executable = validate_adb_folder(
+        adb_folder
+    )
+
+    command = [
+        str(adb_executable),
+        "shell",
+        *shell_arguments,
+    ]
+
+    completed = subprocess.run(
+        command,
+        cwd=str(folder),
+        capture_output=True,
+        text=True,
+        timeout=timeout_seconds,
+        creationflags=(
+            subprocess.CREATE_NO_WINDOW
+            if os.name == "nt"
+            else 0
+        ),
+    )
+
+    stdout = (completed.stdout or "").strip()
+    stderr = (completed.stderr or "").strip()
+
+    return {
+        "success": completed.returncode == 0,
+        "return_code": completed.returncode,
+        "stdout": stdout,
+        "stderr": stderr,
+        "command": " ".join(
+            [
+                "adb",
+                "shell",
+                *shell_arguments,
+            ]
+        ),
+        "adb_executable": str(adb_executable),
+    }
+
+
+def prompt_for_adb_folder() -> Path | None:
+    try:
+        from tkinter import Tk
+        from tkinter.filedialog import askdirectory
+    except ImportError as error:
+        raise RuntimeError(
+            "Tkinter is required to browse for the platform-tools folder."
+        ) from error
+
+    root = Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+
+    try:
+        selected = askdirectory(
+            parent=root,
+            title="Select Android platform-tools Folder",
+            mustexist=True,
+        )
+    finally:
+        root.destroy()
+
+    if not selected:
+        return None
+
+    return Path(selected).resolve()
+
+
+def prompt_for_pcat_executable() -> Path | None:
+    try:
+        from tkinter import Tk
+        from tkinter.filedialog import askopenfilename
+    except ImportError as error:
+        raise RuntimeError(
+            "Tkinter is required to browse for the PCAT executable."
+        ) from error
+
+    root = Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+
+    try:
+        selected = askopenfilename(
+            parent=root,
+            title="Select PCAT Executable",
+            filetypes=[
+                ("Windows applications", "*.exe"),
+                ("All files", "*.*"),
+            ],
+        )
+    finally:
+        root.destroy()
+
+    if not selected:
+        return None
+
+    return Path(selected).resolve()
+
+
+@app.get("/api/pcat/status")
+def get_pcat_status() -> dict[str, Any]:
+    return dict(pcat_state)
+
+
+@app.get("/api/pcat/browse-adb")
+def browse_pcat_adb_folder() -> dict[str, Any]:
+    try:
+        selected = prompt_for_adb_folder()
+
+        if selected is None:
+            return {
+                "cancelled": True,
+                "path": None,
+            }
+
+        folder, adb_executable = validate_adb_folder(
+            selected
+        )
+
+        pcat_state.update(
+            {
+                "adb_folder": str(folder),
+                "adb_executable": str(adb_executable),
+                "status": "adb_configured",
+                "message": "ADB platform-tools folder selected.",
+                "error": None,
+            }
+        )
+
+        return {
+            "cancelled": False,
+            "path": str(folder),
+            "adb_executable": str(adb_executable),
+        }
+
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(error),
+        ) from error
+
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(error),
+        ) from error
+
+
+@app.get("/api/pcat/browse-executable")
+def browse_pcat_executable() -> dict[str, Any]:
+    try:
+        selected = prompt_for_pcat_executable()
+
+        if selected is None:
+            return {
+                "cancelled": True,
+                "path": None,
+            }
+
+        if (
+            not selected.exists()
+            or not selected.is_file()
+            or selected.suffix.lower() != ".exe"
+        ):
+            raise ValueError(
+                "Select the PCAT Windows executable (.exe)."
+            )
+
+        pcat_state.update(
+            {
+                "pcat_executable": str(selected),
+                "message": "PCAT executable selected.",
+                "error": None,
+            }
+        )
+
+        return {
+            "cancelled": False,
+            "path": str(selected),
+        }
+
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(error),
+        ) from error
+
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(error),
+        ) from error
+
+
+@app.post("/api/pcat/check-download-mode")
+def pcat_check_download_mode(
+    request: PCATPathRequest,
+) -> dict[str, Any]:
+    try:
+        result = run_adb_command(
+            request.adb_folder,
+            [
+                "cat",
+                "/sys/module/qcom_dload_mode/parameters/download_mode",
+            ],
+        )
+
+        if not result["success"]:
+            detail = (
+                result["stderr"]
+                or result["stdout"]
+                or "ADB command failed."
+            )
+            raise RuntimeError(detail)
+
+        pcat_state.update(
+            {
+                "status": "download_mode_checked",
+                "adb_folder": request.adb_folder,
+                "adb_executable": result["adb_executable"],
+                "download_mode_result": result["stdout"],
+                "message": "Download mode checked successfully.",
+                "error": None,
+            }
+        )
+
+        return {
+            **result,
+            "message": "Download mode checked successfully.",
+        }
+
+    except subprocess.TimeoutExpired as error:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="ADB timed out while checking download mode.",
+        ) from error
+
+    except Exception as error:
+        pcat_state.update(
+            {
+                "status": "failed",
+                "message": "Could not check download mode.",
+                "error": str(error),
+            }
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(error),
+        ) from error
+
+
+@app.post("/api/pcat/enable-ramdump")
+def pcat_enable_ramdump(
+    request: PCATPathRequest,
+) -> dict[str, Any]:
+    try:
+        result = run_adb_command(
+            request.adb_folder,
+            [
+                "./usr/sbin/QMI_VZW_ENABLE_RAMDUMP",
+            ],
+        )
+
+        if not result["success"]:
+            detail = (
+                result["stderr"]
+                or result["stdout"]
+                or "RAM dump command failed."
+            )
+            raise RuntimeError(detail)
+
+        pcat_state.update(
+            {
+                "status": "ramdump_enabled",
+                "adb_folder": request.adb_folder,
+                "adb_executable": result["adb_executable"],
+                "ramdump_result": result["stdout"],
+                "message": "RAM dump command completed successfully.",
+                "error": None,
+            }
+        )
+
+        return {
+            **result,
+            "message": "RAM dump command completed successfully.",
+        }
+
+    except subprocess.TimeoutExpired as error:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="ADB timed out while enabling RAM dump.",
+        ) from error
+
+    except Exception as error:
+        pcat_state.update(
+            {
+                "status": "failed",
+                "message": "Could not enable RAM dump.",
+                "error": str(error),
+            }
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(error),
+        ) from error
+
+
+@app.post("/api/pcat/open")
+def open_pcat_application(
+    request: PCATLaunchRequest,
+) -> dict[str, Any]:
+    try:
+        executable_value = (
+            request.pcat_executable
+            or pcat_state.get("pcat_executable")
+        )
+
+        executable: Path | None = None
+
+        if executable_value:
+            candidate = Path(
+                executable_value
+            ).expanduser().resolve()
+
+            if candidate.exists() and candidate.is_file():
+                executable = candidate
+
+        if executable is None:
+            selected = prompt_for_pcat_executable()
+
+            if selected is None:
+                return {
+                    "success": False,
+                    "cancelled": True,
+                    "message": "PCAT executable selection was cancelled.",
+                }
+
+            executable = selected
+
+        subprocess.Popen(
+            [str(executable)],
+            cwd=str(executable.parent),
+        )
+
+        pcat_state.update(
+            {
+                "status": "pcat_open",
+                "pcat_executable": str(executable),
+                "message": "PCAT opened successfully.",
+                "error": None,
+            }
+        )
+
+        return {
+            "success": True,
+            "cancelled": False,
+            "pcat_executable": str(executable),
+            "message": "PCAT opened successfully.",
+        }
+
+    except Exception as error:
+        pcat_state.update(
+            {
+                "status": "failed",
+                "message": "Could not open PCAT.",
+                "error": str(error),
+            }
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(error),
+        ) from error
 
 
 # ==========================================================
