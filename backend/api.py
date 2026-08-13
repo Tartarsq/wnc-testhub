@@ -1,9 +1,3 @@
-
-
-
-
-
-
 from __future__ import annotations
 
 from datetime import datetime
@@ -2129,9 +2123,13 @@ def open_visible_cmd_with_adb(
         "echo ========================================\n"
         "echo.\n"
         "echo [1/2] Checking download mode...\n"
+        "echo.\n"
+        "echo adb shell cat /sys/module/qcom_dload_mode/parameters/download_mode\n"
         "adb shell cat /sys/module/qcom_dload_mode/parameters/download_mode\n"
         "echo.\n"
         "echo [2/2] Enabling RAM dump...\n"
+        "echo.\n"
+        "echo adb shell ./usr/sbin/QMI_VZW_ENABLE_RAMDUMP\n"
         "adb shell ./usr/sbin/QMI_VZW_ENABLE_RAMDUMP\n"
         "echo.\n"
         "echo ========================================\n"
