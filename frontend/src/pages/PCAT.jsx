@@ -1,7 +1,4 @@
-
-
-
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   FiCheckCircle,
   FiFolder,
@@ -25,6 +22,7 @@ function PCAT() {
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [busyAction, setBusyAction] = useState('')
+  const [discoverySource, setDiscoverySource] = useState('')
 
   const statusLabel =
     status === 'checking'
@@ -40,6 +38,70 @@ function PCAT() {
               : status === 'failed'
                 ? 'Failed'
                 : 'Idle'
+
+  const handleFindAdb = async () => {
+    setError('')
+    setMessage('')
+    setBusyAction('find-adb')
+
+    try {
+      const response = await api.get('/pcat/find-adb')
+
+      if (response.data?.adb_folder) {
+        setAdbFolder(response.data.adb_folder)
+      }
+
+      setDiscoverySource(
+        response.data?.discovery_source ?? ''
+      )
+
+      setMessage(
+        response.data?.message ||
+          'ADB was found automatically.'
+      )
+    } catch (requestError) {
+      setError(
+        requestError.response?.data?.detail ||
+          requestError.message ||
+          'Unable to find adb.exe automatically.'
+      )
+    } finally {
+      setBusyAction('')
+    }
+  }
+
+  const handleOpenAdbTerminal = async () => {
+    if (!adbFolder.trim()) {
+      setError('Find or select the platform-tools folder first.')
+      return
+    }
+
+    setError('')
+    setMessage('')
+    setBusyAction('terminal')
+
+    try {
+      const response = await api.post(
+        '/pcat/open-adb-terminal',
+        {
+          adb_folder: adbFolder.trim(),
+        }
+      )
+
+      setMessage(
+        response.data?.message ||
+          'Opened Command Prompt in the platform-tools folder.'
+      )
+    } catch (requestError) {
+      setError(
+        requestError.response?.data?.detail ||
+          requestError.message ||
+          'Unable to open the ADB terminal.'
+      )
+    } finally {
+      setBusyAction('')
+    }
+  }
 
   const handleBrowseAdb = async () => {
     setError('')
@@ -254,6 +316,28 @@ function PCAT() {
       )
     }
   }
+  useEffect(() => {
+    const loadSavedPcatState = async () => {
+      try {
+        const response = await api.get('/pcat/status')
+
+        if (response.data?.adb_folder) {
+          setAdbFolder(response.data.adb_folder)
+        }
+
+        if (response.data?.pcat_executable) {
+          setPcatExecutable(
+            response.data.pcat_executable
+          )
+        }
+      } catch {
+        // Page still works even if backend is not ready yet.
+      }
+    }
+
+    loadSavedPcatState()
+  }, [])
+
 
   return (
     <div className="dashboard-layout">
@@ -284,7 +368,11 @@ function PCAT() {
             <div>
               <p>ADB</p>
               <h3>{adbFolder ? 'Configured' : 'Not Configured'}</h3>
-              <span>platform-tools / adb.exe location</span>
+              <span>
+                {discoverySource
+                  ? `Found via ${discoverySource}`
+                  : 'platform-tools / adb.exe location'}
+              </span>
             </div>
           </article>
 
@@ -346,6 +434,17 @@ function PCAT() {
                     }
                     placeholder="Folder containing adb.exe"
                   />
+
+                  <button
+                    type="button"
+                    className="qxdm-start-button"
+                    onClick={handleFindAdb}
+                    disabled={Boolean(busyAction)}
+                  >
+                    {busyAction === 'find-adb'
+                      ? 'Finding...'
+                      : 'Find ADB'}
+                  </button>
 
                   <button
                     type="button"
@@ -454,6 +553,18 @@ function PCAT() {
               <button
                 type="button"
                 className="qxdm-refresh-button"
+                onClick={handleOpenAdbTerminal}
+                disabled={Boolean(busyAction)}
+              >
+                <FiTerminal />
+                {busyAction === 'terminal'
+                  ? 'Opening Terminal...'
+                  : 'Open ADB Terminal'}
+              </button>
+
+              <button
+                type="button"
+                className="qxdm-refresh-button"
                 onClick={handleRefresh}
                 disabled={Boolean(busyAction)}
               >
@@ -493,7 +604,7 @@ function PCAT() {
               {[
                 [
                   '1. Locate ADB',
-                  'Select the platform-tools folder containing adb.exe.',
+                  'Let TestHub find adb.exe automatically, or use Browse as a fallback.',
                 ],
                 [
                   '2. Check Download Mode',

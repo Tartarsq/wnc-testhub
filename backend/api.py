@@ -1,9 +1,3 @@
-
-
-
-
-
-
 from __future__ import annotations
 
 from datetime import datetime
@@ -18,6 +12,7 @@ import webbrowser
 from threading import Lock
 from typing import Any
 from uuid import uuid4
+import json
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -1872,44 +1867,223 @@ pcat_state: dict[str, Any] = {
 
 
 
-def find_adb_executable() -> Path | None:
-    """Try to locate adb.exe automatically on Windows."""
-    resolved = shutil.which("adb")
+def get_pcat_config_path() -> Path:
+    local_app_data = os.environ.get("LOCALAPPDATA")
 
-    if resolved:
-        candidate = Path(resolved).resolve()
-        if candidate.exists() and candidate.is_file():
-            return candidate
+    if local_app_data:
+        config_dir = Path(local_app_data) / "WNCTestHub"
+    else:
+        config_dir = Path.home() / ".wnc-testhub"
+
+    config_dir.mkdir(parents=True, exist_ok=True)
+    return config_dir / "pcat_config.json"
+
+
+def load_pcat_config() -> dict[str, Any]:
+    config_path = get_pcat_config_path()
+
+    if not config_path.exists():
+        return {}
+
+    try:
+        data = json.loads(
+            config_path.read_text(encoding="utf-8")
+        )
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_pcat_config(**changes: Any) -> dict[str, Any]:
+    config = load_pcat_config()
+    config.update(changes)
+
+    get_pcat_config_path().write_text(
+        json.dumps(config, indent=2),
+        encoding="utf-8",
+    )
+
+    return config
+
+
+def _valid_adb_candidate(
+    candidate: str | Path | None,
+) -> Path | None:
+    if not candidate:
+        return None
+
+    try:
+        path = Path(candidate).expanduser().resolve()
+    except OSError:
+        return None
+
+    if (
+        path.exists()
+        and path.is_file()
+        and path.name.lower() == "adb.exe"
+    ):
+        return path
+
+    return None
+
+
+def find_adb_executable() -> tuple[Path | None, str | None]:
+    """
+    Dynamically locate adb.exe on the current testing computer.
+
+    Search order:
+      1. Previously verified path for this PC
+      2. ANDROID_SDK_ROOT / ANDROID_HOME
+      3. Windows PATH / where.exe
+      4. Common Android SDK locations
+      5. Limited search of likely user folders
+    """
+    config = load_pcat_config()
+
+    cached = _valid_adb_candidate(
+        config.get("adb_executable")
+    )
+
+    if cached is not None:
+        return cached, "saved machine setting"
+
+    for env_name in ("ANDROID_SDK_ROOT", "ANDROID_HOME"):
+        sdk_root = os.environ.get(env_name)
+
+        if not sdk_root:
+            continue
+
+        candidate = _valid_adb_candidate(
+            Path(sdk_root) / "platform-tools" / "adb.exe"
+        )
+
+        if candidate is not None:
+            save_pcat_config(
+                adb_executable=str(candidate),
+                adb_folder=str(candidate.parent),
+            )
+            return candidate, env_name
+
+    candidate = _valid_adb_candidate(
+        shutil.which("adb")
+    )
+
+    if candidate is not None:
+        save_pcat_config(
+            adb_executable=str(candidate),
+            adb_folder=str(candidate.parent),
+        )
+        return candidate, "Windows PATH"
+
+    if os.name == "nt":
+        try:
+            completed = subprocess.run(
+                ["where.exe", "adb.exe"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+
+            if completed.returncode == 0:
+                for line in completed.stdout.splitlines():
+                    candidate = _valid_adb_candidate(
+                        line.strip()
+                    )
+
+                    if candidate is not None:
+                        save_pcat_config(
+                            adb_executable=str(candidate),
+                            adb_folder=str(candidate.parent),
+                        )
+                        return candidate, "where.exe"
+        except Exception:
+            pass
+
+    local_app_data = os.environ.get("LOCALAPPDATA", "")
 
     candidates = [
-        Path.home() / "AppData" / "Local" / "Android" / "Sdk" / "platform-tools" / "adb.exe",
-        Path.home() / "Android" / "Sdk" / "platform-tools" / "adb.exe",
+        Path.home()
+        / "AppData"
+        / "Local"
+        / "Android"
+        / "Sdk"
+        / "platform-tools"
+        / "adb.exe",
+        (
+            Path(local_app_data)
+            / "Android"
+            / "Sdk"
+            / "platform-tools"
+            / "adb.exe"
+            if local_app_data
+            else None
+        ),
+        Path.home()
+        / "Android"
+        / "Sdk"
+        / "platform-tools"
+        / "adb.exe",
         Path("C:/platform-tools/adb.exe"),
         Path("C:/adb/adb.exe"),
         Path("C:/Android/platform-tools/adb.exe"),
     ]
 
-    for candidate in candidates:
+    for raw_candidate in candidates:
+        candidate = _valid_adb_candidate(
+            raw_candidate
+        )
+
+        if candidate is not None:
+            save_pcat_config(
+                adb_executable=str(candidate),
+                adb_folder=str(candidate.parent),
+            )
+            return candidate, "common platform-tools location"
+
+    search_roots = [
+        Path.home() / "Downloads",
+        Path.home() / "Documents",
+        Path.home() / "Desktop",
+        Path.home() / "Projects",
+        Path.home() / "Tools",
+    ]
+
+    for root in search_roots:
+        if not root.exists():
+            continue
+
         try:
-            resolved_candidate = candidate.expanduser().resolve()
-            if resolved_candidate.exists() and resolved_candidate.is_file():
-                return resolved_candidate
+            for found in root.rglob("adb.exe"):
+                candidate = _valid_adb_candidate(
+                    found
+                )
+
+                if candidate is None:
+                    continue
+
+                parent_parts = {
+                    part.lower()
+                    for part in candidate.parts[-5:]
+                }
+
+                if (
+                    "platform-tools" not in parent_parts
+                    and "android" not in parent_parts
+                    and "adb" not in parent_parts
+                ):
+                    continue
+
+                save_pcat_config(
+                    adb_executable=str(candidate),
+                    adb_folder=str(candidate.parent),
+                )
+                return candidate, f"search under {root}"
         except OSError:
             continue
 
-    try:
-        for candidate in Path.home().rglob("adb.exe"):
-            try:
-                if candidate.parent.name.lower() not in {"platform-tools", "adb"}:
-                    continue
-                if candidate.is_file():
-                    return candidate.resolve()
-            except OSError:
-                continue
-    except OSError:
-        pass
+    return None, None
 
-    return None
 
 
 def open_visible_cmd_with_adb(
@@ -2061,6 +2235,16 @@ def prompt_for_pcat_executable() -> Path | None:
 
 @app.get("/api/pcat/status")
 def get_pcat_status() -> dict[str, Any]:
+    config = load_pcat_config()
+
+    cached_adb = _valid_adb_candidate(
+        config.get("adb_executable")
+    )
+
+    if cached_adb is not None:
+        pcat_state["adb_executable"] = str(cached_adb)
+        pcat_state["adb_folder"] = str(cached_adb.parent)
+
     return dict(pcat_state)
 
 
@@ -2068,7 +2252,7 @@ def get_pcat_status() -> dict[str, Any]:
 @app.get("/api/pcat/find-adb")
 def find_pcat_adb() -> dict[str, Any]:
     try:
-        adb_executable = find_adb_executable()
+        adb_executable, discovery_source = find_adb_executable()
 
         if adb_executable is None:
             raise HTTPException(
@@ -2095,7 +2279,15 @@ def find_pcat_adb() -> dict[str, Any]:
             "success": True,
             "adb_folder": str(adb_folder),
             "adb_executable": str(adb_executable),
-            "message": "ADB was found automatically.",
+            "discovery_source": discovery_source,
+            "message": (
+                "ADB was found automatically"
+                + (
+                    f" using {discovery_source}."
+                    if discovery_source
+                    else "."
+                )
+            ),
         }
 
     except HTTPException:
@@ -2162,6 +2354,11 @@ def browse_pcat_adb_folder() -> dict[str, Any]:
                 "message": "ADB platform-tools folder selected.",
                 "error": None,
             }
+        )
+
+        save_pcat_config(
+            adb_executable=str(adb_executable),
+            adb_folder=str(folder),
         )
 
         return {
