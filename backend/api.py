@@ -1,3 +1,9 @@
+
+
+
+
+
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -2088,48 +2094,63 @@ def find_adb_executable() -> tuple[Path | None, str | None]:
 
 def open_visible_cmd_with_adb(
     adb_executable: Path,
-) -> None:
+) -> Path:
     """
-    Open a visible Command Prompt in platform-tools and automatically
-    execute the two PCAT RAM-dump preparation commands.
+    Open a visible Command Prompt in platform-tools and execute the exact
+    PCAT preparation commands through a temporary .cmd file.
 
-    /k keeps the terminal open afterward so the engineer can inspect
-    the command output.
+    Using a .cmd file is more reliable on Windows than passing a long
+    command chain directly through cmd.exe /k.
     """
     adb_folder = adb_executable.parent.resolve()
 
-    download_mode_command = (
-        "adb shell cat "
-        "/sys/module/qcom_dload_mode/parameters/download_mode"
+    script_dir = Path(
+        os.environ.get(
+            "TEMP",
+            str(Path.home()),
+        )
+    ) / "WNCTestHub"
+
+    script_dir.mkdir(
+        parents=True,
+        exist_ok=True,
     )
 
-    ramdump_command = (
-        "adb shell ./usr/sbin/QMI_VZW_ENABLE_RAMDUMP"
+    script_path = (
+        script_dir
+        / "pcat_ramdump_setup.cmd"
     )
 
-    command_chain = (
-        f'cd /d "{adb_folder}"'
-        " && echo ========================================"
-        " && echo WNC TestHub - PCAT RAM Dump Preparation"
-        " && echo ========================================"
-        " && echo."
-        " && echo [1/2] Checking download mode..."
-        f" && {download_mode_command}"
-        " && echo."
-        " && echo [2/2] Enabling RAM dump..."
-        f" && {ramdump_command}"
-        " && echo."
-        " && echo ========================================"
-        " && echo PCAT preparation commands completed."
-        " && echo Review the results above, then continue in PCAT."
-        " && echo ========================================"
+    script_text = (
+        "@echo off\n"
+        f'cd /d "{adb_folder}"\n'
+        "echo ========================================\n"
+        "echo WNC TestHub - PCAT RAM Dump Preparation\n"
+        "echo ========================================\n"
+        "echo.\n"
+        "echo [1/2] Checking download mode...\n"
+        "adb shell cat /sys/module/qcom_dload_mode/parameters/download_mode\n"
+        "echo.\n"
+        "echo [2/2] Enabling RAM dump...\n"
+        "adb shell ./usr/sbin/QMI_VZW_ENABLE_RAMDUMP\n"
+        "echo.\n"
+        "echo ========================================\n"
+        "echo PCAT preparation commands completed.\n"
+        "echo Review the results above, then continue in PCAT.\n"
+        "echo ========================================\n"
+        "echo.\n"
+    )
+
+    script_path.write_text(
+        script_text,
+        encoding="utf-8",
     )
 
     subprocess.Popen(
         [
             "cmd.exe",
             "/k",
-            command_chain,
+            str(script_path),
         ],
         cwd=str(adb_folder),
         creationflags=(
@@ -2138,6 +2159,8 @@ def open_visible_cmd_with_adb(
             else 0
         ),
     )
+
+    return script_path
 
 
 def validate_adb_folder(
@@ -2342,13 +2365,19 @@ def open_pcat_adb_terminal(
             request.adb_folder
         )
 
-        open_visible_cmd_with_adb(adb_executable)
+        script_path = open_visible_cmd_with_adb(
+            adb_executable
+        )
 
         return {
             "success": True,
             "adb_folder": str(folder),
             "adb_executable": str(adb_executable),
-            "message": "Opened Command Prompt and started the two PCAT ADB setup commands.",
+            "script_path": str(script_path),
+            "message": (
+                "Opened Command Prompt and started the two PCAT "
+                "ADB setup commands."
+            ),
         }
 
     except ValueError as error:
