@@ -4,6 +4,7 @@ from datetime import datetime
 from pathlib import Path
 from io import BytesIO
 import csv
+import json
 import os
 import re
 import shutil
@@ -12,7 +13,6 @@ import webbrowser
 from threading import Lock
 from typing import Any
 from uuid import uuid4
-import json
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -2089,14 +2089,47 @@ def find_adb_executable() -> tuple[Path | None, str | None]:
 def open_visible_cmd_with_adb(
     adb_executable: Path,
 ) -> None:
-    """Open Command Prompt in the folder containing adb.exe."""
+    """
+    Open a visible Command Prompt in platform-tools and automatically
+    execute the two PCAT RAM-dump preparation commands.
+
+    /k keeps the terminal open afterward so the engineer can inspect
+    the command output.
+    """
     adb_folder = adb_executable.parent.resolve()
+
+    download_mode_command = (
+        "adb shell cat "
+        "/sys/module/qcom_dload_mode/parameters/download_mode"
+    )
+
+    ramdump_command = (
+        "adb shell ./usr/sbin/QMI_VZW_ENABLE_RAMDUMP"
+    )
+
+    command_chain = (
+        f'cd /d "{adb_folder}"'
+        " && echo ========================================"
+        " && echo WNC TestHub - PCAT RAM Dump Preparation"
+        " && echo ========================================"
+        " && echo."
+        " && echo [1/2] Checking download mode..."
+        f" && {download_mode_command}"
+        " && echo."
+        " && echo [2/2] Enabling RAM dump..."
+        f" && {ramdump_command}"
+        " && echo."
+        " && echo ========================================"
+        " && echo PCAT preparation commands completed."
+        " && echo Review the results above, then continue in PCAT."
+        " && echo ========================================"
+    )
 
     subprocess.Popen(
         [
             "cmd.exe",
             "/k",
-            f'cd /d "{adb_folder}"',
+            command_chain,
         ],
         cwd=str(adb_folder),
         creationflags=(
@@ -2315,7 +2348,7 @@ def open_pcat_adb_terminal(
             "success": True,
             "adb_folder": str(folder),
             "adb_executable": str(adb_executable),
-            "message": "Opened Command Prompt in the platform-tools folder.",
+            "message": "Opened Command Prompt and started the two PCAT ADB setup commands.",
         }
 
     except ValueError as error:

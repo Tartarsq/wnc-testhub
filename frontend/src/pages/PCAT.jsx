@@ -90,7 +90,7 @@ function PCAT() {
 
       setMessage(
         response.data?.message ||
-          'Opened Command Prompt in the platform-tools folder.'
+          'Opened Command Prompt and started the two PCAT ADB setup commands.'
       )
     } catch (requestError) {
       setError(
@@ -559,7 +559,7 @@ function PCAT() {
                 <FiTerminal />
                 {busyAction === 'terminal'
                   ? 'Opening Terminal...'
-                  : 'Open ADB Terminal'}
+                  : 'Run Setup in Terminal'}
               </button>
 
               <button
@@ -604,7 +604,7 @@ function PCAT() {
               {[
                 [
                   '1. Locate ADB',
-                  'Let TestHub find adb.exe automatically, or use Browse as a fallback.',
+                  'Let TestHub find adb.exe automatically, or use Browse as a fallback. Run Setup in Terminal opens a visible Command Prompt and executes both required ADB commands automatically.',
                 ],
                 [
                   '2. Check Download Mode',
