@@ -1224,6 +1224,10 @@ class QXDMStartRequest(BaseModel):
         default=None,
         max_length=100,
     )
+    wrapper_session_folder: str | None = Field(
+        default=None,
+        max_length=500,
+    )
 
 
 class QXDMStatus(BaseModel):
