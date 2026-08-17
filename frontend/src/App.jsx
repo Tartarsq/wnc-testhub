@@ -1,4 +1,4 @@
-import { BrowserRouter, Route, Routes } from 'react-router-dom'
+import { HashRouter, Route, Routes } from 'react-router-dom'
 
 import Dashboard from './pages/Dashboard'
 import Devices from './pages/devices'
@@ -13,7 +13,7 @@ import Settings from './pages/Settings'
 
 function App() {
   return (
-    <BrowserRouter>
+    <HashRouter>
       <Routes>
         <Route path="/" element={<Dashboard />} />
         <Route path="/devices" element={<Devices />} />
@@ -22,14 +22,16 @@ function App() {
         <Route path="/syslog" element={<Syslog />} />
         <Route path="/pcat" element={<PCAT />} />
         <Route path="/analytics" element={<Analytics />} />
+
         <Route
           path="/analytics/results/:resultIndex"
           element={<TestResultDetails />}
         />
+
         <Route path="/test-wrapper" element={<TestRunner />} />
         <Route path="/settings" element={<Settings />} />
       </Routes>
-    </BrowserRouter>
+    </HashRouter>
   )
 }
 
