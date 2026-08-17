@@ -25,6 +25,7 @@ function startBackend() {
 
   const pythonExecutable = path.join(
     projectRoot,
+    "backend",
     ".venv",
     "Scripts",
     "python.exe"
@@ -32,6 +33,11 @@ function startBackend() {
 
   console.log(
     "Starting FastAPI backend..."
+  );
+
+  console.log(
+    "Using Python:",
+    pythonExecutable
   );
 
   backendProcess = spawn(
@@ -109,10 +115,8 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1500,
     height: 950,
-
     minWidth: 1100,
     minHeight: 700,
-
     title: "WNC TestHub",
 
     webPreferences: {
@@ -120,7 +124,6 @@ function createWindow() {
         __dirname,
         "preload.cjs"
       ),
-
       contextIsolation: true,
       nodeIntegration: false,
     },
