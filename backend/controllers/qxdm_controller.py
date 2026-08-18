@@ -606,22 +606,22 @@ class QXDMController:
         Open QXDM Settings via Options -> Settings... and return the
         actual Settings dialog window.
 
-        This previously navigated with Alt+O -> Down -> Enter, assuming
-        Settings was always one item below the top of the Options menu.
-        Confirmed from a real screenshot of QXDM_Pro 5.2.680: the Options
-        menu has Communications... and EUD Communication above Settings,
-        so a single Down press landed on the wrong item instead - which
-        is why Settings never actually opened. Using select_first_available_
-        menu() (already used elsewhere in this file for Stop/Open Log)
-        resolves the item by its label instead of a hardcoded position,
-        so it isn't tied to how many items happen to be above it.
+        Confirmed live: pywinauto's menu_select() cannot see QXDM's menu
+        bar at all ("There is no menu", for every path tried) - it is
+        not a native Win32 menu, so menu_select() never worked here
+        regardless of which label or position was used. This uses the
+        same keyboard-accelerator approach as open_main_menu()/
+        load_default_mask() instead: Alt+O opens the Options menu, then
+        typing 's' jumps directly to the first item starting with "S"
+        (Settings..., which comes before Sort on Timestamp... in this
+        menu) rather than pressing Down a fixed number of times - so it
+        isn't tied to how many items happen to be above it.
 
-        Also confirmed from that same screenshot: Settings is its own
-        separate top-level window (own title bar, own close button), not
-        a Qt panel embedded inside the main QXDM window - so this locates
-        it directly with find_dialog() instead of deriving a bounding box
-        from the main window's rectangle, which was never reliable across
-        QXDM builds.
+        Also confirmed from a real screenshot of QXDM_Pro 5.2.680:
+        Settings is its own separate top-level window (own title bar,
+        own close button), not a Qt panel embedded inside the main QXDM
+        window - so this locates it directly with find_dialog() instead
+        of deriving a bounding box from the main window's rectangle.
         """
         window = self.focus_qxdm()
 
@@ -632,10 +632,14 @@ class QXDMController:
         except Exception:
             pass
 
-        self.select_first_available_menu(
-            window,
-            self.SETTINGS_MENU_PATHS,
+        self.open_main_menu(
+            "Options"
         )
+
+        send_keys("s")
+        time.sleep(0.3)
+        send_keys("{ENTER}")
+        time.sleep(2)
 
         dialog = self.find_dialog(
             title_pattern=r".*Settings.*"
