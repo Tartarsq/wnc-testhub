@@ -1,6 +1,7 @@
 import ctypes
 import ctypes.wintypes
 import json
+import re
 import subprocess
 import time
 
@@ -680,19 +681,93 @@ class QXDMController:
             + "\n".join(errors)
         )
 
-    def find_dialog(self, title_pattern: str = r".*"):
+    def find_dialog(
+        self,
+        title_pattern: str = r".*",
+        timeout_seconds: float = 10.0,
+    ):
+        """
+        Find a visible top-level window matching title_pattern that
+        belongs to the QXDM process specifically.
 
-        dialog = Desktop(backend="win32").window(
-            title_re=title_pattern,
-            top_level_only=True,
+        Confirmed live: searching the whole Desktop for a loose pattern
+        like ".*Settings.*" can match more than one window at once (any
+        other app/window on the machine with "Settings" in its title),
+        which pywinauto refuses to resolve automatically. Scoping to
+        windows owned by QXDM.exe avoids that collision.
+        """
+        pattern = re.compile(
+            title_pattern,
+            re.IGNORECASE,
         )
 
-        dialog.wait(
-            "visible enabled",
-            timeout=10,
-        )
+        deadline = time.monotonic() + timeout_seconds
 
-        return dialog
+        while time.monotonic() < deadline:
+            for process in psutil.process_iter(["pid", "name"]):
+                try:
+                    process_name = (
+                        process.info.get("name")
+                        or ""
+                    )
+
+                    if (
+                        process_name.lower()
+                        != self.PROCESS_NAME.lower()
+                    ):
+                        continue
+
+                    process_id = int(
+                        process.info["pid"]
+                    )
+
+                    try:
+                        application = Application(
+                            backend="win32"
+                        ).connect(
+                            process=process_id,
+                            timeout=2,
+                        )
+                    except Exception:
+                        continue
+
+                    for candidate in application.windows():
+                        try:
+                            title = (
+                                candidate.window_text()
+                                or ""
+                            )
+
+                            if not pattern.search(title):
+                                continue
+
+                            if not candidate.is_visible():
+                                continue
+
+                            candidate.wait(
+                                "visible enabled",
+                                timeout=3,
+                            )
+
+                            return candidate
+
+                        except Exception:
+                            continue
+
+                except (
+                    psutil.NoSuchProcess,
+                    psutil.AccessDenied,
+                    psutil.ZombieProcess,
+                    ValueError,
+                ):
+                    continue
+
+            time.sleep(0.5)
+
+        raise RuntimeError(
+            "Could not find a QXDM window matching "
+            f"'{title_pattern}' within {timeout_seconds:.0f} seconds."
+        )
 
     def find_edit_by_keywords(
         self,
