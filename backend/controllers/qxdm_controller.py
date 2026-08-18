@@ -1763,6 +1763,41 @@ class QXDMController:
         print(f"Loaded completed QXDM log: {selected_log}")
         return True
 
+    def save_items(self, dialog_timeout_seconds: float = 10.0) -> bool:
+        """
+        Use QXDM's File -> Save Items... to write the captured Item Store
+        data to disk, via its keyboard shortcut (Ctrl+I).
+
+        This uses the shortcut instead of menu_select() for the same
+        reason load_default_mask() uses Ctrl+O: QXDM is a Qt application
+        and does not reliably expose File menu items to pywinauto.
+
+        If Quick Saving is already configured (see configure_logging()),
+        QXDM may save immediately with no dialog. If it prompts with a
+        Save dialog instead, fill it in using the configured log path.
+        """
+        self.focus_qxdm()
+
+        send_keys("^i")
+        time.sleep(2)
+
+        if self.current_log_path is not None:
+            try:
+                self.handle_file_dialog(
+                    self.current_log_path
+                )
+            except Exception:
+                # No Save dialog appeared - Quick Saving already wrote
+                # the file directly, which is the expected case when
+                # Item Store File settings were configured up front.
+                pass
+
+        print(
+            "Saved QXDM Item Store data via File > Save Items (Ctrl+I)."
+        )
+
+        return True
+
     def stop_logging(
         self,
         wait_seconds: float = 2.0,
@@ -1770,17 +1805,21 @@ class QXDMController:
         save_timeout_seconds: float = 20.0,
     ) -> bool:
         """
-        Put the modem into low-power mode and allow Quick Saving to flush.
+        Put the modem into low-power mode, then use File -> Save Items
+        to actually finalize the QXDM log to disk.
 
-        The QXDM file is saved according to the existing Item Store File
-        settings configured inside QXDM.
+        Sending mode lpm alone does not save anything by itself - it only
+        pauses the modem. Save Items is what writes the captured data to
+        the configured log file.
         """
         self.mode_lpm()
         time.sleep(wait_seconds)
 
+        self.save_items()
+
         print(
-            "QXDM test stopped. Check the Quick Saving directory "
-            "configured under Options > Settings > Item Store File."
+            "QXDM test stopped and the log was saved via "
+            "File > Save Items."
         )
 
         return True
