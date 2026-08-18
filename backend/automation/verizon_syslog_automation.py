@@ -118,6 +118,13 @@ def automate_verizon_syslog_download(
             _report(
                 progress,
                 "navigating",
+                "Switching to the Advanced tab...",
+            )
+            _click_advanced_tab(page)
+
+            _report(
+                progress,
+                "navigating",
                 "Opening Diagnostics & Monitoring > System Logging...",
             )
             _click_diagnostic_monitoring(page)
@@ -194,6 +201,18 @@ def _login(page, password: str) -> None:
         ) from error
 
 
+def _click_advanced_tab(page) -> None:
+    # Confirmed from a real screenshot: the top of the GUI has "Basic" and
+    # "Advanced" tabs, and the Diagnostics & Monitoring sidebar only shows
+    # up under Advanced. The automation previously skipped this click
+    # entirely and went straight for the sidebar, which is why it failed.
+    _click_menu_text(
+        page,
+        "Advanced",
+        step_name="_click_advanced_tab",
+    )
+
+
 def _click_diagnostic_monitoring(page) -> None:
     # Confirmed from a real screenshot of the sidebar: the section is
     # labeled "Diagnostics & Monitoring" (plural "Diagnostics", with the
@@ -222,6 +241,9 @@ def _click_menu_text(page, label: str, step_name: str) -> None:
 
     try:
         locator.wait_for(timeout=NAVIGATION_TIMEOUT_MS)
+        locator.scroll_into_view_if_needed(
+            timeout=NAVIGATION_TIMEOUT_MS
+        )
         locator.click()
     except PlaywrightTimeoutError as error:
         raise RuntimeError(
