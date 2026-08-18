@@ -205,13 +205,21 @@ function Throughput() {
         }
       )
 
-      if (response.data?.cancelled) {
-        setMessage('Speedtest CSV import cancelled.')
-        return
-      }
-
       const importedResults =
         response.data?.results ?? []
+
+      // Only bail out with nothing on the page when the CSV itself was
+      // never picked/parsed. If the CSV import succeeded but the wrapper
+      // folder step was cancelled or invalid, `results` still has data -
+      // show it, don't discard it just because the wrapper copy didn't
+      // happen.
+      if (importedResults.length === 0) {
+        setMessage(
+          response.data?.message ||
+            'Speedtest CSV import cancelled.'
+        )
+        return
+      }
 
       const newest =
         response.data?.latest_result ??
