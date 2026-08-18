@@ -1,0 +1,45 @@
+{
+  "name": "wnc-testhub",
+  "version": "1.0.0",
+  "private": true,
+  "description": "WNC TestHub desktop application (Electron shell around the React frontend and FastAPI backend)",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "frontend:install": "cd frontend && npm install",
+    "frontend:build": "cd frontend && npm run build",
+    "backend:build": "cd backend && pyinstaller WNCTestHubBackend.spec --noconfirm",
+    "electron": "electron .",
+    "electron:dev": "npm run frontend:build && electron .",
+    "dist": "npm run frontend:build && electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^43.4.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.wnc.testhub",
+    "productName": "WNC TestHub",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "electron/**/*",
+      "frontend/dist/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "backend/dist/WNCTestHubBackend",
+        "to": "backend",
+        "filter": ["**/*"]
+      }
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}

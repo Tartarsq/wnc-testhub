@@ -338,6 +338,55 @@ C:\
 > **Important:** The backend expects `speedtest.exe` to be located in the configured `tools` directory. If the executable is missing or stored in a different location, throughput testing will not function.
 
 
+# Desktop App (Electron)
+
+WNC TestHub can also run as a self-contained Windows desktop app: an Electron
+shell that launches the FastAPI backend for you and loads the built React UI,
+so nothing needs to be run from a terminal.
+
+## Run in development
+
+This runs the Electron shell against your local `.venv` Python backend and a
+production build of the frontend:
+
+```bash
+# from the project root
+cd frontend && npm install && cd ..
+npm install
+npm run electron:dev
+```
+
+`npm run electron:dev` builds `frontend/dist` and then launches Electron,
+which spawns `backend/.venv/Scripts/python.exe -m uvicorn` and waits for it
+to respond on `http://127.0.0.1:8000/` before opening the window.
+
+## Build a distributable installer
+
+End users don't have Python installed, so the backend first needs to be
+compiled into a standalone executable with PyInstaller, and only then does
+Electron get packaged around it:
+
+```bash
+# 1. Compile the FastAPI backend into backend/dist/WNCTestHubBackend/
+cd backend
+pip install pyinstaller
+pyinstaller WNCTestHubBackend.spec --noconfirm
+cd ..
+
+# 2. Build the frontend and package the Electron app (NSIS installer)
+npm install
+npm run dist
+```
+
+The installer is written to `release/`. `electron-builder` bundles
+`backend/dist/WNCTestHubBackend/` as an extra resource, and the packaged app
+launches `WNCTestHubBackend.exe` from there instead of a Python venv.
+
+**Note:** Both steps must be run on Windows — the backend depends on
+`pywin32`/`pywinauto` for QXDM/PCAT automation, and the PyInstaller output is
+platform-specific.
+
+
 # Author
 
 **Tarun Sathyanarayana**
