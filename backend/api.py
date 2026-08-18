@@ -24,6 +24,9 @@ import pytesseract
 
 from automation.automated_runner import AutomatedTestRunner
 from automation.throughput_test import ThroughputTester
+from automation.verizon_syslog_automation import (
+    automate_verizon_syslog_download,
+)
 from config import (
     DEFAULT_TITAN_IP,
     QXDM_DEFAULT_LOG_FILENAME,
@@ -2686,6 +2689,22 @@ class VerizonSyslogLaunchRequest(BaseModel):
     )
 
 
+class VerizonSyslogAutomationRequest(BaseModel):
+    wrapper_session_folder: str = Field(
+        min_length=1,
+        max_length=500,
+    )
+    titan_ip: str = Field(
+        default=DEFAULT_TITAN_IP,
+        min_length=7,
+        max_length=45,
+    )
+    password: str = Field(
+        min_length=1,
+        max_length=200,
+    )
+
+
 verizon_syslog_state: dict[str, Any] = {
     "status": "idle",
     "process_running": False,
@@ -2695,6 +2714,13 @@ verizon_syslog_state: dict[str, Any] = {
     "syslog_folder": None,
     "message": "Verizon GUI syslog workflow is idle.",
     "error": None,
+    # Automated login/navigate/download run (see /syslog/verizon/automate).
+    # Never put the Verizon GUI password in this dict - it's returned as-is
+    # by GET /syslog/verizon/status.
+    "automation_status": "idle",
+    "automation_step": None,
+    "automation_message": None,
+    "automation_error": None,
 }
 
 
@@ -3262,6 +3288,110 @@ def open_verizon_gui_for_syslog(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(error),
         ) from error
+
+
+@app.post("/api/syslog/verizon/automate")
+def automate_verizon_syslog(
+    request: VerizonSyslogAutomationRequest,
+    background_tasks: BackgroundTasks,
+) -> dict[str, Any]:
+    """
+    Drive the Verizon GUI with a real browser (Playwright) instead of
+    requiring a person to click through login > Diagnostic Monitoring >
+    System Logging > Save. Runs in the background since it takes a while;
+    poll GET /syslog/verizon/status for progress via automation_status /
+    automation_step / automation_message / automation_error.
+    """
+    try:
+        wrapper_folder = validate_syslog_wrapper_session(
+            request.wrapper_session_folder
+        )
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(error),
+        ) from error
+
+    syslog_folder = (
+        wrapper_folder / "syslog"
+    ).resolve()
+
+    titan_ip = request.titan_ip.strip()
+
+    verizon_syslog_state.update(
+        {
+            "titan_ip": titan_ip,
+            "wrapper_session_folder": str(wrapper_folder),
+            "syslog_folder": str(syslog_folder),
+            "automation_status": "running",
+            "automation_step": "launching",
+            "automation_message": (
+                "Starting the Verizon GUI automation..."
+            ),
+            "automation_error": None,
+        }
+    )
+
+    background_tasks.add_task(
+        run_verizon_syslog_automation,
+        titan_ip,
+        request.password,
+        syslog_folder,
+    )
+
+    return {
+        "success": True,
+        "message": "Verizon GUI automation started.",
+        "syslog_folder": str(syslog_folder),
+    }
+
+
+def run_verizon_syslog_automation(
+    titan_ip: str,
+    password: str,
+    syslog_folder: Path,
+) -> None:
+    def on_progress(step: str, message: str) -> None:
+        verizon_syslog_state.update(
+            {
+                "automation_step": step,
+                "automation_message": message,
+            }
+        )
+
+    try:
+        result = automate_verizon_syslog_download(
+            titan_ip=titan_ip,
+            password=password,
+            destination_folder=syslog_folder,
+            progress=on_progress,
+        )
+
+        verizon_syslog_state.update(
+            {
+                "status": "file_detected",
+                "automation_status": "completed",
+                "automation_step": "completed",
+                "automation_message": (
+                    f"Automated download saved {result.downloaded_filename}."
+                ),
+                "automation_error": None,
+                "message": (
+                    f"Automated download saved {result.downloaded_filename} "
+                    f"to {syslog_folder}."
+                ),
+                "error": None,
+            }
+        )
+
+    except Exception as error:
+        verizon_syslog_state.update(
+            {
+                "automation_status": "failed",
+                "automation_error": str(error),
+                "automation_message": str(error),
+            }
+        )
 
 
 @app.get("/api/syslog/verizon/open-folder")
