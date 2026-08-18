@@ -1831,22 +1831,17 @@ class QXDMController:
 
     def stop_logging(
         self,
-        wait_seconds: float = 2.0,
         load_saved_log: bool = False,
         save_timeout_seconds: float = 20.0,
     ) -> bool:
         """
-        Put the modem into low-power mode, use File -> Save Items to
-        finalize the QXDM log, then wait for the saved file to actually
-        appear and stop changing size before returning.
+        Use File -> Save Items to finalize the QXDM log, then wait for
+        the saved file to actually appear and stop changing size before
+        returning.
 
-        Sending mode lpm alone does not save anything by itself - it only
-        pauses the modem. Save Items is what writes the captured data to
-        the configured log file.
+        This intentionally does not send mode lpm - stopping capture
+        should not put the modem into low-power/airplane mode.
         """
-        self.mode_lpm()
-        time.sleep(wait_seconds)
-
         self.save_items()
 
         try:

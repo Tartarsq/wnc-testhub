@@ -141,11 +141,13 @@ class AutomatedTestRunner:
         """
         Stop QXDM logging and finalize the active log.
 
-        The updated QXDMController.stop_logging() is expected to:
-            1. Send mode lpm.
-            2. Stop the QXDM capture.
-            3. Wait for the log file to finish saving.
-            4. Optionally load the saved log back into QXDM.
+        QXDMController.stop_logging() is expected to:
+            1. Use File > Save Items to finalize the QXDM log.
+            2. Wait for the log file to finish saving.
+            3. Optionally load the saved log back into QXDM.
+
+        It does not send mode lpm - stopping capture should not put the
+        modem into low-power/airplane mode.
         """
         if self.qxdm is None:
             raise RuntimeError(
