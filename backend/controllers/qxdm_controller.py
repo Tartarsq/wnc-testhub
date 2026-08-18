@@ -601,16 +601,27 @@ class QXDMController:
 
     def open_qxdm_settings(
         self,
-    ) -> tuple[int, int, int, int]:
+    ):
         """
-        Open QXDM Settings using:
+        Open QXDM Settings via Options -> Settings... and return the
+        actual Settings dialog window.
 
-            Alt+O -> Down -> Enter
+        This previously navigated with Alt+O -> Down -> Enter, assuming
+        Settings was always one item below the top of the Options menu.
+        Confirmed from a real screenshot of QXDM_Pro 5.2.680: the Options
+        menu has Communications... and EUD Communication above Settings,
+        so a single Down press landed on the wrong item instead - which
+        is why Settings never actually opened. Using select_first_available_
+        menu() (already used elsewhere in this file for Stop/Open Log)
+        resolves the item by its label instead of a hardcoded position,
+        so it isn't tied to how many items happen to be above it.
 
-        In this QXDM build, Settings is a Qt child dialog inside the
-        main QXDM window, so Windows continues to report the main QXDM
-        title as the active window. Use the main-window rectangle and
-        derive the Settings dialog position from it.
+        Also confirmed from that same screenshot: Settings is its own
+        separate top-level window (own title bar, own close button), not
+        a Qt panel embedded inside the main QXDM window - so this locates
+        it directly with find_dialog() instead of deriving a bounding box
+        from the main window's rectangle, which was never reliable across
+        QXDM builds.
         """
         window = self.focus_qxdm()
 
@@ -621,49 +632,20 @@ class QXDMController:
         except Exception:
             pass
 
-        self.open_main_menu(
-            "Options"
+        self.select_first_available_menu(
+            window,
+            self.SETTINGS_MENU_PATHS,
         )
 
-        send_keys("{DOWN}")
-        time.sleep(0.2)
-        send_keys("{ENTER}")
-        time.sleep(2)
-
-        rectangle = window.rectangle()
-
-        # QXDM 5.2.640 displays Settings as a centered Qt child dialog.
-        # These ratios match the layout shown in the user's screenshots.
-        settings_left = int(
-            rectangle.left
-            + rectangle.width() * 0.12
-        )
-        settings_top = int(
-            rectangle.top
-            + rectangle.height() * 0.07
-        )
-        settings_right = int(
-            rectangle.left
-            + rectangle.width() * 0.88
-        )
-        settings_bottom = int(
-            rectangle.top
-            + rectangle.height() * 0.96
+        dialog = self.find_dialog(
+            title_pattern=r".*Settings.*"
         )
 
         print(
-            "QXDM Settings opened as an embedded Qt dialog. "
-            "Using derived dialog bounds: "
-            f"({settings_left}, {settings_top}, "
-            f"{settings_right}, {settings_bottom})"
+            "QXDM Settings opened as its own top-level window."
         )
 
-        return (
-            settings_left,
-            settings_top,
-            settings_right,
-            settings_bottom,
-        )
+        return dialog
 
     def select_first_available_menu(
         self,
@@ -1231,7 +1213,7 @@ class QXDMController:
 
         self.open_qxdm_settings()
 
-        # Give the embedded Settings page a moment to finish drawing.
+        # Give the Settings window a moment to finish drawing.
         time.sleep(3)
 
         print("")
@@ -1844,6 +1826,8 @@ class QXDMController:
         """
         self.save_items()
 
+        saved_path = None
+
         try:
             saved_path = self.wait_for_saved_log(
                 timeout_seconds=save_timeout_seconds
@@ -1856,6 +1840,15 @@ class QXDMController:
                 "Could not confirm the QXDM log was saved within "
                 f"{save_timeout_seconds:.0f} seconds: {error}"
             )
+
+        if load_saved_log and saved_path is not None:
+            try:
+                self.load_saved_log(saved_path)
+            except Exception as error:
+                print(
+                    "Saved the QXDM log, but could not reopen it in "
+                    f"QXDM automatically: {error}"
+                )
 
         print(
             "QXDM test stopped and the log was saved via "
