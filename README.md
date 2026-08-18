@@ -148,9 +148,14 @@ python -m venv .venv
 .venv\Scripts\activate
 
 pip install -r requirements.txt
+playwright install chromium
 
 uvicorn api:app --reload
 ```
+
+`playwright install chromium` is a one-time extra step (beyond `pip install`)
+that downloads the actual browser Playwright drives for the Verizon GUI
+syslog automation on the Syslog page.
 
 ---
 
@@ -255,6 +260,7 @@ Install the required Python packages:
 
 ```bash
 pip install -r requirements.txt
+playwright install chromium
 ```
 
 Start the backend server:
