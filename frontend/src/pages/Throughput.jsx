@@ -3,6 +3,8 @@ import {
   FiActivity,
   FiArrowDown,
   FiArrowUp,
+  FiCheckCircle,
+  FiCircle,
   FiClock,
   FiDownload,
   FiExternalLink,
@@ -420,6 +422,50 @@ function Throughput() {
       jobStatus === 'completed'
     )
 
+  // Explains the CSV import flow as three explicit steps, since the
+  // import actually pops up two separate Windows dialogs in a row
+  // (CSV picker, then wrapper-folder picker) before anything is saved.
+  const csvImportSteps = [
+    {
+      id: 'export',
+      label: '1. Export from Speedtest',
+      description:
+        'In the Speedtest app, open Result History and export it as a CSV file.',
+    },
+    {
+      id: 'pick',
+      label: '2. Pick the CSV, then the session folder',
+      description:
+        'Click "Import CSV to Wrapper" below. A Windows dialog opens for the CSV file, then a second dialog opens for the wrapper session folder.',
+    },
+    {
+      id: 'saved',
+      label: '3. Saved to Analytics',
+      description:
+        'Every test from the newest date in the CSV is written to the session and wrapper reports automatically.',
+    },
+  ]
+
+  const csvImportStepState = (stepIndex) => {
+    if (csvBatchSaved) {
+      return 'complete'
+    }
+
+    if (isImportingCsv) {
+      return stepIndex === 0
+        ? 'complete'
+        : stepIndex === 1
+          ? 'active'
+          : 'pending'
+    }
+
+    if (resultEntryEnabled) {
+      return stepIndex === 0 ? 'active' : 'pending'
+    }
+
+    return 'pending'
+  }
+
   const statusBadgeClass =
     jobStatus === 'failed'
       ? 'failed'
@@ -542,18 +588,35 @@ function Throughput() {
             </div>
           </div>
 
-          <div className="configuration-grid">
-            <div className="form-field">
-              <span>Result History CSV</span>
-              <div className="configuration-note">
-                <FiExternalLink />
-                <span>
-                  First select the Speedtest Result History CSV. Then select
-                  the wrapper test session folder where the results should go.
-                </span>
-              </div>
-            </div>
+          <div className="qxdm-workflow-timeline">
+            {csvImportSteps.map((step, index) => {
+              const stepState = csvImportStepState(index)
 
+              return (
+                <div
+                  key={step.id}
+                  className={`qxdm-workflow-step ${stepState}`}
+                >
+                  <div className="qxdm-workflow-marker">
+                    {stepState === 'complete' ? (
+                      <FiCheckCircle />
+                    ) : stepState === 'active' ? (
+                      <FiClock />
+                    ) : (
+                      <FiCircle />
+                    )}
+                  </div>
+
+                  <div className="qxdm-workflow-content">
+                    <strong>{step.label}</strong>
+                    <span>{step.description}</span>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+
+          <div className="configuration-grid">
             <div className="form-field">
               <span>Imported Test Date</span>
               <input
@@ -582,10 +645,23 @@ function Throughput() {
           <div className="configuration-footer">
             <div className="configuration-note">
               <FiActivity />
-              <span>
-                Select the wrapper session root folder, not the reports
-                subfolder. TestHub saves into reports automatically.
-              </span>
+              {isImportingCsv ? (
+                <span>
+                  Look for the Windows file dialog — it may have opened
+                  behind this window. Pick the CSV first, then the wrapper
+                  session root folder (not its reports subfolder).
+                </span>
+              ) : !resultEntryEnabled ? (
+                <span>
+                  Click &quot;Open Speedtest&quot; above first — this button
+                  unlocks once a Speedtest session is ready for a result.
+                </span>
+              ) : (
+                <span>
+                  Select the wrapper session root folder, not the reports
+                  subfolder. TestHub saves into reports automatically.
+                </span>
+              )}
             </div>
 
             <button
@@ -599,7 +675,7 @@ function Throughput() {
             >
               <FiExternalLink />
               {isImportingCsv
-                ? 'Importing Latest Result...'
+                ? 'Waiting on file dialog...'
                 : 'Import CSV to Wrapper'}
             </button>
           </div>
