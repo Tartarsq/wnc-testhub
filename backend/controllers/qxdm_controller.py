@@ -1763,7 +1763,49 @@ class QXDMController:
         print(f"Loaded completed QXDM log: {selected_log}")
         return True
 
-    def save_items(self, dialog_timeout_seconds: float = 10.0) -> bool:
+    def _wait_for_saving_dialog_to_close(
+        self,
+        timeout_seconds: float = 30.0,
+    ) -> None:
+        """
+        Confirmed against the real device: File > Save Items pops up an
+        "Information" dialog reading "Please wait, saving log files is
+        in progress" with an OK button, while QXDM writes the file. This
+        waits for that dialog to close instead of racing ahead - and if
+        it's still open once the timeout passes (saving has almost
+        certainly finished by then), clicks OK to dismiss it.
+        """
+        try:
+            dialog = Desktop(backend="win32").window(
+                title="Information",
+                top_level_only=True,
+            )
+            dialog.wait("visible", timeout=5)
+        except Exception:
+            # No dialog appeared at all - saving may have finished
+            # instantly, or QXDM saved silently with no prompt.
+            return
+
+        deadline = time.monotonic() + timeout_seconds
+
+        while time.monotonic() < deadline:
+            try:
+                if not dialog.exists() or not dialog.is_visible():
+                    return
+            except Exception:
+                return
+
+            time.sleep(1)
+
+        try:
+            self.click_button_by_keywords(
+                dialog,
+                ["ok"],
+            )
+        except Exception:
+            pass
+
+    def save_items(self, dialog_timeout_seconds: float = 30.0) -> bool:
         """
         Use QXDM's File -> Save Items... to write the captured Item Store
         data to disk, via its keyboard shortcut (Ctrl+I).
@@ -1771,26 +1813,15 @@ class QXDMController:
         This uses the shortcut instead of menu_select() for the same
         reason load_default_mask() uses Ctrl+O: QXDM is a Qt application
         and does not reliably expose File menu items to pywinauto.
-
-        If Quick Saving is already configured (see configure_logging()),
-        QXDM may save immediately with no dialog. If it prompts with a
-        Save dialog instead, fill it in using the configured log path.
         """
         self.focus_qxdm()
 
         send_keys("^i")
-        time.sleep(2)
+        time.sleep(1)
 
-        if self.current_log_path is not None:
-            try:
-                self.handle_file_dialog(
-                    self.current_log_path
-                )
-            except Exception:
-                # No Save dialog appeared - Quick Saving already wrote
-                # the file directly, which is the expected case when
-                # Item Store File settings were configured up front.
-                pass
+        self._wait_for_saving_dialog_to_close(
+            timeout_seconds=dialog_timeout_seconds
+        )
 
         print(
             "Saved QXDM Item Store data via File > Save Items (Ctrl+I)."
@@ -1805,8 +1836,9 @@ class QXDMController:
         save_timeout_seconds: float = 20.0,
     ) -> bool:
         """
-        Put the modem into low-power mode, then use File -> Save Items
-        to actually finalize the QXDM log to disk.
+        Put the modem into low-power mode, use File -> Save Items to
+        finalize the QXDM log, then wait for the saved file to actually
+        appear and stop changing size before returning.
 
         Sending mode lpm alone does not save anything by itself - it only
         pauses the modem. Save Items is what writes the captured data to
@@ -1816,6 +1848,19 @@ class QXDMController:
         time.sleep(wait_seconds)
 
         self.save_items()
+
+        try:
+            saved_path = self.wait_for_saved_log(
+                timeout_seconds=save_timeout_seconds
+            )
+            print(
+                f"QXDM log confirmed saved: {saved_path}"
+            )
+        except TimeoutError as error:
+            print(
+                "Could not confirm the QXDM log was saved within "
+                f"{save_timeout_seconds:.0f} seconds: {error}"
+            )
 
         print(
             "QXDM test stopped and the log was saved via "
