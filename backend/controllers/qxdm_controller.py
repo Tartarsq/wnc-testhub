@@ -702,6 +702,7 @@ class QXDMController:
         )
 
         deadline = time.monotonic() + timeout_seconds
+        seen_titles: set[str] = set()
 
         while time.monotonic() < deadline:
             for process in psutil.process_iter(["pid", "name"]):
@@ -731,24 +732,28 @@ class QXDMController:
                     except Exception:
                         continue
 
-                    for candidate in application.windows():
+                    for candidate in application.windows(
+                        top_level_only=True,
+                    ):
                         try:
                             title = (
                                 candidate.window_text()
                                 or ""
                             )
 
-                            if not pattern.search(title):
-                                continue
-
                             if not candidate.is_visible():
                                 continue
 
-                            candidate.wait(
-                                "visible enabled",
-                                timeout=3,
-                            )
+                            if title:
+                                seen_titles.add(title)
 
+                            if not pattern.search(title):
+                                continue
+
+                            # Only require visibility, not "enabled" -
+                            # a window can be visible but briefly report
+                            # not-enabled while it finishes drawing, which
+                            # would otherwise cause a false negative here.
                             return candidate
 
                         except Exception:
@@ -764,9 +769,16 @@ class QXDMController:
 
             time.sleep(0.5)
 
+        titles_found = (
+            "; ".join(sorted(seen_titles))
+            if seen_titles
+            else "none"
+        )
+
         raise RuntimeError(
             "Could not find a QXDM window matching "
-            f"'{title_pattern}' within {timeout_seconds:.0f} seconds."
+            f"'{title_pattern}' within {timeout_seconds:.0f} seconds. "
+            f"Visible QXDM window titles seen instead: {titles_found}"
         )
 
     def find_edit_by_keywords(
