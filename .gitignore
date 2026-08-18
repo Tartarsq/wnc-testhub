@@ -16,6 +16,12 @@ eggs/
 
 # Electron-builder output
 /release/
+
+# Node.js (root-level - frontend/ has its own .gitignore for its
+# node_modules, but the root package.json added for electron-builder
+# needs this too)
+node_modules/
+npm-debug.log*
 .eggs/
 lib/
 lib64/

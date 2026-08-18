@@ -1,22 +1,26 @@
 """
 Drives the Titan 3 "Verizon GUI" with a real, scriptable browser (Playwright)
-to log in, navigate to Diagnostic Monitoring > System Logging, and download
-the syslog automatically instead of requiring a person to click through it.
+to log in, navigate to Diagnostics & Monitoring > System Logging, and
+download the syslog automatically instead of requiring a person to click
+through it.
 
-IMPORTANT - selectors here are a first pass, not confirmed against the real
-device. They're based on:
-  - The login form being IP + password only (no username), per the team.
-  - The exact menu labels "Diagnostic Monitoring" and "System Logging",
-    which TestHub's own UI already uses because someone on the team read
-    them off the real GUI (see frontend/src/pages/Syslog.jsx).
+Menu path confirmed from real screenshots of the sidebar (2026-08-18):
+Advanced tab > Diagnostics & Monitoring (collapsible section) >
+System Logging > System Log tab (active by default) > Save button
+(top right, next to Options/Refresh).
 
-Everything else (button names, page structure, timing) is a best-effort
-guess using flexible, text-based Playwright locators so small differences
-in markup don't break it - but it has not been run against the real
-device. Expect to adjust `_click_diagnostic_monitoring`,
-`_click_system_logging`, and `_click_save` once real screenshots/HTML are
-available. Each stage below raises a clearly labeled error naming exactly
-which step failed, so a mismatch is easy to diagnose and fix in one place.
+IMPORTANT - the login form and the exact Save button behavior are still
+unconfirmed against the real device:
+  - The login form is IP + password only (no username), per the team, but
+    the submit button/behavior hasn't been verified.
+  - Clicking Save is assumed to trigger a normal browser file download
+    (that's what `_click_save_and_download` waits for) - not yet confirmed.
+
+Everything here uses flexible, text/role-based Playwright locators so small
+differences in markup don't break it, but treat this as still needing a
+live test run. Each stage below raises a clearly labeled error naming
+exactly which step failed, so a mismatch is easy to diagnose and fix in
+one place.
 """
 
 from __future__ import annotations
@@ -114,7 +118,7 @@ def automate_verizon_syslog_download(
             _report(
                 progress,
                 "navigating",
-                "Opening Diagnostic Monitoring > System Logging...",
+                "Opening Diagnostics & Monitoring > System Logging...",
             )
             _click_diagnostic_monitoring(page)
             _click_system_logging(page)
@@ -191,9 +195,14 @@ def _login(page, password: str) -> None:
 
 
 def _click_diagnostic_monitoring(page) -> None:
+    # Confirmed from a real screenshot of the sidebar: the section is
+    # labeled "Diagnostics & Monitoring" (plural "Diagnostics", with the
+    # "&"), not "Diagnostic Monitoring". It's a collapsible section header
+    # in the left sidebar - clicking it expands the submenu that contains
+    # "System Logging".
     _click_menu_text(
         page,
-        "Diagnostic Monitoring",
+        "Diagnostics & Monitoring",
         step_name="_click_diagnostic_monitoring",
     )
 
