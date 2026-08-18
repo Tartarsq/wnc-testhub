@@ -1282,16 +1282,70 @@ class QXDMController:
         )
 
 
+    def _autofill_item_store_settings(
+        self,
+        dialog,
+        base_name: str,
+        directory: str,
+    ) -> bool:
+        """
+        Try to fill in Base File Name and Log File Directory on the Item
+        Store File page of Settings, so the saved log actually lands in
+        the expected (usually wrapper session) folder instead of
+        depending on someone typing it in by hand.
+
+        Returns True only if both fields were found and set. If the
+        Settings window doesn't expose real Win32 Edit controls for
+        these fields (e.g. a future QXDM build renders them differently),
+        this returns False and the caller falls back to the manual wait.
+        """
+        if dialog is None:
+            return False
+
+        try:
+            base_name_edit = self.find_edit_by_keywords(
+                dialog,
+                ["base file name"],
+            )
+            directory_edit = self.find_edit_by_keywords(
+                dialog,
+                ["log file directory"],
+            )
+
+            if base_name_edit is None or directory_edit is None:
+                return False
+
+            self.set_edit_value(
+                base_name_edit,
+                base_name,
+            )
+            self.set_edit_value(
+                directory_edit,
+                directory,
+            )
+
+            print(
+                "Filled in Base File Name and Log File Directory "
+                "automatically."
+            )
+
+            return True
+
+        except Exception as error:
+            print(
+                "Could not automatically fill in the Item Store File "
+                f"fields: {error}"
+            )
+            return False
+
     def configure_logging(
         self,
         log_path: Path,
     ) -> bool:
         """
-        Open QXDM Item Store File Settings and allow one minute for the user
-        to enter the save configuration manually.
-
-        TestHub does not click or type into QXDM fields. After 60 seconds,
-        the workflow continues automatically to mode lpm and mode online.
+        Open QXDM Item Store File Settings and try to fill in the Base
+        File Name and Log File Directory fields automatically. Falls
+        back to a manual entry window if the fields can't be found/set.
         """
         log_path = self.prepare_log_path(
             log_path
@@ -1302,7 +1356,7 @@ class QXDMController:
         )
         expected_base_name = log_path.stem
 
-        self.open_qxdm_settings()
+        dialog = self.open_qxdm_settings()
 
         # Give the Settings window a moment to finish drawing.
         time.sleep(3)
@@ -1315,9 +1369,29 @@ class QXDMController:
         print(f"Maximum Log Size:   {self.max_log_size_mb} MB")
         print("")
 
-        self.wait_for_manual_log_settings(
-            wait_seconds=60.0
+        autofilled = self._autofill_item_store_settings(
+            dialog,
+            base_name=expected_base_name,
+            directory=expected_directory,
         )
+
+        if autofilled:
+            print(
+                "Automatically entered the Base File Name and Log File "
+                "Directory. You have 15 seconds to verify or adjust "
+                "them before TestHub continues."
+            )
+            self.wait_for_manual_log_settings(
+                wait_seconds=15.0
+            )
+        else:
+            print(
+                "Could not automatically fill in the Item Store File "
+                "fields - enter them manually."
+            )
+            self.wait_for_manual_log_settings(
+                wait_seconds=60.0
+            )
 
         # Try to close Settings before resuming the mode commands. If the user
         # already closed it, Escape is harmless.
@@ -1331,7 +1405,7 @@ class QXDMController:
         time.sleep(2)
 
         print(
-            "Manual QXDM save configuration window completed."
+            "QXDM save configuration window completed."
         )
 
         return True
