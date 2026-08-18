@@ -1,12 +1,15 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   FiActivity,
   FiCheckCircle,
+  FiCircle,
+  FiClock,
   FiFileText,
   FiFolder,
   FiPlay,
   FiRefreshCw,
   FiSave,
+  FiZap,
 } from 'react-icons/fi'
 import Sidebar from '../components/Sidebar'
 import Topbar from '../components/Topbar'
@@ -22,6 +25,30 @@ function Syslog() {
   const [error, setError] = useState('')
   const [syslogFiles, setSyslogFiles] = useState([])
   const [message, setMessage] = useState('')
+
+  // Automated login/navigate/download run. The password only ever lives
+  // in this component's state and the one-time request body - it is
+  // never persisted to localStorage and the backend never stores it.
+  const [password, setPassword] = useState('')
+  const [automationStatus, setAutomationStatus] = useState('idle')
+  const [automationStep, setAutomationStep] = useState(null)
+  const [automationMessage, setAutomationMessage] = useState('')
+  const [automationError, setAutomationError] = useState('')
+
+  const automationPollingRef = useRef(null)
+
+  const stopAutomationPolling = () => {
+    if (automationPollingRef.current) {
+      window.clearInterval(automationPollingRef.current)
+      automationPollingRef.current = null
+    }
+  }
+
+  useEffect(() => {
+    return () => {
+      stopAutomationPolling()
+    }
+  }, [])
 
   const statusLabel =
     status === 'opening'
@@ -152,6 +179,78 @@ function Syslog() {
     }
   }
 
+  const pollAutomationStatus = () => {
+    stopAutomationPolling()
+
+    automationPollingRef.current = window.setInterval(async () => {
+      try {
+        const response = await api.get('/syslog/verizon/status')
+        const data = response.data ?? {}
+
+        setAutomationStatus(data.automation_status ?? 'idle')
+        setAutomationStep(data.automation_step ?? null)
+        setAutomationMessage(data.automation_message ?? '')
+        setAutomationError(data.automation_error ?? '')
+
+        if (data.syslog_folder) {
+          setSyslogFolder(data.syslog_folder)
+        }
+
+        if (data.automation_status === 'completed') {
+          stopAutomationPolling()
+          setStatus('completed')
+          handleDetectSavedSyslog()
+        } else if (data.automation_status === 'failed') {
+          stopAutomationPolling()
+        }
+      } catch {
+        // Transient network hiccup while polling - try again next tick.
+      }
+    }, 1500)
+  }
+
+  const handleAutomateDownload = async () => {
+    if (!wrapperFolder.trim()) {
+      setError('Select the wrapper session first.')
+      return
+    }
+
+    if (!password.trim()) {
+      setError('Enter the Verizon GUI password first.')
+      return
+    }
+
+    setError('')
+    setAutomationStatus('running')
+    setAutomationStep('launching')
+    setAutomationMessage('Starting the Verizon GUI automation...')
+    setAutomationError('')
+
+    try {
+      const response = await api.post(
+        '/syslog/verizon/automate',
+        {
+          wrapper_session_folder: wrapperFolder.trim(),
+          titan_ip: titanIp.trim(),
+          password,
+        }
+      )
+
+      setSyslogFolder(
+        response.data?.syslog_folder ?? syslogFolder
+      )
+
+      pollAutomationStatus()
+    } catch (requestError) {
+      setAutomationStatus('failed')
+      setError(
+        requestError.response?.data?.detail ||
+          requestError.message ||
+          'Unable to start the Verizon GUI automation.'
+      )
+    }
+  }
+
   const handleRefresh = async () => {
     try {
       const response = await api.get('/syslog/verizon/status')
@@ -179,6 +278,66 @@ function Syslog() {
     } catch {
       // Keep page usable if backend is not running.
     }
+  }
+
+  // First-pass automation of the manual click-through below - launches a
+  // real browser, logs in, and clicks through Diagnostic Monitoring >
+  // System Logging > Save. Not yet confirmed against the real Verizon GUI.
+  const automationSteps = [
+    {
+      id: 'launching',
+      label: 'Launch Browser',
+      description: 'Open a controlled browser to the Verizon GUI.',
+    },
+    {
+      id: 'logging_in',
+      label: 'Log In',
+      description: 'Enter the Verizon GUI password.',
+    },
+    {
+      id: 'navigating',
+      label: 'Navigate',
+      description: 'Open Diagnostic Monitoring → System Logging.',
+    },
+    {
+      id: 'saving',
+      label: 'Save & Download',
+      description: 'Click Save and capture the syslog download.',
+    },
+    {
+      id: 'completed',
+      label: 'Completed',
+      description: 'Syslog saved to the wrapper session.',
+    },
+  ]
+
+  const automationStepOrder = {
+    launching: 0,
+    logging_in: 1,
+    navigating: 2,
+    saving: 3,
+    completed: 4,
+  }
+
+  const currentAutomationIndex =
+    automationStepOrder[automationStep] ?? -1
+
+  const getAutomationStepState = (stepIndex) => {
+    if (automationStatus === 'idle') {
+      return 'pending'
+    }
+
+    if (stepIndex < currentAutomationIndex) {
+      return 'complete'
+    }
+
+    if (stepIndex === currentAutomationIndex) {
+      return automationStatus === 'completed'
+        ? 'complete'
+        : 'active'
+    }
+
+    return 'pending'
   }
 
   return (
@@ -310,6 +469,25 @@ function Syslog() {
               </label>
 
               <label className="form-field">
+                <span>Verizon GUI Password</span>
+
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(event) =>
+                    setPassword(event.target.value)
+                  }
+                  placeholder="Only used for Automate Login & Download"
+                  autoComplete="off"
+                />
+
+                <small className="qxdm-session-help">
+                  Only needed for automated download below - not saved
+                  anywhere, sent once when you click Automate.
+                </small>
+              </label>
+
+              <label className="form-field">
                 <span>Notes</span>
 
                 <input
@@ -324,9 +502,24 @@ function Syslog() {
             </div>
 
             <div className="configuration-note">
+              <FiZap />
+              <span>
+                Automate Login &amp; Download drives a real browser through
+                login → Diagnostic Monitoring → System Logging → Save for
+                you. This is a first pass not yet confirmed against the
+                real device - if a step doesn&apos;t match, the error will
+                say exactly which click failed. Open Verizon GUI below is
+                still there as a manual fallback.
+              </span>
+            </div>
+
+            <div className="configuration-note">
               <FiSave />
               <span>
-                Save the Verizon GUI syslog manually into the folder shown below. TestHub looks for messages_SYS.log, messages_SYS(1).log, messages_SYS(2).log, and the same numbered pattern. After saving, click Detect Saved Syslog.
+                Manual path: save the Verizon GUI syslog into the folder
+                shown below. TestHub looks for messages_SYS.log,
+                messages_SYS(1).log, messages_SYS(2).log, and the same
+                numbered pattern. After saving, click Detect Saved Syslog.
               </span>
             </div>
 
@@ -343,7 +536,25 @@ function Syslog() {
               </div>
             )}
 
+            {automationError && (
+              <div className="api-error-message">
+                <strong>Automation error:</strong> {automationError}
+              </div>
+            )}
+
             <div className="qxdm-action-row">
+              <button
+                type="button"
+                className="qxdm-start-button"
+                onClick={handleAutomateDownload}
+                disabled={automationStatus === 'running'}
+              >
+                <FiZap />
+                {automationStatus === 'running'
+                  ? 'Automating...'
+                  : 'Automate Login & Download'}
+              </button>
+
               <button
                 type="button"
                 className="qxdm-start-button"
@@ -387,12 +598,59 @@ function Syslog() {
               <div>
                 <h3>Verizon GUI Workflow</h3>
                 <p>
-                  Exact manual path we will automate or assist with next.
+                  {automationStatus === 'idle'
+                    ? 'Automate Login & Download runs this whole path for you.'
+                    : 'Live progress of the automated run.'}
                 </p>
               </div>
 
               <FiFileText />
             </div>
+
+            {automationStatus !== 'idle' && (
+              <div className="qxdm-workflow-timeline">
+                {automationSteps.map((step, index) => {
+                  const stepState = getAutomationStepState(index)
+
+                  return (
+                    <div
+                      key={step.id}
+                      className={`qxdm-workflow-step ${stepState}`}
+                    >
+                      <div className="qxdm-workflow-marker">
+                        {stepState === 'complete' ? (
+                          <FiCheckCircle />
+                        ) : stepState === 'active' ? (
+                          <FiClock />
+                        ) : (
+                          <FiCircle />
+                        )}
+                      </div>
+
+                      <div className="qxdm-workflow-content">
+                        <strong>{step.label}</strong>
+                        <span>
+                          {automationStatus === 'failed' &&
+                          stepState === 'active'
+                            ? automationError || step.description
+                            : automationMessage &&
+                                stepState === 'active'
+                              ? automationMessage
+                              : step.description}
+                        </span>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
+            {automationStatus !== 'idle' && (
+              <p className="qxdm-session-help">
+                Manual fallback path, if automation doesn&apos;t match the
+                real device yet:
+              </p>
+            )}
 
             <div className="wrapper-progress-list">
               {[

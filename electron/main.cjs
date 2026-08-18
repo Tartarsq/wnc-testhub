@@ -1,9 +1,8 @@
-const {
-  app,
-  BrowserWindow,
-} = require("electron");
+const { app, BrowserWindow, dialog } = require("electron");
 
 const path = require("node:path");
+const fs = require("node:fs");
+const http = require("node:http");
 const { spawn } = require("node:child_process");
 
 let mainWindow;
@@ -11,38 +10,46 @@ let backendProcess = null;
 
 const BACKEND_HOST = "127.0.0.1";
 const BACKEND_PORT = "8000";
+const BACKEND_HEALTH_URL = `http://${BACKEND_HOST}:${BACKEND_PORT}/`;
 
-function startBackend() {
-  const projectRoot = path.resolve(
-    __dirname,
-    ".."
-  );
+/**
+ * Decide how to launch the FastAPI backend.
+ *
+ * - In a packaged build, run the PyInstaller-compiled executable that
+ *   electron-builder ships as an extra resource (see package.json's
+ *   `build.extraResources`). End users don't have Python installed, so
+ *   this must be a standalone .exe.
+ * - In dev, run the backend straight out of the project's virtual
+ *   environment so `npm run electron` works against live source.
+ */
+function resolveBackendCommand() {
+  if (app.isPackaged) {
+    const backendExecutable = path.join(
+      process.resourcesPath,
+      "backend",
+      "WNCTestHubBackend.exe"
+    );
 
-  const backendDirectory = path.join(
-    projectRoot,
-    "backend"
-  );
+    return {
+      command: backendExecutable,
+      args: [],
+      cwd: path.dirname(backendExecutable),
+    };
+  }
+
+  const projectRoot = path.resolve(__dirname, "..");
+  const backendDirectory = path.join(projectRoot, "backend");
 
   const pythonExecutable = path.join(
-    projectRoot,
-    "backend",
+    backendDirectory,
     ".venv",
     "Scripts",
     "python.exe"
   );
 
-  console.log(
-    "Starting FastAPI backend..."
-  );
-
-  console.log(
-    "Using Python:",
-    pythonExecutable
-  );
-
-  backendProcess = spawn(
-    pythonExecutable,
-    [
+  return {
+    command: pythonExecutable,
+    args: [
       "-m",
       "uvicorn",
       "api:app",
@@ -51,50 +58,49 @@ function startBackend() {
       "--port",
       BACKEND_PORT,
     ],
-    {
-      cwd: backendDirectory,
-      windowsHide: true,
-    }
-  );
+    cwd: backendDirectory,
+  };
+}
 
-  backendProcess.stdout.on(
-    "data",
-    (data) => {
-      console.log(
-        `[FastAPI] ${data}`
-      );
-    }
-  );
+function startBackend() {
+  const { command, args, cwd } = resolveBackendCommand();
 
-  backendProcess.stderr.on(
-    "data",
-    (data) => {
-      console.error(
-        `[FastAPI] ${data}`
-      );
-    }
-  );
+  if (!fs.existsSync(command)) {
+    const message = app.isPackaged
+      ? `Could not find the backend executable:\n${command}\n\nTry reinstalling the application.`
+      : `Could not find the backend Python interpreter:\n${command}\n\n` +
+        "Set up the virtual environment first:\n" +
+        "cd backend && python -m venv .venv && " +
+        ".venv\\Scripts\\activate && pip install -r requirements.txt";
 
-  backendProcess.on(
-    "error",
-    (error) => {
-      console.error(
-        "Failed to start FastAPI:",
-        error
-      );
-    }
-  );
+    console.error(message);
+    dialog.showErrorBox("WNC TestHub Backend Not Found", message);
+    return;
+  }
 
-  backendProcess.on(
-    "close",
-    (code) => {
-      console.log(
-        `FastAPI exited with code ${code}`
-      );
+  console.log("Starting backend:", command);
 
-      backendProcess = null;
-    }
-  );
+  backendProcess = spawn(command, args, {
+    cwd,
+    windowsHide: true,
+  });
+
+  backendProcess.stdout?.on("data", (data) => {
+    console.log(`[Backend] ${data}`);
+  });
+
+  backendProcess.stderr?.on("data", (data) => {
+    console.error(`[Backend] ${data}`);
+  });
+
+  backendProcess.on("error", (error) => {
+    console.error("Failed to start backend:", error);
+  });
+
+  backendProcess.on("close", (code) => {
+    console.log(`Backend exited with code ${code}`);
+    backendProcess = null;
+  });
 }
 
 function stopBackend() {
@@ -102,13 +108,40 @@ function stopBackend() {
     return;
   }
 
-  console.log(
-    "Stopping FastAPI backend..."
-  );
+  console.log("Stopping backend...");
 
   backendProcess.kill();
-
   backendProcess = null;
+}
+
+/**
+ * Poll the backend until it responds or the timeout elapses, so the
+ * window doesn't come up before the API is ready to serve requests.
+ */
+function waitForBackend(timeoutMs = 20000, intervalMs = 300) {
+  const deadline = Date.now() + timeoutMs;
+
+  return new Promise((resolve) => {
+    const attempt = () => {
+      const request = http.get(BACKEND_HEALTH_URL, (response) => {
+        response.resume();
+        resolve(true);
+      });
+
+      request.on("error", () => {
+        if (Date.now() >= deadline) {
+          resolve(false);
+          return;
+        }
+
+        setTimeout(attempt, intervalMs);
+      });
+
+      request.setTimeout(intervalMs, () => request.destroy());
+    };
+
+    attempt();
+  });
 }
 
 function createWindow() {
@@ -120,10 +153,7 @@ function createWindow() {
     title: "WNC TestHub",
 
     webPreferences: {
-      preload: path.join(
-        __dirname,
-        "preload.cjs"
-      ),
+      preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
     },
@@ -137,56 +167,41 @@ function createWindow() {
     "index.html"
   );
 
-  console.log(
-    "Loading frontend:",
-    frontendPath
-  );
+  console.log("Loading frontend:", frontendPath);
 
-  mainWindow.loadFile(
-    frontendPath
-  );
+  mainWindow.loadFile(frontendPath);
 
-  mainWindow.on(
-    "closed",
-    () => {
-      mainWindow = null;
-    }
-  );
+  mainWindow.on("closed", () => {
+    mainWindow = null;
+  });
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   startBackend();
+
+  const backendReady = await waitForBackend();
+
+  if (!backendReady) {
+    console.error(
+      "Backend did not respond before starting the UI; loading anyway."
+    );
+  }
 
   createWindow();
 
-  app.on(
-    "activate",
-    () => {
-      if (
-        BrowserWindow
-          .getAllWindows()
-          .length === 0
-      ) {
-        createWindow();
-      }
+  app.on("activate", () => {
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow();
     }
-  );
+  });
 });
 
-app.on(
-  "before-quit",
-  () => {
-    stopBackend();
-  }
-);
+app.on("before-quit", () => {
+  stopBackend();
+});
 
-app.on(
-  "window-all-closed",
-  () => {
-    if (
-      process.platform !== "darwin"
-    ) {
-      app.quit();
-    }
+app.on("window-all-closed", () => {
+  if (process.platform !== "darwin") {
+    app.quit();
   }
-);
+});

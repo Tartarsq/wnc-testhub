@@ -21,10 +21,12 @@ openpyxl==3.1.5
 packaging==26.2
 pandas==3.0.5
 pillow==12.3.0
+playwright==1.49.1
 psutil==7.2.2
 pydantic==2.13.4
 pydantic_core==2.46.4
 pyparsing==3.3.2
+pytesseract==0.3.13
 python-dateutil==2.9.0.post0
 pywin32==312
 pywinauto==0.6.9

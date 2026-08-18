@@ -13,6 +13,9 @@ develop-eggs/
 dist/
 downloads/
 eggs/
+
+# Electron-builder output
+/release/
 .eggs/
 lib/
 lib64/

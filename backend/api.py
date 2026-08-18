@@ -24,6 +24,9 @@ import pytesseract
 
 from automation.automated_runner import AutomatedTestRunner
 from automation.throughput_test import ThroughputTester
+from automation.verizon_syslog_automation import (
+    automate_verizon_syslog_download,
+)
 from config import (
     DEFAULT_TITAN_IP,
     QXDM_DEFAULT_LOG_FILENAME,
@@ -2686,6 +2689,22 @@ class VerizonSyslogLaunchRequest(BaseModel):
     )
 
 
+class VerizonSyslogAutomationRequest(BaseModel):
+    wrapper_session_folder: str = Field(
+        min_length=1,
+        max_length=500,
+    )
+    titan_ip: str = Field(
+        default=DEFAULT_TITAN_IP,
+        min_length=7,
+        max_length=45,
+    )
+    password: str = Field(
+        min_length=1,
+        max_length=200,
+    )
+
+
 verizon_syslog_state: dict[str, Any] = {
     "status": "idle",
     "process_running": False,
@@ -2695,6 +2714,13 @@ verizon_syslog_state: dict[str, Any] = {
     "syslog_folder": None,
     "message": "Verizon GUI syslog workflow is idle.",
     "error": None,
+    # Automated login/navigate/download run (see /syslog/verizon/automate).
+    # Never put the Verizon GUI password in this dict - it's returned as-is
+    # by GET /syslog/verizon/status.
+    "automation_status": "idle",
+    "automation_step": None,
+    "automation_message": None,
+    "automation_error": None,
 }
 
 
@@ -3262,6 +3288,110 @@ def open_verizon_gui_for_syslog(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(error),
         ) from error
+
+
+@app.post("/api/syslog/verizon/automate")
+def automate_verizon_syslog(
+    request: VerizonSyslogAutomationRequest,
+    background_tasks: BackgroundTasks,
+) -> dict[str, Any]:
+    """
+    Drive the Verizon GUI with a real browser (Playwright) instead of
+    requiring a person to click through login > Diagnostic Monitoring >
+    System Logging > Save. Runs in the background since it takes a while;
+    poll GET /syslog/verizon/status for progress via automation_status /
+    automation_step / automation_message / automation_error.
+    """
+    try:
+        wrapper_folder = validate_syslog_wrapper_session(
+            request.wrapper_session_folder
+        )
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(error),
+        ) from error
+
+    syslog_folder = (
+        wrapper_folder / "syslog"
+    ).resolve()
+
+    titan_ip = request.titan_ip.strip()
+
+    verizon_syslog_state.update(
+        {
+            "titan_ip": titan_ip,
+            "wrapper_session_folder": str(wrapper_folder),
+            "syslog_folder": str(syslog_folder),
+            "automation_status": "running",
+            "automation_step": "launching",
+            "automation_message": (
+                "Starting the Verizon GUI automation..."
+            ),
+            "automation_error": None,
+        }
+    )
+
+    background_tasks.add_task(
+        run_verizon_syslog_automation,
+        titan_ip,
+        request.password,
+        syslog_folder,
+    )
+
+    return {
+        "success": True,
+        "message": "Verizon GUI automation started.",
+        "syslog_folder": str(syslog_folder),
+    }
+
+
+def run_verizon_syslog_automation(
+    titan_ip: str,
+    password: str,
+    syslog_folder: Path,
+) -> None:
+    def on_progress(step: str, message: str) -> None:
+        verizon_syslog_state.update(
+            {
+                "automation_step": step,
+                "automation_message": message,
+            }
+        )
+
+    try:
+        result = automate_verizon_syslog_download(
+            titan_ip=titan_ip,
+            password=password,
+            destination_folder=syslog_folder,
+            progress=on_progress,
+        )
+
+        verizon_syslog_state.update(
+            {
+                "status": "file_detected",
+                "automation_status": "completed",
+                "automation_step": "completed",
+                "automation_message": (
+                    f"Automated download saved {result.downloaded_filename}."
+                ),
+                "automation_error": None,
+                "message": (
+                    f"Automated download saved {result.downloaded_filename} "
+                    f"to {syslog_folder}."
+                ),
+                "error": None,
+            }
+        )
+
+    except Exception as error:
+        verizon_syslog_state.update(
+            {
+                "automation_status": "failed",
+                "automation_error": str(error),
+                "automation_message": str(error),
+            }
+        )
 
 
 @app.get("/api/syslog/verizon/open-folder")
@@ -3903,6 +4033,49 @@ def import_latest_speedtest_csv_results(
             titan_ip=job_snapshot["titan_ip"],
         )
 
+        latest_result = imported_results[-1]
+
+        # The CSV is parsed and saved to this job's own Analytics workbook
+        # as of here. Update the job now so the page reflects the import
+        # immediately - the wrapper folder below is a second, optional
+        # destination and must not be able to erase this result if it's
+        # cancelled or the chosen folder turns out to be invalid.
+        update_job(
+            request.job_id,
+            status="completed",
+            message=(
+                f"Imported {len(imported_results)} Speedtest result(s)."
+            ),
+            completed_runs=len(imported_results),
+            number_of_runs=len(imported_results),
+            results=imported_results,
+            excel_path=str(
+                analytics_workbook_path.resolve()
+            ),
+            error=None,
+        )
+
+        response_payload: dict[str, Any] = {
+            "success": True,
+            "wrapper_saved": False,
+            "cancelled": False,
+            "message": (
+                f"Imported {len(imported_results)} test(s) to Analytics."
+            ),
+            "latest_date": (
+                latest_result.get("original_date", "").split(" ")[0]
+            ),
+            "count": len(imported_results),
+            "latest_result": latest_result,
+            "results": imported_results,
+            "excel_path": str(
+                analytics_workbook_path.resolve()
+            ),
+            "wrapper_session_folder": None,
+            "wrapper_excel_path": None,
+            "wrapper_csv_path": None,
+        }
+
         selected_wrapper_folder = (
             prompt_for_wrapper_session_folder(
                 RESULTS_FOLDER
@@ -3910,20 +4083,28 @@ def import_latest_speedtest_csv_results(
         )
 
         if selected_wrapper_folder is None:
-            return {
-                "success": False,
-                "cancelled": True,
-                "message": (
-                    "Results were imported to Analytics, but wrapper folder selection was cancelled."
-                ),
-                "results": imported_results,
-            }
-
-        wrapper_session_folder = (
-            validate_wrapper_session_folder(
-                selected_wrapper_folder
+            response_payload["message"] = (
+                f"Imported {len(imported_results)} test(s) to Analytics. "
+                "Wrapper folder selection was cancelled, so nothing was "
+                "copied to a wrapper session."
             )
-        )
+
+            return response_payload
+
+        try:
+            wrapper_session_folder = (
+                validate_wrapper_session_folder(
+                    selected_wrapper_folder
+                )
+            )
+
+        except ValueError as error:
+            response_payload["message"] = (
+                f"Imported {len(imported_results)} test(s) to Analytics, "
+                f"but the wrapper session wasn't saved: {error}"
+            )
+
+            return response_payload
 
         wrapper_reports_folder = (
             wrapper_session_folder / "reports"
@@ -3950,38 +4131,11 @@ def import_latest_speedtest_csv_results(
             results=imported_results,
         )
 
-        latest_result = imported_results[-1]
-
-        update_job(
-            request.job_id,
-            status="completed",
-            message=(
-                f"Imported {len(imported_results)} Speedtest result(s) "
-                "and saved them to the selected wrapper session."
-            ),
-            completed_runs=len(imported_results),
-            number_of_runs=len(imported_results),
-            results=imported_results,
-            excel_path=str(
-                analytics_workbook_path.resolve()
-            ),
-            error=None,
-        )
-
-        return {
-            "success": True,
-            "cancelled": False,
+        response_payload.update({
+            "wrapper_saved": True,
             "message": (
-                f"Imported and saved {len(imported_results)} test(s)."
-            ),
-            "latest_date": (
-                latest_result.get("original_date", "").split(" ")[0]
-            ),
-            "count": len(imported_results),
-            "latest_result": latest_result,
-            "results": imported_results,
-            "excel_path": str(
-                analytics_workbook_path.resolve()
+                f"Imported and saved {len(imported_results)} test(s) to "
+                "Analytics and the wrapper session."
             ),
             "wrapper_session_folder": str(
                 wrapper_session_folder
@@ -3992,7 +4146,9 @@ def import_latest_speedtest_csv_results(
             "wrapper_csv_path": str(
                 wrapper_csv_path.resolve()
             ),
-        }
+        })
+
+        return response_payload
 
     except ValueError as error:
         raise HTTPException(
