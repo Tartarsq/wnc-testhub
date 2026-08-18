@@ -1300,6 +1300,10 @@ class QXDMController:
         this returns False and the caller falls back to the manual wait.
         """
         if dialog is None:
+            print(
+                "Could not autofill Item Store File settings: no "
+                "Settings dialog was returned by open_qxdm_settings()."
+            )
             return False
 
         try:
@@ -1313,6 +1317,7 @@ class QXDMController:
             )
 
             if base_name_edit is None or directory_edit is None:
+                self._debug_dump_dialog_controls(dialog)
                 return False
 
             self.set_edit_value(
@@ -1336,7 +1341,75 @@ class QXDMController:
                 "Could not automatically fill in the Item Store File "
                 f"fields: {error}"
             )
+            self._debug_dump_dialog_controls(dialog)
             return False
+
+    def _debug_dump_dialog_controls(self, dialog) -> None:
+        """
+        Print every descendant control pywinauto can see inside a
+        dialog, with its class name, control type, visible text, and
+        screen rectangle.
+
+        Used when the Item Store File fields can't be found by label -
+        this shows exactly what pywinauto's win32 backend can and can't
+        see on the real Settings window, instead of guessing again.
+        A short list (or an empty one) here means QXDM likely doesn't
+        expose these fields as real Win32 controls at all, and this
+        page needs to be automated with coordinate clicks (like the
+        Command bar) instead of control lookups.
+        """
+        print("")
+        print("---- QXDM Settings dialog control dump ----")
+
+        try:
+            rectangle = dialog.rectangle()
+            print(
+                f"Dialog rectangle: {rectangle}"
+            )
+        except Exception as error:
+            print(
+                f"Could not read the dialog's rectangle: {error}"
+            )
+
+        try:
+            descendants = dialog.descendants()
+        except Exception as error:
+            print(
+                f"Could not enumerate dialog controls: {error}"
+            )
+            print("---------------------------------------------")
+            print("")
+            return
+
+        if not descendants:
+            print(
+                "No descendant controls were found at all - QXDM is "
+                "likely rendering this dialog's contents itself "
+                "(e.g. Qt-drawn), not as real Win32 child controls."
+            )
+
+        for control in descendants:
+            try:
+                class_name = control.friendly_class_name()
+            except Exception:
+                class_name = "?"
+
+            try:
+                text = control.window_text()
+            except Exception:
+                text = ""
+
+            try:
+                rectangle = control.rectangle()
+            except Exception:
+                rectangle = "?"
+
+            print(
+                f"{class_name}: text={text!r} rect={rectangle}"
+            )
+
+        print("---------------------------------------------")
+        print("")
 
     def configure_logging(
         self,
