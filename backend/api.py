@@ -3903,6 +3903,49 @@ def import_latest_speedtest_csv_results(
             titan_ip=job_snapshot["titan_ip"],
         )
 
+        latest_result = imported_results[-1]
+
+        # The CSV is parsed and saved to this job's own Analytics workbook
+        # as of here. Update the job now so the page reflects the import
+        # immediately - the wrapper folder below is a second, optional
+        # destination and must not be able to erase this result if it's
+        # cancelled or the chosen folder turns out to be invalid.
+        update_job(
+            request.job_id,
+            status="completed",
+            message=(
+                f"Imported {len(imported_results)} Speedtest result(s)."
+            ),
+            completed_runs=len(imported_results),
+            number_of_runs=len(imported_results),
+            results=imported_results,
+            excel_path=str(
+                analytics_workbook_path.resolve()
+            ),
+            error=None,
+        )
+
+        response_payload: dict[str, Any] = {
+            "success": True,
+            "wrapper_saved": False,
+            "cancelled": False,
+            "message": (
+                f"Imported {len(imported_results)} test(s) to Analytics."
+            ),
+            "latest_date": (
+                latest_result.get("original_date", "").split(" ")[0]
+            ),
+            "count": len(imported_results),
+            "latest_result": latest_result,
+            "results": imported_results,
+            "excel_path": str(
+                analytics_workbook_path.resolve()
+            ),
+            "wrapper_session_folder": None,
+            "wrapper_excel_path": None,
+            "wrapper_csv_path": None,
+        }
+
         selected_wrapper_folder = (
             prompt_for_wrapper_session_folder(
                 RESULTS_FOLDER
@@ -3910,20 +3953,28 @@ def import_latest_speedtest_csv_results(
         )
 
         if selected_wrapper_folder is None:
-            return {
-                "success": False,
-                "cancelled": True,
-                "message": (
-                    "Results were imported to Analytics, but wrapper folder selection was cancelled."
-                ),
-                "results": imported_results,
-            }
-
-        wrapper_session_folder = (
-            validate_wrapper_session_folder(
-                selected_wrapper_folder
+            response_payload["message"] = (
+                f"Imported {len(imported_results)} test(s) to Analytics. "
+                "Wrapper folder selection was cancelled, so nothing was "
+                "copied to a wrapper session."
             )
-        )
+
+            return response_payload
+
+        try:
+            wrapper_session_folder = (
+                validate_wrapper_session_folder(
+                    selected_wrapper_folder
+                )
+            )
+
+        except ValueError as error:
+            response_payload["message"] = (
+                f"Imported {len(imported_results)} test(s) to Analytics, "
+                f"but the wrapper session wasn't saved: {error}"
+            )
+
+            return response_payload
 
         wrapper_reports_folder = (
             wrapper_session_folder / "reports"
@@ -3950,38 +4001,11 @@ def import_latest_speedtest_csv_results(
             results=imported_results,
         )
 
-        latest_result = imported_results[-1]
-
-        update_job(
-            request.job_id,
-            status="completed",
-            message=(
-                f"Imported {len(imported_results)} Speedtest result(s) "
-                "and saved them to the selected wrapper session."
-            ),
-            completed_runs=len(imported_results),
-            number_of_runs=len(imported_results),
-            results=imported_results,
-            excel_path=str(
-                analytics_workbook_path.resolve()
-            ),
-            error=None,
-        )
-
-        return {
-            "success": True,
-            "cancelled": False,
+        response_payload.update({
+            "wrapper_saved": True,
             "message": (
-                f"Imported and saved {len(imported_results)} test(s)."
-            ),
-            "latest_date": (
-                latest_result.get("original_date", "").split(" ")[0]
-            ),
-            "count": len(imported_results),
-            "latest_result": latest_result,
-            "results": imported_results,
-            "excel_path": str(
-                analytics_workbook_path.resolve()
+                f"Imported and saved {len(imported_results)} test(s) to "
+                "Analytics and the wrapper session."
             ),
             "wrapper_session_folder": str(
                 wrapper_session_folder
@@ -3992,7 +4016,9 @@ def import_latest_speedtest_csv_results(
             "wrapper_csv_path": str(
                 wrapper_csv_path.resolve()
             ),
-        }
+        })
+
+        return response_payload
 
     except ValueError as error:
         raise HTTPException(
