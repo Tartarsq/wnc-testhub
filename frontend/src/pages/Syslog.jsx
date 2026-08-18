@@ -280,9 +280,10 @@ function Syslog() {
     }
   }
 
-  // First-pass automation of the manual click-through below - launches a
-  // real browser, logs in, and clicks through Diagnostic Monitoring >
-  // System Logging > Save. Not yet confirmed against the real Verizon GUI.
+  // Automates the login step with a real browser (so the page's own
+  // JavaScript hashes the credentials correctly - Titan 3's login isn't
+  // plaintext), then downloads the syslog directly over HTTPS using the
+  // resulting session cookie instead of clicking through any menus.
   const automationSteps = [
     {
       id: 'launching',
@@ -295,14 +296,9 @@ function Syslog() {
       description: 'Enter the Verizon GUI password.',
     },
     {
-      id: 'navigating',
-      label: 'Navigate',
-      description: 'Open Diagnostic Monitoring → System Logging.',
-    },
-    {
-      id: 'saving',
-      label: 'Save & Download',
-      description: 'Click Save and capture the syslog download.',
+      id: 'downloading',
+      label: 'Download Syslog',
+      description: 'Fetch the syslog directly using the login session.',
     },
     {
       id: 'completed',
@@ -314,9 +310,8 @@ function Syslog() {
   const automationStepOrder = {
     launching: 0,
     logging_in: 1,
-    navigating: 2,
-    saving: 3,
-    completed: 4,
+    downloading: 2,
+    completed: 3,
   }
 
   const currentAutomationIndex =
@@ -504,12 +499,11 @@ function Syslog() {
             <div className="configuration-note">
               <FiZap />
               <span>
-                Automate Login &amp; Download drives a real browser through
-                login → Diagnostic Monitoring → System Logging → Save for
-                you. This is a first pass not yet confirmed against the
-                real device - if a step doesn&apos;t match, the error will
-                say exactly which click failed. Open Verizon GUI below is
-                still there as a manual fallback.
+                Automate Login &amp; Download opens a real browser just to
+                log in (so the page&apos;s own script hashes your password
+                correctly), then downloads the syslog directly using that
+                session - no menu clicking involved. Open Verizon GUI
+                below is still there as a manual fallback.
               </span>
             </div>
 
