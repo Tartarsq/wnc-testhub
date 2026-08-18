@@ -1282,29 +1282,61 @@ class QXDMController:
         )
 
 
+    # First-pass estimate from a real screenshot of the Item Store File
+    # page, not yet calibrated against a live click - confirmed live
+    # (see _debug_dump_dialog_controls) that this dialog exposes no real
+    # Win32 controls at all, so control lookup can never work here and
+    # coordinate clicks (like the Command bar already uses) are the only
+    # option. If a click lands on the wrong field, these ratios are what
+    # need adjusting next.
+    ITEM_STORE_BASE_NAME_CLICK_X_RATIO = 0.62
+    ITEM_STORE_BASE_NAME_CLICK_Y_RATIO = 0.135
+    ITEM_STORE_LOG_DIRECTORY_CLICK_X_RATIO = 0.55
+    ITEM_STORE_LOG_DIRECTORY_CLICK_Y_RATIO = 0.185
+
+    def _click_in_dialog(
+        self,
+        dialog,
+        x_ratio: float,
+        y_ratio: float,
+    ) -> None:
+        rectangle = dialog.rectangle()
+        x = int(
+            rectangle.left
+            + rectangle.width() * x_ratio
+        )
+        y = int(
+            rectangle.top
+            + rectangle.height() * y_ratio
+        )
+        self._click_absolute(x, y)
+
     def _autofill_item_store_settings(
         self,
         dialog,
         base_name: str,
         directory: str,
-    ) -> bool:
+    ) -> str | None:
         """
-        Try to fill in Base File Name and Log File Directory on the Item
-        Store File page of Settings, so the saved log actually lands in
-        the expected (usually wrapper session) folder instead of
-        depending on someone typing it in by hand.
+        Fill in Base File Name and Log File Directory on the Item Store
+        File page of Settings, so the saved log actually lands in the
+        expected (usually wrapper session) folder instead of depending
+        on someone typing it in by hand.
 
-        Returns True only if both fields were found and set. If the
-        Settings window doesn't expose real Win32 Edit controls for
-        these fields (e.g. a future QXDM build renders them differently),
-        this returns False and the caller falls back to the manual wait.
+        Tries a real control lookup first (reliable, but confirmed not
+        to work on this dialog - see _debug_dump_dialog_controls), then
+        falls back to coordinate clicks within the dialog's own
+        rectangle (unverified estimate, see the ratio constants above).
+
+        Returns "controls" if the reliable method worked, "coordinates"
+        if only the estimated fallback ran, or None if both failed.
         """
         if dialog is None:
             print(
                 "Could not autofill Item Store File settings: no "
                 "Settings dialog was returned by open_qxdm_settings()."
             )
-            return False
+            return None
 
         try:
             base_name_edit = self.find_edit_by_keywords(
@@ -1316,33 +1348,69 @@ class QXDMController:
                 ["log file directory"],
             )
 
-            if base_name_edit is None or directory_edit is None:
-                self._debug_dump_dialog_controls(dialog)
-                return False
+            if base_name_edit is not None and directory_edit is not None:
+                self.set_edit_value(
+                    base_name_edit,
+                    base_name,
+                )
+                self.set_edit_value(
+                    directory_edit,
+                    directory,
+                )
 
-            self.set_edit_value(
-                base_name_edit,
-                base_name,
-            )
-            self.set_edit_value(
-                directory_edit,
-                directory,
-            )
+                print(
+                    "Filled in Base File Name and Log File Directory "
+                    "automatically."
+                )
 
-            print(
-                "Filled in Base File Name and Log File Directory "
-                "automatically."
-            )
+                return "controls"
 
-            return True
+            self._debug_dump_dialog_controls(dialog)
 
         except Exception as error:
             print(
                 "Could not automatically fill in the Item Store File "
-                f"fields: {error}"
+                f"fields via control lookup: {error}"
             )
             self._debug_dump_dialog_controls(dialog)
-            return False
+
+        try:
+            print(
+                "Falling back to coordinate clicks for the Item Store "
+                "File fields (this dialog exposes no real controls to "
+                "search by label)."
+            )
+
+            self._click_in_dialog(
+                dialog,
+                self.ITEM_STORE_BASE_NAME_CLICK_X_RATIO,
+                self.ITEM_STORE_BASE_NAME_CLICK_Y_RATIO,
+            )
+            self._replace_active_text(base_name)
+            time.sleep(0.3)
+
+            self._click_in_dialog(
+                dialog,
+                self.ITEM_STORE_LOG_DIRECTORY_CLICK_X_RATIO,
+                self.ITEM_STORE_LOG_DIRECTORY_CLICK_Y_RATIO,
+            )
+            self._replace_active_text(directory)
+            time.sleep(0.3)
+
+            print(
+                "Clicked estimated Base File Name / Log File Directory "
+                "positions and typed the suggested values - not yet "
+                "confirmed these landed in the right fields."
+            )
+
+            return "coordinates"
+
+        except Exception as error:
+            print(
+                "Coordinate-based Item Store File autofill also "
+                f"failed: {error}"
+            )
+            return None
 
     def _debug_dump_dialog_controls(self, dialog) -> None:
         """
@@ -1442,13 +1510,13 @@ class QXDMController:
         print(f"Maximum Log Size:   {self.max_log_size_mb} MB")
         print("")
 
-        autofilled = self._autofill_item_store_settings(
+        autofill_method = self._autofill_item_store_settings(
             dialog,
             base_name=expected_base_name,
             directory=expected_directory,
         )
 
-        if autofilled:
+        if autofill_method == "controls":
             print(
                 "Automatically entered the Base File Name and Log File "
                 "Directory. You have 15 seconds to verify or adjust "
@@ -1456,6 +1524,16 @@ class QXDMController:
             )
             self.wait_for_manual_log_settings(
                 wait_seconds=15.0
+            )
+        elif autofill_method == "coordinates":
+            print(
+                "Clicked estimated field positions and typed the "
+                "suggested values, but these coordinates are not yet "
+                "confirmed accurate. You have 45 seconds to check they "
+                "landed correctly and fix them if not."
+            )
+            self.wait_for_manual_log_settings(
+                wait_seconds=45.0
             )
         else:
             print(
