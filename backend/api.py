@@ -3719,6 +3719,41 @@ def get_wrapper_syslog_status() -> dict[str, Any]:
     return syslog_controller.status()
 
 
+@app.get("/api/wrapper/latest-session")
+def get_latest_wrapper_session() -> dict[str, str | None]:
+    """
+    Return the most recently modified wrapper test session folder under
+    RESULTS_FOLDER (one with metadata/wrapper_session.json), so pages
+    like Syslog can default to the newest session automatically instead
+    of requiring a manual Browse every time a new session is created
+    elsewhere in the app - previously, a page kept sending files to
+    whatever session was last manually selected, even after a newer
+    session had since been created.
+    """
+    results_folder = Path(RESULTS_FOLDER).resolve()
+
+    if not results_folder.exists():
+        return {"session_folder": None}
+
+    metadata_files = list(
+        results_folder.glob("*/metadata/wrapper_session.json")
+    )
+
+    if not metadata_files:
+        return {"session_folder": None}
+
+    newest_metadata_file = max(
+        metadata_files,
+        key=lambda path: path.stat().st_mtime,
+    )
+
+    session_folder = newest_metadata_file.parent.parent
+
+    return {
+        "session_folder": str(session_folder.resolve())
+    }
+
+
 @app.get("/api/wrapper/browse-folder")
 def browse_wrapper_folder(
     current_path: str | None = None,

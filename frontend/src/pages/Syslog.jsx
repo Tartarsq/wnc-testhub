@@ -50,6 +50,36 @@ function Syslog() {
     }
   }, [])
 
+  // Auto-default to the most recently created wrapper session, instead
+  // of silently keeping whatever session was last manually Browse-d.
+  // Without this, creating a new session elsewhere in the app didn't
+  // update this page, so syslogs kept saving into an older session
+  // until someone remembered to click Browse again.
+  const loadLatestWrapperSession = async () => {
+    try {
+      const response = await api.get(
+        '/wrapper/latest-session'
+      )
+
+      const latestFolder = response.data?.session_folder
+
+      if (latestFolder) {
+        setWrapperFolder(latestFolder)
+        setSyslogFolder(`${latestFolder}\\syslog`)
+        setMessage(
+          `Using the latest wrapper session: ${latestFolder}`
+        )
+      }
+    } catch {
+      // Non-fatal - the engineer can still Browse manually if this
+      // doesn't find anything (e.g. no sessions exist yet).
+    }
+  }
+
+  useEffect(() => {
+    loadLatestWrapperSession()
+  }, [])
+
   const statusLabel =
     status === 'opening'
       ? 'Opening Verizon GUI'
@@ -438,11 +468,23 @@ function Syslog() {
                   >
                     Browse
                   </button>
+
+                  <button
+                    type="button"
+                    className="qxdm-refresh-button"
+                    onClick={loadLatestWrapperSession}
+                    title="Re-sync to whichever wrapper session was created most recently"
+                  >
+                    <FiRefreshCw />
+                    Use Latest
+                  </button>
                 </div>
 
                 <small className="qxdm-session-help">
-                  Select the wrapper session root folder. TestHub will use
-                  its syslog subfolder as the target save location.
+                  Select the wrapper session root folder, or click "Use
+                  Latest" to jump to whichever session was created most
+                  recently. TestHub will use its syslog subfolder as the
+                  target save location.
                 </small>
               </label>
 
