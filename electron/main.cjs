@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
 
 const path = require("node:path");
 const fs = require("node:fs");
@@ -171,10 +171,41 @@ function createWindow() {
 
   mainWindow.loadFile(frontendPath);
 
+  // Links like "Open Titan Web GUI" (a plain <a target="_blank"> in the
+  // frontend, pointed at the Titan's https:// admin page) must never open
+  // inside this window - the Titan serves a self-signed certificate that
+  // Electron doesn't trust, so an in-app navigation to it fails and leaves
+  // the app blank instead of showing an error. Hand every such request off
+  // to the OS's real default browser instead.
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url);
+    return { action: "deny" };
+  });
+
+  // Safety net: if anything ever tries to navigate this window itself
+  // (rather than opening a new one) away from the loaded app file, redirect
+  // that to the external browser too instead of letting the app go blank.
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    if (!url.startsWith("file://")) {
+      event.preventDefault();
+      shell.openExternal(url);
+    }
+  });
+
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
 }
+
+ipcMain.handle("open-external-url", (_event, url) => {
+  if (typeof url !== "string" || !/^https?:\/\//i.test(url)) {
+    console.error("Refused to open a non-http(s) external URL:", url);
+    return false;
+  }
+
+  shell.openExternal(url);
+  return true;
+});
 
 app.whenReady().then(async () => {
   startBackend();

@@ -16,6 +16,20 @@ function Devices() {
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState('')
 
+  // In the Electron app, a plain <a target="_blank"> can end up navigating
+  // the app's own window instead of opening a real browser tab - the Titan
+  // serves a self-signed certificate Electron doesn't trust, so that
+  // navigation fails and leaves the app blank. Hand it to the OS browser
+  // explicitly when running in Electron; a plain web browser (e.g. the
+  // Vercel deployment) doesn't have window.wncTestHub, so the link's
+  // normal target="_blank" behavior is left alone there.
+  const handleOpenTitanGui = (event) => {
+    if (window.wncTestHub?.openExternal) {
+      event.preventDefault()
+      window.wncTestHub.openExternal(event.currentTarget.href)
+    }
+  }
+
   const loadDeviceStatus = async () => {
     setIsLoading(true)
     setError('')
@@ -198,6 +212,7 @@ function Devices() {
                 href={device.gui_url}
                 target="_blank"
                 rel="noreferrer"
+                onClick={handleOpenTitanGui}
               >
                 <FiExternalLink />
                 Open Titan Web GUI
