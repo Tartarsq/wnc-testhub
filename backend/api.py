@@ -1938,6 +1938,77 @@ PCAT_COMMON_PATHS = (
     Path(r"C:\PCAT\PCAT.exe"),
 )
 
+# Start Menu entries are shortcuts (.lnk), not the executable itself, and
+# their folder name/location varies by install (some installers create it
+# directly under "Start Menu", others under the usual "Start Menu\Programs").
+PCAT_START_MENU_ROOTS = (
+    Path(r"C:\ProgramData\Microsoft\Windows\Start Menu\PCAT"),
+    Path(r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\PCAT"),
+    Path.home()
+    / "AppData/Roaming/Microsoft/Windows/Start Menu/Programs/PCAT",
+)
+
+
+def _resolve_shortcut_target(
+    shortcut_path: Path,
+) -> Path | None:
+    """
+    Resolve a Windows .lnk shortcut to the real executable it points at.
+    """
+    try:
+        import win32com.client
+    except ImportError:
+        return None
+
+    try:
+        shell = win32com.client.Dispatch("WScript.Shell")
+        shortcut = shell.CreateShortCut(str(shortcut_path))
+        target = (shortcut.Targetpath or "").strip()
+    except Exception:
+        return None
+
+    return _valid_pcat_candidate(target) if target else None
+
+
+def _search_folder_for_pcat_executable(
+    root: Path,
+) -> Path | None:
+    """
+    Look inside a folder (and its subfolders) for the PCAT executable,
+    either directly or by resolving a PCAT-named .lnk shortcut - covers
+    Start Menu entries, which point at the real install location rather
+    than containing PCAT.exe themselves.
+    """
+    if not root.exists():
+        return None
+
+    try:
+        for found in root.rglob("*"):
+            if not found.is_file():
+                continue
+
+            if (
+                found.suffix.lower() == ".exe"
+                and found.stem.lower() == "pcat"
+            ):
+                candidate = _valid_pcat_candidate(found)
+
+                if candidate is not None:
+                    return candidate
+
+            if (
+                found.suffix.lower() == ".lnk"
+                and "pcat" in found.stem.lower()
+            ):
+                resolved = _resolve_shortcut_target(found)
+
+                if resolved is not None:
+                    return resolved
+    except OSError:
+        pass
+
+    return None
+
 
 def find_pcat_executable() -> tuple[Path | None, str | None]:
     """
@@ -1960,6 +2031,9 @@ def find_pcat_executable() -> tuple[Path | None, str | None]:
       3. Common Qualcomm PCAT install locations
       4. One level under the Qualcomm Program Files folders, for versioned
          subfolder names (e.g. PCAT_5.2)
+      5. The PCAT Start Menu folder, resolving its .lnk shortcut to the
+         real executable (PCAT is commonly installed outside Program
+         Files entirely, only reachable this way)
     """
     config = load_pcat_config()
 
@@ -2016,6 +2090,15 @@ def find_pcat_executable() -> tuple[Path | None, str | None]:
                     return candidate, f"search under {root}"
         except OSError:
             continue
+
+    for root in PCAT_START_MENU_ROOTS:
+        candidate = _search_folder_for_pcat_executable(root)
+
+        if candidate is not None:
+            save_pcat_config(
+                pcat_executable=str(candidate)
+            )
+            return candidate, f"Start Menu shortcut under {root}"
 
     return None, None
 
