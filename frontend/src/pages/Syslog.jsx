@@ -25,6 +25,7 @@ function Syslog() {
   const [error, setError] = useState('')
   const [syslogFiles, setSyslogFiles] = useState([])
   const [message, setMessage] = useState('')
+  const [wrapperSessions, setWrapperSessions] = useState([])
 
   // Automated login/navigate/download run. The password only ever lives
   // in this component's state and the one-time request body - it is
@@ -76,9 +77,34 @@ function Syslog() {
     }
   }
 
+  // Full list of every known wrapper session, newest first, so the
+  // engineer can explicitly pick an existing session instead of only ever
+  // getting whatever is newest.
+  const loadWrapperSessions = async () => {
+    try {
+      const response = await api.get('/wrapper/sessions')
+      setWrapperSessions(response.data?.sessions ?? [])
+    } catch {
+      // Non-fatal - the dropdown just stays empty/whatever it last had.
+    }
+  }
+
   useEffect(() => {
     loadLatestWrapperSession()
+    loadWrapperSessions()
   }, [])
+
+  const handleSelectWrapperSession = (event) => {
+    const selectedFolder = event.target.value
+
+    if (!selectedFolder) {
+      return
+    }
+
+    setWrapperFolder(selectedFolder)
+    setSyslogFolder(`${selectedFolder}\\syslog`)
+    setMessage(`Using wrapper session: ${selectedFolder}`)
+  }
 
   const statusLabel =
     status === 'opening'
@@ -472,7 +498,10 @@ function Syslog() {
                   <button
                     type="button"
                     className="qxdm-refresh-button"
-                    onClick={loadLatestWrapperSession}
+                    onClick={() => {
+                      loadLatestWrapperSession()
+                      loadWrapperSessions()
+                    }}
                     title="Re-sync to whichever wrapper session was created most recently"
                   >
                     <FiRefreshCw />
@@ -480,10 +509,32 @@ function Syslog() {
                   </button>
                 </div>
 
+                <div className="qxdm-folder-input">
+                  <select
+                    value={wrapperFolder}
+                    onChange={handleSelectWrapperSession}
+                    onFocus={loadWrapperSessions}
+                  >
+                    <option value="">
+                      Or pick an existing session ({wrapperSessions.length}{' '}
+                      found)...
+                    </option>
+                    {wrapperSessions.map((session) => (
+                      <option
+                        key={session.session_folder}
+                        value={session.session_folder}
+                      >
+                        {session.session_name} - {session.session_folder}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
                 <small className="qxdm-session-help">
-                  Select the wrapper session root folder, or click "Use
+                  Select the wrapper session root folder, click "Use
                   Latest" to jump to whichever session was created most
-                  recently. TestHub will use its syslog subfolder as the
+                  recently, or pick any existing session by name from the
+                  dropdown. TestHub will use its syslog subfolder as the
                   target save location.
                 </small>
               </label>

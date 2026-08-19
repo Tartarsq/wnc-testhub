@@ -3719,6 +3719,28 @@ def get_wrapper_syslog_status() -> dict[str, Any]:
     return syslog_controller.status()
 
 
+def _find_wrapper_session_metadata_files(
+    results_folder: Path,
+) -> list[Path]:
+    """
+    Find every wrapper_session.json under results_folder, at any depth.
+
+    This used to be a one-level-deep glob ("*/metadata/wrapper_session.json"),
+    which assumed every session sits directly under RESULTS_FOLDER. Sessions
+    created while a stale save location pointed inside an existing session
+    (a picker opened inside the results folder, an existing session folder
+    right there to accidentally drill into) ended up nested two or more
+    levels deep instead - and the one-level glob silently never found them,
+    so "latest session" kept resolving to the oldest, outermost one no
+    matter how many newer sessions existed. Searching recursively finds
+    sessions at any nesting depth, including ones created before the nesting
+    itself was fixed at the source in TestWrapper.create_workspace.
+    """
+    return list(
+        results_folder.rglob("metadata/wrapper_session.json")
+    )
+
+
 @app.get("/api/wrapper/latest-session")
 def get_latest_wrapper_session() -> dict[str, str | None]:
     """
@@ -3735,9 +3757,7 @@ def get_latest_wrapper_session() -> dict[str, str | None]:
     if not results_folder.exists():
         return {"session_folder": None}
 
-    metadata_files = list(
-        results_folder.glob("*/metadata/wrapper_session.json")
-    )
+    metadata_files = _find_wrapper_session_metadata_files(results_folder)
 
     if not metadata_files:
         return {"session_folder": None}
@@ -3752,6 +3772,53 @@ def get_latest_wrapper_session() -> dict[str, str | None]:
     return {
         "session_folder": str(session_folder.resolve())
     }
+
+
+@app.get("/api/wrapper/sessions")
+def list_wrapper_sessions() -> dict[str, list[dict[str, Any]]]:
+    """
+    List every wrapper test session under RESULTS_FOLDER, newest first.
+
+    Lets pages offer an explicit "pick a session" control instead of only
+    ever defaulting to whatever is newest - some engineers want a specific
+    earlier session, not just the latest one.
+    """
+    results_folder = Path(RESULTS_FOLDER).resolve()
+
+    if not results_folder.exists():
+        return {"sessions": []}
+
+    metadata_files = _find_wrapper_session_metadata_files(results_folder)
+
+    sessions: list[dict[str, Any]] = []
+
+    for metadata_file in metadata_files:
+        session_folder = metadata_file.parent.parent
+
+        session_name = session_folder.name
+        created_at = None
+
+        try:
+            metadata = json.loads(
+                metadata_file.read_text(encoding="utf-8")
+            )
+            session_name = metadata.get("session_name", session_name)
+            created_at = metadata.get("created_at")
+        except (OSError, ValueError):
+            pass
+
+        sessions.append(
+            {
+                "session_folder": str(session_folder.resolve()),
+                "session_name": session_name,
+                "created_at": created_at,
+                "modified_at": metadata_file.stat().st_mtime,
+            }
+        )
+
+    sessions.sort(key=lambda item: item["modified_at"], reverse=True)
+
+    return {"sessions": sessions}
 
 
 @app.get("/api/wrapper/browse-folder")
