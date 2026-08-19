@@ -43,6 +43,10 @@ from controllers.qxdm_controller import QXDMController
 from controllers.syslog_controller import SyslogController
 from wrapper.test_wrapper import TestWrapper
 from titan3 import Titan3
+from session_report import (
+    generate_session_report,
+    zip_session_folder,
+)
 from utils import (
     create_session_folder,
     create_session_folders,
@@ -4121,6 +4125,86 @@ def list_wrapper_sessions() -> dict[str, list[dict[str, Any]]]:
     sessions.sort(key=lambda item: item["modified_at"], reverse=True)
 
     return {"sessions": sessions}
+
+
+class WrapperSessionReportRequest(BaseModel):
+    session_folder: str = Field(
+        min_length=1,
+        max_length=1000,
+    )
+
+
+@app.post("/api/wrapper/report-and-zip")
+def report_and_zip_wrapper_session(
+    request: WrapperSessionReportRequest,
+) -> dict[str, Any]:
+    """
+    Build a Session_Report.docx summary inside the wrapper session's
+    reports/ folder, then zip the whole session (qxdm/, reports/,
+    syslog/, metadata/) into one file next to it - a single deliverable
+    to hand off instead of several separate subfolders.
+    """
+    try:
+        session_folder = validate_wrapper_session_folder(
+            Path(request.session_folder)
+        )
+
+        report_path = generate_session_report(session_folder)
+
+        # The report was just generated above - no need to have
+        # zip_session_folder regenerate it a second time.
+        zip_path = zip_session_folder(
+            session_folder,
+            include_report=False,
+        )
+
+        return {
+            "success": True,
+            "report_path": str(report_path.resolve()),
+            "zip_path": str(zip_path.resolve()),
+            "message": f"Report and zip created: {zip_path.name}",
+        }
+
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(error),
+        ) from error
+
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(error),
+        ) from error
+
+
+@app.get("/api/wrapper/open-zip-folder")
+def open_wrapper_zip_folder(
+    zip_path: str,
+) -> dict[str, Any]:
+    """
+    Open File Explorer at the folder containing a generated session zip.
+    """
+    folder = Path(zip_path).expanduser().resolve().parent
+
+    if not folder.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Folder not found: {folder}",
+        )
+
+    try:
+        os.startfile(str(folder))
+    except AttributeError as error:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Opening folders is supported on Windows only.",
+        ) from error
+
+    return {
+        "success": True,
+        "path": str(folder),
+    }
 
 
 @app.get("/api/wrapper/browse-folder")

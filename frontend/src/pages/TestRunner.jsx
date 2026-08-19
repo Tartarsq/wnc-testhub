@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   FiActivity,
+  FiArchive,
   FiCheckCircle,
   FiDatabase,
   FiFileText,
@@ -33,6 +34,8 @@ function TestRunner() {
   const [error, setError] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isFinalizingQxdm, setIsFinalizingQxdm] = useState(false)
+  const [isGeneratingReport, setIsGeneratingReport] = useState(false)
+  const [reportResult, setReportResult] = useState(null)
 
   const pollingRef = useRef(null)
 
@@ -232,6 +235,58 @@ function TestRunner() {
       )
     } finally {
       setIsFinalizingQxdm(false)
+    }
+  }
+
+  const activeSessionFolder =
+    job?.session_folder ?? job?.result?.session_folder ?? null
+
+  const generateReportAndZip = async () => {
+    if (!activeSessionFolder || isGeneratingReport) {
+      return
+    }
+
+    setError('')
+    setIsGeneratingReport(true)
+
+    try {
+      const response = await api.post(
+        '/wrapper/report-and-zip',
+        {
+          session_folder: activeSessionFolder,
+        }
+      )
+
+      setReportResult(response.data)
+    } catch (requestError) {
+      setReportResult(null)
+      setError(
+        requestError.response?.data?.detail ||
+          requestError.message ||
+          'Unable to generate the report and zip.'
+      )
+    } finally {
+      setIsGeneratingReport(false)
+    }
+  }
+
+  const openReportZipFolder = async () => {
+    if (!reportResult?.zip_path) {
+      return
+    }
+
+    try {
+      await api.get('/wrapper/open-zip-folder', {
+        params: {
+          zip_path: reportResult.zip_path,
+        },
+      })
+    } catch (requestError) {
+      setError(
+        requestError.response?.data?.detail ||
+          requestError.message ||
+          'Unable to open the folder.'
+      )
     }
   }
 
@@ -520,6 +575,40 @@ function TestRunner() {
                 </dd>
               </div>
             </dl>
+
+            <div className="qxdm-action-row">
+              <button
+                type="button"
+                className="qxdm-start-button"
+                onClick={generateReportAndZip}
+                disabled={
+                  !activeSessionFolder || isGeneratingReport
+                }
+              >
+                <FiArchive />
+                {isGeneratingReport
+                  ? 'Generating...'
+                  : 'Generate Report & Zip'}
+              </button>
+
+              {reportResult?.zip_path && (
+                <button
+                  type="button"
+                  className="qxdm-refresh-button"
+                  onClick={openReportZipFolder}
+                >
+                  <FiFolder />
+                  Open Folder
+                </button>
+              )}
+            </div>
+
+            {reportResult?.zip_path && (
+              <div className="qxdm-manual-settings-banner">
+                <strong>Session Zip</strong>
+                <span>{reportResult.zip_path}</span>
+              </div>
+            )}
 
             <div className="wrapper-progress-list">
               {(job?.progress ?? []).map((item, index) => (
