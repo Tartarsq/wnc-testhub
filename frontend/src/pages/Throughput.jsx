@@ -8,6 +8,7 @@ import {
   FiClock,
   FiDownload,
   FiExternalLink,
+  FiFolder,
   FiPlay,
   FiSave,
   FiServer,
@@ -47,6 +48,13 @@ function Throughput() {
   const [importedTestCount, setImportedTestCount] = useState(0)
   const [csvBatchSaved, setCsvBatchSaved] = useState(false)
 
+  // Which wrapper session should receive the imported CSV report files.
+  // No native folder-picker dialog here - those weren't reliably showing
+  // up on every test PC, so this reuses the same latest/dropdown pattern
+  // as the Syslog page instead.
+  const [wrapperFolder, setWrapperFolder] = useState('')
+  const [wrapperSessions, setWrapperSessions] = useState([])
+
   const pollingRef = useRef(null)
 
   const latestResult =
@@ -64,6 +72,70 @@ function Throughput() {
       stopPolling()
     }
   }, [])
+
+  const loadLatestWrapperSession = async () => {
+    try {
+      const response = await api.get('/wrapper/latest-session')
+      const latestFolder = response.data?.session_folder
+
+      if (latestFolder) {
+        setWrapperFolder(latestFolder)
+      }
+    } catch {
+      // Non-fatal - the engineer can still pick a session manually.
+    }
+  }
+
+  const loadWrapperSessions = async () => {
+    try {
+      const response = await api.get('/wrapper/sessions')
+      setWrapperSessions(response.data?.sessions ?? [])
+    } catch {
+      // Non-fatal - the dropdown just stays empty/whatever it last had.
+    }
+  }
+
+  useEffect(() => {
+    loadLatestWrapperSession()
+    loadWrapperSessions()
+  }, [])
+
+  const handleSelectWrapperSession = (event) => {
+    const selectedFolder = event.target.value
+
+    if (!selectedFolder) {
+      return
+    }
+
+    setWrapperFolder(selectedFolder)
+  }
+
+  const handleBrowseWrapper = async () => {
+    setError('')
+
+    try {
+      const response = await api.get(
+        '/wrapper/browse-folder',
+        {
+          params: {
+            current_path: wrapperFolder,
+          },
+          // Keep this request alive while the Windows folder picker is open.
+          timeout: 0,
+        }
+      )
+
+      if (response.data?.path) {
+        setWrapperFolder(response.data.path)
+      }
+    } catch (requestError) {
+      setError(
+        requestError.response?.data?.detail ||
+          requestError.message ||
+          'Unable to open the folder picker.'
+      )
+    }
+  }
 
 
   const updateFromJob = (job) => {
@@ -192,13 +264,14 @@ function Throughput() {
 
     setError('')
     setIsImportingCsv(true)
-    setMessage('Select the Speedtest Result History CSV...')
+    setMessage('Looking for the Speedtest CSV in Downloads...')
 
     try {
       const response = await api.post(
         '/throughput/gui/import-csv-latest',
         {
           job_id: jobId,
+          wrapper_session_folder: wrapperFolder.trim() || null,
         },
         {
           timeout: 0,
@@ -430,21 +503,23 @@ function Throughput() {
       jobStatus === 'completed'
     )
 
-  // Explains the CSV import flow as three explicit steps, since the
-  // import actually pops up two separate Windows dialogs in a row
-  // (CSV picker, then wrapper-folder picker) before anything is saved.
+  // Explains the CSV import flow as three explicit steps. This used to
+  // rely on two native Windows dialogs in a row (CSV picker, then a
+  // wrapper-folder picker), but those weren't reliably showing up on
+  // every test PC - it now reads the CSV straight from Downloads and
+  // uses whichever wrapper session is selected above instead.
   const csvImportSteps = [
     {
       id: 'export',
       label: '1. Export from Speedtest',
       description:
-        'In the Speedtest app, open Result History and export it as a CSV file.',
+        'In the Speedtest app, open Result History and export it as a CSV file (saved to Downloads).',
     },
     {
       id: 'pick',
-      label: '2. Pick the CSV, then the session folder',
+      label: '2. Select the wrapper session, then import',
       description:
-        'Click "Import CSV to Wrapper" below. A Windows dialog opens for the CSV file, then a second dialog opens for the wrapper session folder.',
+        'Pick the wrapper session above, then click "Import CSV to Wrapper" - TestHub reads the newest matching CSV from Downloads automatically.',
     },
     {
       id: 'saved',
@@ -590,11 +665,76 @@ function Throughput() {
               <h3>Save GUI Result</h3>
               <p>
                 After Speedtest finishes, export Result History as CSV.
-                TestHub imports every test from the newest date, then asks
-                which wrapper session folder should receive the report files.
+                TestHub reads the newest CSV from Downloads and imports
+                every test from its newest date into the wrapper session
+                selected below.
               </p>
             </div>
           </div>
+
+          <label className="form-field qxdm-folder-field">
+            <span>Wrapper Session Folder</span>
+
+            <div className="qxdm-folder-input">
+              <FiFolder />
+
+              <input
+                type="text"
+                value={wrapperFolder}
+                onChange={(event) =>
+                  setWrapperFolder(event.target.value)
+                }
+                placeholder="Select Wrapper_Test_... folder"
+              />
+
+              <button
+                type="button"
+                className="qxdm-refresh-button"
+                onClick={handleBrowseWrapper}
+              >
+                Browse
+              </button>
+
+              <button
+                type="button"
+                className="qxdm-refresh-button"
+                onClick={() => {
+                  loadLatestWrapperSession()
+                  loadWrapperSessions()
+                }}
+                title="Re-sync to whichever wrapper session was created most recently"
+              >
+                Use Latest
+              </button>
+            </div>
+
+            <div className="qxdm-folder-input">
+              <select
+                value={wrapperFolder}
+                onChange={handleSelectWrapperSession}
+                onFocus={loadWrapperSessions}
+              >
+                <option value="">
+                  Or pick an existing session ({wrapperSessions.length}{' '}
+                  found)...
+                </option>
+                {wrapperSessions.map((session) => (
+                  <option
+                    key={session.session_folder}
+                    value={session.session_folder}
+                  >
+                    {session.session_name} - {session.session_folder}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <small className="qxdm-session-help">
+              Optional - if left blank, the CSV import is saved to
+              Analytics only. Select a session to also copy the report
+              into its reports subfolder.
+            </small>
+          </label>
 
           <div className="qxdm-workflow-timeline">
             {csvImportSteps.map((step, index) => {
@@ -655,9 +795,7 @@ function Throughput() {
               <FiActivity />
               {isImportingCsv ? (
                 <span>
-                  Look for the Windows file dialog — it may have opened
-                  behind this window. Pick the CSV first, then the wrapper
-                  session root folder (not its reports subfolder).
+                  Reading the newest Speedtest CSV from Downloads...
                 </span>
               ) : !resultEntryEnabled ? (
                 <span>
@@ -666,8 +804,9 @@ function Throughput() {
                 </span>
               ) : (
                 <span>
-                  Select the wrapper session root folder, not the reports
-                  subfolder. TestHub saves into reports automatically.
+                  Export Result History as CSV in Speedtest first - TestHub
+                  picks up the newest CSV in Downloads automatically, no
+                  file picker needed.
                 </span>
               )}
             </div>
@@ -683,7 +822,7 @@ function Throughput() {
             >
               <FiExternalLink />
               {isImportingCsv
-                ? 'Waiting on file dialog...'
+                ? 'Reading CSV from Downloads...'
                 : 'Import CSV to Wrapper'}
             </button>
           </div>

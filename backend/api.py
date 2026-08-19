@@ -479,6 +479,73 @@ def parse_speedtest_csv_date(
     )
 
 
+SPEEDTEST_CSV_REQUIRED_COLUMNS = {
+    "Date",
+    "Latency",
+    "Download",
+    "Upload",
+    "ServerName",
+}
+
+
+def find_latest_speedtest_csv_in_downloads() -> Path | None:
+    """
+    Look in the Windows Downloads folder for the newest Speedtest Result
+    History CSV export, instead of relying on a native file-picker dialog
+    to find and select it manually - that dialog isn't reliably visible
+    on every test PC (it can open off-screen or behind other windows even
+    when marked topmost), the same problem the Verizon syslog download
+    already works around by reading straight from Downloads.
+
+    Speedtest doesn't use one fixed export filename, so every *.csv in
+    Downloads is checked for the columns read_latest_speedtest_csv_results
+    requires; the most recently modified one that has them wins.
+    """
+    downloads_candidates = [
+        Path.home() / "Downloads",
+    ]
+
+    # OneDrive can redirect Downloads on some test PCs.
+    onedrive = os.environ.get("OneDrive")
+    if onedrive:
+        downloads_candidates.append(
+            Path(onedrive) / "Downloads"
+        )
+
+    candidates: list[Path] = []
+
+    for downloads_folder in downloads_candidates:
+        if not downloads_folder.exists():
+            continue
+
+        for path in downloads_folder.glob("*.csv"):
+            if not path.is_file():
+                continue
+
+            try:
+                with path.open(
+                    "r",
+                    encoding="utf-8-sig",
+                    newline="",
+                ) as csv_file:
+                    fieldnames = set(
+                        csv.DictReader(csv_file).fieldnames or []
+                    )
+            except (OSError, UnicodeDecodeError, csv.Error):
+                continue
+
+            if SPEEDTEST_CSV_REQUIRED_COLUMNS.issubset(fieldnames):
+                candidates.append(path)
+
+    if not candidates:
+        return None
+
+    return max(
+        candidates,
+        key=lambda path: path.stat().st_mtime,
+    )
+
+
 def read_latest_speedtest_csv_results(
     csv_path: Path,
 ) -> list[dict[str, Any]]:
@@ -514,16 +581,8 @@ def read_latest_speedtest_csv_results(
 
         fieldnames = reader.fieldnames or []
 
-        required_columns = {
-            "Date",
-            "Latency",
-            "Download",
-            "Upload",
-            "ServerName",
-        }
-
         missing_columns = sorted(
-            required_columns.difference(fieldnames)
+            SPEEDTEST_CSV_REQUIRED_COLUMNS.difference(fieldnames)
         )
 
         if missing_columns:
@@ -721,89 +780,6 @@ def write_speedtest_csv_results_workbook(
     workbook.close()
 
     return workbook_path
-
-
-def prompt_for_speedtest_csv() -> Path | None:
-    """
-    Open a Windows file picker and let the engineer select the Speedtest
-    Result History CSV that was just downloaded/exported.
-    """
-    try:
-        from tkinter import Tk
-        from tkinter.filedialog import askopenfilename
-    except ImportError as error:
-        raise RuntimeError(
-            "Tkinter is required to browse for the Speedtest CSV."
-        ) from error
-
-    root = Tk()
-    root.withdraw()
-    root.attributes(
-        "-topmost",
-        True,
-    )
-
-    try:
-        selected = askopenfilename(
-            parent=root,
-            title="Select Speedtest Result History CSV",
-            filetypes=[
-                (
-                    "CSV files",
-                    "*.csv",
-                ),
-                (
-                    "All files",
-                    "*.*",
-                ),
-            ],
-        )
-    finally:
-        root.destroy()
-
-    if not selected:
-        return None
-
-    return Path(selected).resolve()
-
-
-
-
-def prompt_for_wrapper_session_folder(
-    initial_path: str | Path | None = None,
-) -> Path | None:
-    try:
-        from tkinter import Tk
-        from tkinter.filedialog import askdirectory
-    except ImportError as error:
-        raise RuntimeError(
-            "Tkinter is required to browse for the wrapper session folder."
-        ) from error
-
-    initial_dir = None
-    if initial_path:
-        candidate = Path(initial_path).expanduser()
-        if candidate.exists() and candidate.is_dir():
-            initial_dir = candidate.resolve()
-
-    root = Tk()
-    root.withdraw()
-    root.attributes("-topmost", True)
-
-    try:
-        selected = askdirectory(
-            parent=root,
-            title="Select Wrapper Test Session Folder",
-            initialdir=str(initial_dir) if initial_dir else None,
-            mustexist=True,
-        )
-    finally:
-        root.destroy()
-
-    if not selected:
-        return None
-
-    return Path(selected).resolve()
 
 
 def validate_wrapper_session_folder(
@@ -4096,13 +4072,17 @@ def import_latest_speedtest_csv_results(
         job_snapshot = dict(existing_job)
 
     try:
-        selected_csv = prompt_for_speedtest_csv()
+        selected_csv = find_latest_speedtest_csv_in_downloads()
 
         if selected_csv is None:
             return {
                 "success": False,
                 "cancelled": True,
-                "message": "Speedtest CSV selection was cancelled.",
+                "message": (
+                    "No Speedtest Result History CSV was found in "
+                    "Downloads. In Speedtest, open Result History and "
+                    "export it as a CSV, then try again."
+                ),
                 "results": [],
             }
 
@@ -4179,16 +4159,16 @@ def import_latest_speedtest_csv_results(
         }
 
         selected_wrapper_folder = (
-            prompt_for_wrapper_session_folder(
-                RESULTS_FOLDER
-            )
+            Path(request.wrapper_session_folder).expanduser().resolve()
+            if request.wrapper_session_folder
+            else None
         )
 
         if selected_wrapper_folder is None:
             response_payload["message"] = (
                 f"Imported {len(imported_results)} test(s) to Analytics. "
-                "Wrapper folder selection was cancelled, so nothing was "
-                "copied to a wrapper session."
+                "No wrapper session was selected, so nothing was copied "
+                "to a wrapper session."
             )
 
             return response_payload
