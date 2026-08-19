@@ -17,9 +17,11 @@ import '../App.css'
 
 function TestRunner() {
   const [sessionName, setSessionName] = useState('Titan3_Test')
-  const [saveRoot, setSaveRoot] = useState(
-    'C:\\Users\\niket\\Documents\\GitHub\\wnc-testhub\\results'
-  )
+  // Left blank on purpose: a hardcoded path here only works on the one
+  // machine it was typed on. The backend's browse-folder endpoint already
+  // falls back to its own correct RESULTS_FOLDER whenever this is empty,
+  // so leaving it blank makes the default the right one on every machine.
+  const [saveRoot, setSaveRoot] = useState('')
   const [titanIp, setTitanIp] = useState('192.168.100.1')
 
   const [collectQxdm, setCollectQxdm] = useState(true)
