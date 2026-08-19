@@ -16,6 +16,14 @@ function Devices() {
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState('')
 
+  // Live radio metrics (RSRP, Technology, etc.) come from the Verizon
+  // GUI, which is behind a login. The password only ever lives in this
+  // component's state and the one-time Connect request body - it is
+  // never persisted to localStorage and the backend never stores it,
+  // only the resulting session cookie (in memory, per Titan IP).
+  const [radioPassword, setRadioPassword] = useState('')
+  const [isConnectingRadio, setIsConnectingRadio] = useState(false)
+
   // In the Electron app, a plain <a target="_blank"> can end up navigating
   // the app's own window instead of opening a real browser tab - the Titan
   // serves a self-signed certificate Electron doesn't trust, so that
@@ -69,6 +77,38 @@ function Devices() {
   const handleSubmit = (event) => {
     event.preventDefault()
     loadDeviceStatus()
+  }
+
+  const handleConnectRadioMetrics = async (event) => {
+    event.preventDefault()
+
+    if (!radioPassword.trim() || isConnectingRadio) {
+      return
+    }
+
+    setIsConnectingRadio(true)
+    setError('')
+
+    try {
+      await api.post('/device/radio-metrics/connect', {
+        titan_ip: titanIp,
+        password: radioPassword,
+      })
+
+      // Don't keep the password around in state longer than it takes to
+      // send the one request.
+      setRadioPassword('')
+
+      await loadDeviceStatus()
+    } catch (requestError) {
+      setError(
+        requestError.response?.data?.detail ||
+          requestError.message ||
+          'Unable to connect for live radio metrics.'
+      )
+    } finally {
+      setIsConnectingRadio(false)
+    }
   }
 
   const displayValue = (value) => {
@@ -229,6 +269,39 @@ function Devices() {
                 </p>
               </div>
             </div>
+
+            {!device?.radio_metrics_connected && (
+              <form
+                className="device-ip-form"
+                onSubmit={handleConnectRadioMetrics}
+              >
+                <label className="form-field">
+                  <span>Verizon GUI Password</span>
+
+                  <input
+                    type="password"
+                    value={radioPassword}
+                    onChange={(event) =>
+                      setRadioPassword(event.target.value)
+                    }
+                    placeholder="Needed once for live radio metrics"
+                    autoComplete="off"
+                  />
+                </label>
+
+                <button
+                  type="submit"
+                  className="refresh-device-button"
+                  disabled={
+                    isConnectingRadio || !radioPassword.trim()
+                  }
+                >
+                  {isConnectingRadio
+                    ? 'Connecting...'
+                    : 'Connect'}
+                </button>
+              </form>
+            )}
 
             <dl className="device-details-list">
               <div>

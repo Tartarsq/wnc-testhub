@@ -27,6 +27,10 @@ from automation.throughput_test import ThroughputTester
 from automation.verizon_syslog_automation import (
     automate_verizon_syslog_download,
 )
+from automation.titan_radio_metrics import (
+    fetch_radio_metrics,
+    fetch_radio_metrics_with_cookie,
+)
 from config import (
     DEFAULT_TITAN_IP,
     QXDM_DEFAULT_LOG_FILENAME,
@@ -111,6 +115,18 @@ class ThroughputGUILaunchRequest(BaseModel):
         default=DEFAULT_TITAN_IP,
         min_length=7,
         max_length=45,
+    )
+
+
+class TitanRadioConnectRequest(BaseModel):
+    titan_ip: str = Field(
+        default=DEFAULT_TITAN_IP,
+        min_length=7,
+        max_length=45,
+    )
+    password: str = Field(
+        min_length=1,
+        max_length=200,
     )
 
 
@@ -3223,6 +3239,43 @@ def health_check() -> dict[str, str]:
     }
 
 
+# Cached Verizon GUI session cookies for live radio metrics, keyed by
+# Titan IP. Reading cgi_home.js needs an authenticated `sysauth` cookie,
+# which needs a password to obtain - but the Devices page polls status
+# automatically every 10 seconds, so asking for the password on every
+# poll isn't workable. Instead, POST /api/device/radio-metrics/connect
+# logs in once (with a real browser, same as the syslog download) and
+# caches the resulting cookie here; subsequent polls reuse it with a
+# plain HTTP request until it expires, at which point the engineer needs
+# to Connect again. Nothing here is written to disk.
+titan_radio_sessions: dict[str, str] = {}
+
+
+@app.post("/api/device/radio-metrics/connect")
+def connect_titan_radio_metrics(
+    request: TitanRadioConnectRequest,
+) -> dict[str, Any]:
+    try:
+        metrics, sysauth = fetch_radio_metrics(
+            titan_ip=request.titan_ip,
+            password=request.password,
+        )
+
+        titan_radio_sessions[request.titan_ip] = sysauth
+
+        return {
+            "success": True,
+            **metrics,
+            "metrics_error": None,
+        }
+
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(error),
+        ) from error
+
+
 @app.get("/api/device/status")
 def get_device_status(
     titan_ip: str = DEFAULT_TITAN_IP,
@@ -3250,6 +3303,7 @@ def get_device_status(
         "rsrp_dbm": None,
         "rssi_dbm": None,
         "sinr_db": None,
+        "radio_metrics_connected": titan_ip in titan_radio_sessions,
         "metrics_error": None,
     }
 
@@ -3260,15 +3314,28 @@ def get_device_status(
 
         return device_status
 
-    try:
-        metrics = titan.get_radio_metrics()
+    cached_sysauth = titan_radio_sessions.get(titan_ip)
 
-        if not isinstance(metrics, dict):
-            raise TypeError(
-                "Titan radio metrics must be returned as a dictionary."
-            )
+    if cached_sysauth is None:
+        device_status["metrics_error"] = (
+            "Connect with the Verizon GUI password to see live radio "
+            "metrics."
+        )
+
+        return device_status
+
+    try:
+        metrics = fetch_radio_metrics_with_cookie(
+            titan_ip=titan_ip,
+            sysauth=cached_sysauth,
+        )
 
         device_status.update(metrics)
+
+    except PermissionError as error:
+        titan_radio_sessions.pop(titan_ip, None)
+        device_status["radio_metrics_connected"] = False
+        device_status["metrics_error"] = str(error)
 
     except Exception as error:
         device_status["metrics_error"] = str(error)
