@@ -43,7 +43,15 @@ from automation.verizon_syslog_automation import (
 )
 
 
-RADIO_METRICS_PATH = "/cgi/cgi_home.js"
+
+# The cellular signal fields (rpsp_5g/rpsp_4g/signal_type) live on
+# cgi_home.js, but Mode (connect_type) and firmware version (fw_ver) turn
+# out to live in the separate topology dump on cgi_basic.js instead - both
+# get fetched and their response text combined before parsing.
+RADIO_METRICS_PATHS = (
+    "/cgi/cgi_home.js",
+    "/cgi/cgi_basic.js",
+)
 REQUEST_TIMEOUT_SECONDS = 15
 
 _ADD_CFG_PATTERN = re.compile(
@@ -90,18 +98,12 @@ def fetch_radio_metrics(
     return metrics, sysauth
 
 
-def fetch_radio_metrics_with_cookie(
+def _fetch_page_text(
     titan_ip: str,
     sysauth: str,
-) -> dict[str, Any]:
-    """
-    Read radio metrics using an already-authenticated sysauth cookie.
-
-    Raises PermissionError if the session has expired (the caller should
-    drop the cached cookie and prompt for the password again), or
-    RuntimeError for any other request failure.
-    """
-    url = f"https://{titan_ip}{RADIO_METRICS_PATH}"
+    path: str,
+) -> str:
+    url = f"https://{titan_ip}{path}"
 
     try:
         response = requests.get(
@@ -128,7 +130,26 @@ def fetch_radio_metrics_with_cookie(
             f"{response.status_code}."
         )
 
-    return parse_radio_metrics(response.text)
+    return response.text
+
+
+def fetch_radio_metrics_with_cookie(
+    titan_ip: str,
+    sysauth: str,
+) -> dict[str, Any]:
+    """
+    Read radio metrics using an already-authenticated sysauth cookie.
+
+    Raises PermissionError if the session has expired (the caller should
+    drop the cached cookie and prompt for the password again), or
+    RuntimeError for any other request failure.
+    """
+    combined_text = "\n".join(
+        _fetch_page_text(titan_ip, sysauth, path)
+        for path in RADIO_METRICS_PATHS
+    )
+
+    return parse_radio_metrics(combined_text)
 
 
 def _clean_dbm(raw: str | None) -> float | None:
