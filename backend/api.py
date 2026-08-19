@@ -1910,6 +1910,116 @@ def _valid_adb_candidate(
     return None
 
 
+def _valid_pcat_candidate(
+    candidate: str | Path | None,
+) -> Path | None:
+    if not candidate:
+        return None
+
+    try:
+        path = Path(candidate).expanduser().resolve()
+    except OSError:
+        return None
+
+    if (
+        path.exists()
+        and path.is_file()
+        and path.suffix.lower() == ".exe"
+    ):
+        return path
+
+    return None
+
+
+PCAT_COMMON_PATHS = (
+    Path(r"C:\Program Files\Qualcomm\PCAT\PCAT.exe"),
+    Path(r"C:\Program Files (x86)\Qualcomm\PCAT\PCAT.exe"),
+    Path(r"C:\Qualcomm\PCAT\PCAT.exe"),
+    Path(r"C:\PCAT\PCAT.exe"),
+)
+
+
+def find_pcat_executable() -> tuple[Path | None, str | None]:
+    """
+    Dynamically locate the PCAT executable on the current testing computer,
+    the same way find_adb_executable() locates adb.exe.
+
+    "Open PCAT" used to fall back to a native file-picker dialog every
+    single time the backend restarted, because the selected path was only
+    ever kept in memory (pcat_state), never written to pcat_config.json
+    like the ADB path already is. That dialog isn't reliably visible on
+    every test PC, so in practice PCAT could stop being openable purely
+    because the app had been restarted since the executable was last
+    picked. Persisting the path and adding the same kind of automatic
+    discovery ADB already has means most machines never need the dialog
+    at all after the first successful open.
+
+    Search order:
+      1. Previously verified path for this PC (persisted machine setting)
+      2. WNC_PCAT_EXECUTABLE environment variable
+      3. Common Qualcomm PCAT install locations
+      4. One level under the Qualcomm Program Files folders, for versioned
+         subfolder names (e.g. PCAT_5.2)
+    """
+    config = load_pcat_config()
+
+    cached = _valid_pcat_candidate(
+        config.get("pcat_executable")
+    )
+
+    if cached is not None:
+        return cached, "saved machine setting"
+
+    environment_path = os.environ.get(
+        "WNC_PCAT_EXECUTABLE", ""
+    ).strip()
+
+    if environment_path:
+        candidate = _valid_pcat_candidate(
+            environment_path
+        )
+
+        if candidate is not None:
+            save_pcat_config(
+                pcat_executable=str(candidate)
+            )
+            return candidate, "WNC_PCAT_EXECUTABLE"
+
+    for raw_candidate in PCAT_COMMON_PATHS:
+        candidate = _valid_pcat_candidate(
+            raw_candidate
+        )
+
+        if candidate is not None:
+            save_pcat_config(
+                pcat_executable=str(candidate)
+            )
+            return candidate, "common PCAT install location"
+
+    qualcomm_roots = (
+        Path(r"C:\Program Files\Qualcomm"),
+        Path(r"C:\Program Files (x86)\Qualcomm"),
+    )
+
+    for root in qualcomm_roots:
+        if not root.exists():
+            continue
+
+        try:
+            for found in root.glob("*/PCAT.exe"):
+                candidate = _valid_pcat_candidate(found)
+
+                if candidate is not None:
+                    save_pcat_config(
+                        pcat_executable=str(candidate)
+                    )
+                    return candidate, f"search under {root}"
+        except OSError:
+            continue
+
+    return None, None
+
+
 def find_adb_executable() -> tuple[Path | None, str | None]:
     """
     Dynamically locate adb.exe on the current testing computer.
@@ -2282,6 +2392,13 @@ def get_pcat_status() -> dict[str, Any]:
         pcat_state["adb_executable"] = str(cached_adb)
         pcat_state["adb_folder"] = str(cached_adb.parent)
 
+    cached_pcat = _valid_pcat_candidate(
+        config.get("pcat_executable")
+    )
+
+    if cached_pcat is not None:
+        pcat_state["pcat_executable"] = str(cached_pcat)
+
     return dict(pcat_state)
 
 
@@ -2319,6 +2436,52 @@ def find_pcat_adb() -> dict[str, Any]:
             "discovery_source": discovery_source,
             "message": (
                 "ADB was found automatically"
+                + (
+                    f" using {discovery_source}."
+                    if discovery_source
+                    else "."
+                )
+            ),
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(error),
+        ) from error
+
+
+@app.get("/api/pcat/find-executable")
+def find_pcat_executable_endpoint() -> dict[str, Any]:
+    try:
+        pcat_executable, discovery_source = find_pcat_executable()
+
+        if pcat_executable is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=(
+                    "TestHub could not find the PCAT executable "
+                    "automatically. Use Browse and select PCAT.exe manually."
+                ),
+            )
+
+        pcat_state.update(
+            {
+                "pcat_executable": str(pcat_executable),
+                "message": "PCAT executable was found automatically.",
+                "error": None,
+            }
+        )
+
+        return {
+            "success": True,
+            "path": str(pcat_executable),
+            "discovery_source": discovery_source,
+            "message": (
+                "PCAT executable was found automatically"
                 + (
                     f" using {discovery_source}."
                     if discovery_source
@@ -2449,6 +2612,13 @@ def browse_pcat_executable() -> dict[str, Any]:
                 "message": "PCAT executable selected.",
                 "error": None,
             }
+        )
+
+        # Persist it so the next Open PCAT (even after an app/backend
+        # restart) doesn't need the dialog again - previously this was
+        # only kept in memory and got forgotten on every restart.
+        save_pcat_config(
+            pcat_executable=str(selected)
         )
 
         return {
@@ -2592,15 +2762,15 @@ def open_pcat_application(
             or pcat_state.get("pcat_executable")
         )
 
-        executable: Path | None = None
+        executable = _valid_pcat_candidate(executable_value)
 
-        if executable_value:
-            candidate = Path(
-                executable_value
-            ).expanduser().resolve()
-
-            if candidate.exists() and candidate.is_file():
-                executable = candidate
+        # Nothing explicitly selected/cached yet - try the same automatic
+        # discovery "Find PCAT" uses before ever falling back to a native
+        # dialog, since that dialog isn't reliably visible on every test
+        # PC (it can render off-screen or behind other windows even when
+        # marked topmost).
+        if executable is None:
+            executable, _source = find_pcat_executable()
 
         if executable is None:
             selected = prompt_for_pcat_executable()
@@ -2613,6 +2783,12 @@ def open_pcat_application(
                 }
 
             executable = selected
+
+        # Always persist a resolved path, so a manual pick here (not just
+        # ones made through Browse) survives the next backend restart too.
+        save_pcat_config(
+            pcat_executable=str(executable)
+        )
 
         subprocess.Popen(
             [str(executable)],
