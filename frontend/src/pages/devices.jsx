@@ -90,10 +90,19 @@ function Devices() {
     setError('')
 
     try {
-      await api.post('/device/radio-metrics/connect', {
-        titan_ip: titanIp,
-        password: radioPassword,
-      })
+      await api.post(
+        '/device/radio-metrics/connect',
+        {
+          titan_ip: titanIp,
+          password: radioPassword,
+        },
+        {
+          // Logging in launches a real browser (same as the Syslog
+          // page's automation) - the default 10s client timeout isn't
+          // enough for a browser launch + page load + login round trip.
+          timeout: 0,
+        }
+      )
 
       // Don't keep the password around in state longer than it takes to
       // send the one request.
