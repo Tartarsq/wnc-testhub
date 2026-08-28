@@ -1,3 +1,5 @@
+import os
+import sys
 from pathlib import Path
 import shutil
 import subprocess
@@ -9,7 +11,21 @@ import subprocess
 
 BACKEND_FOLDER = Path(__file__).resolve().parent
 PROJECT_ROOT = BACKEND_FOLDER.parent
-RESULTS_FOLDER = PROJECT_ROOT / "results"
+
+if getattr(sys, "frozen", False):
+    # Packaged app - PROJECT_ROOT sits under wherever the app was
+    # installed (Program Files by default), which a standard Windows user
+    # account normally can't write to without admin rights. Save results
+    # under the user's own profile instead, matching the LOCALAPPDATA\
+    # WNCTestHub convention already used for the PCAT/ADB settings file.
+    _local_app_data = os.environ.get("LOCALAPPDATA")
+    RESULTS_FOLDER = (
+        Path(_local_app_data) / "WNCTestHub" / "results"
+        if _local_app_data
+        else Path.home() / "WNCTestHub" / "results"
+    )
+else:
+    RESULTS_FOLDER = PROJECT_ROOT / "results"
 
 
 # ==========================================================
