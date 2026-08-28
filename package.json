@@ -10,7 +10,8 @@
     "backend:build": "cd backend && pyinstaller WNCTestHubBackend.spec --noconfirm",
     "electron": "electron .",
     "electron:dev": "npm run frontend:build && electron .",
-    "dist": "npm run backend:build && npm run frontend:build && electron-builder"
+    "playwright:bundle": "node scripts/prepare-playwright-browsers.js",
+    "dist": "npm run backend:build && npm run frontend:build && npm run playwright:bundle && electron-builder"
   },
   "devDependencies": {
     "electron": "^43.4.0",
@@ -31,6 +32,11 @@
       {
         "from": "backend/dist/WNCTestHubBackend",
         "to": "backend",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "backend/playwright-browsers",
+        "to": "playwright-browsers",
         "filter": ["**/*"]
       }
     ],

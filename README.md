@@ -370,27 +370,51 @@ to respond on `http://127.0.0.1:8000/` before opening the window.
 
 End users don't have Python installed, so the backend first needs to be
 compiled into a standalone executable with PyInstaller, and only then does
-Electron get packaged around it:
+Electron get packaged around it. PyInstaller is included in
+`backend/requirements.txt`, so no separate `pip install pyinstaller` step is
+needed as long as the venv's dependencies are up to date.
+
+The backend's virtual environment must also already have Chromium installed
+via Playwright (`playwright install chromium` — see setup above) before
+building, since the installer bundles that browser directly so end-user
+machines don't need Python/pip to fetch it themselves for the Syslog and
+Devices radio-metrics login steps.
 
 ```bash
-# 1. Compile the FastAPI backend into backend/dist/WNCTestHubBackend/
+# One-time, if not already done (see First-Time Setup above):
 cd backend
-pip install pyinstaller
-pyinstaller WNCTestHubBackend.spec --noconfirm
+python -m pip install -r requirements.txt
+playwright install chromium
 cd ..
 
-# 2. Build the frontend and package the Electron app (NSIS installer)
+# Then, every time you want a fresh installer:
 npm install
 npm run dist
 ```
 
-The installer is written to `release/`. `electron-builder` bundles
-`backend/dist/WNCTestHubBackend/` as an extra resource, and the packaged app
-launches `WNCTestHubBackend.exe` from there instead of a Python venv.
+`npm run dist` runs the full chain itself: compiles the backend
+(`backend:build`), builds the frontend (`frontend:build`), copies the
+locally-cached Chromium browser into `backend/playwright-browsers/` for
+bundling (`playwright:bundle`, via `scripts/prepare-playwright-browsers.js`),
+then runs `electron-builder`.
 
-**Note:** Both steps must be run on Windows — the backend depends on
-`pywin32`/`pywinauto` for QXDM/PCAT automation, and the PyInstaller output is
+The installer is written to `release/`. `electron-builder` bundles
+`backend/dist/WNCTestHubBackend/` and `backend/playwright-browsers/` as extra
+resources; the packaged app launches `WNCTestHubBackend.exe` from there
+instead of a Python venv, and points Playwright at the bundled browser
+instead of the machine's normal per-user cache.
+
+**Note:** All of this must be run on Windows — the backend depends on
+`pywin32`/`pywinauto` for QXDM/PCAT automation, and both the PyInstaller
+output and the Chromium build downloaded by Playwright are
 platform-specific.
+
+**If `npm run dist` fails on `winCodeSign` with a symbolic-link/certificate
+error:** that's electron-builder trying to download macOS code-signing
+tools this Windows-only build doesn't need. Set
+`CSC_IDENTITY_AUTO_DISCOVERY=false` before running `npm run dist` to skip
+it, and clear `%LOCALAPPDATA%\electron-builder\Cache` if a previous failed
+attempt left a corrupted partial download behind.
 
 
 # Author
