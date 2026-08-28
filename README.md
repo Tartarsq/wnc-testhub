@@ -374,17 +374,17 @@ Electron get packaged around it. PyInstaller is included in
 `backend/requirements.txt`, so no separate `pip install pyinstaller` step is
 needed as long as the venv's dependencies are up to date.
 
-The backend's virtual environment must also already have Chromium installed
-via Playwright (`playwright install chromium` — see setup above) before
-building, since the installer bundles that browser directly so end-user
-machines don't need Python/pip to fetch it themselves for the Syslog and
-Devices radio-metrics login steps.
+The installer also bundles a real Chromium browser directly, so end-user
+machines don't need Python/pip to fetch one themselves for the Syslog and
+Devices radio-metrics login steps. `npm run dist` handles this automatically
+too — if Chromium isn't already cached on the machine building the
+installer, it runs `playwright install chromium` itself before bundling it,
+so no separate manual step is required beyond the normal first-time setup.
 
 ```bash
 # One-time, if not already done (see First-Time Setup above):
 cd backend
 python -m pip install -r requirements.txt
-playwright install chromium
 cd ..
 
 # Then, every time you want a fresh installer:
@@ -393,10 +393,10 @@ npm run dist
 ```
 
 `npm run dist` runs the full chain itself: compiles the backend
-(`backend:build`), builds the frontend (`frontend:build`), copies the
-locally-cached Chromium browser into `backend/playwright-browsers/` for
-bundling (`playwright:bundle`, via `scripts/prepare-playwright-browsers.js`),
-then runs `electron-builder`.
+(`backend:build`), builds the frontend (`frontend:build`), installs
+Chromium if it isn't already cached and copies it into
+`backend/playwright-browsers/` for bundling (`playwright:bundle`, via
+`scripts/prepare-playwright-browsers.js`), then runs `electron-builder`.
 
 The installer is written to `release/`. `electron-builder` bundles
 `backend/dist/WNCTestHubBackend/` and `backend/playwright-browsers/` as extra
