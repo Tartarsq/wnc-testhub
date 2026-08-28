@@ -27,6 +27,10 @@ from automation.throughput_test import ThroughputTester
 from automation.verizon_syslog_automation import (
     automate_verizon_syslog_download,
 )
+from automation.titan_radio_metrics import (
+    fetch_radio_metrics,
+    fetch_radio_metrics_with_cookie,
+)
 from config import (
     DEFAULT_TITAN_IP,
     QXDM_DEFAULT_LOG_FILENAME,
@@ -39,6 +43,10 @@ from controllers.qxdm_controller import QXDMController
 from controllers.syslog_controller import SyslogController
 from wrapper.test_wrapper import TestWrapper
 from titan3 import Titan3
+from session_report import (
+    generate_session_report,
+    zip_session_folder,
+)
 from utils import (
     create_session_folder,
     create_session_folders,
@@ -111,6 +119,18 @@ class ThroughputGUILaunchRequest(BaseModel):
         default=DEFAULT_TITAN_IP,
         min_length=7,
         max_length=45,
+    )
+
+
+class TitanRadioConnectRequest(BaseModel):
+    titan_ip: str = Field(
+        default=DEFAULT_TITAN_IP,
+        min_length=7,
+        max_length=45,
+    )
+    password: str = Field(
+        min_length=1,
+        max_length=200,
     )
 
 
@@ -479,6 +499,73 @@ def parse_speedtest_csv_date(
     )
 
 
+SPEEDTEST_CSV_REQUIRED_COLUMNS = {
+    "Date",
+    "Latency",
+    "Download",
+    "Upload",
+    "ServerName",
+}
+
+
+def find_latest_speedtest_csv_in_downloads() -> Path | None:
+    """
+    Look in the Windows Downloads folder for the newest Speedtest Result
+    History CSV export, instead of relying on a native file-picker dialog
+    to find and select it manually - that dialog isn't reliably visible
+    on every test PC (it can open off-screen or behind other windows even
+    when marked topmost), the same problem the Verizon syslog download
+    already works around by reading straight from Downloads.
+
+    Speedtest doesn't use one fixed export filename, so every *.csv in
+    Downloads is checked for the columns read_latest_speedtest_csv_results
+    requires; the most recently modified one that has them wins.
+    """
+    downloads_candidates = [
+        Path.home() / "Downloads",
+    ]
+
+    # OneDrive can redirect Downloads on some test PCs.
+    onedrive = os.environ.get("OneDrive")
+    if onedrive:
+        downloads_candidates.append(
+            Path(onedrive) / "Downloads"
+        )
+
+    candidates: list[Path] = []
+
+    for downloads_folder in downloads_candidates:
+        if not downloads_folder.exists():
+            continue
+
+        for path in downloads_folder.glob("*.csv"):
+            if not path.is_file():
+                continue
+
+            try:
+                with path.open(
+                    "r",
+                    encoding="utf-8-sig",
+                    newline="",
+                ) as csv_file:
+                    fieldnames = set(
+                        csv.DictReader(csv_file).fieldnames or []
+                    )
+            except (OSError, UnicodeDecodeError, csv.Error):
+                continue
+
+            if SPEEDTEST_CSV_REQUIRED_COLUMNS.issubset(fieldnames):
+                candidates.append(path)
+
+    if not candidates:
+        return None
+
+    return max(
+        candidates,
+        key=lambda path: path.stat().st_mtime,
+    )
+
+
 def read_latest_speedtest_csv_results(
     csv_path: Path,
 ) -> list[dict[str, Any]]:
@@ -514,16 +601,8 @@ def read_latest_speedtest_csv_results(
 
         fieldnames = reader.fieldnames or []
 
-        required_columns = {
-            "Date",
-            "Latency",
-            "Download",
-            "Upload",
-            "ServerName",
-        }
-
         missing_columns = sorted(
-            required_columns.difference(fieldnames)
+            SPEEDTEST_CSV_REQUIRED_COLUMNS.difference(fieldnames)
         )
 
         if missing_columns:
@@ -721,89 +800,6 @@ def write_speedtest_csv_results_workbook(
     workbook.close()
 
     return workbook_path
-
-
-def prompt_for_speedtest_csv() -> Path | None:
-    """
-    Open a Windows file picker and let the engineer select the Speedtest
-    Result History CSV that was just downloaded/exported.
-    """
-    try:
-        from tkinter import Tk
-        from tkinter.filedialog import askopenfilename
-    except ImportError as error:
-        raise RuntimeError(
-            "Tkinter is required to browse for the Speedtest CSV."
-        ) from error
-
-    root = Tk()
-    root.withdraw()
-    root.attributes(
-        "-topmost",
-        True,
-    )
-
-    try:
-        selected = askopenfilename(
-            parent=root,
-            title="Select Speedtest Result History CSV",
-            filetypes=[
-                (
-                    "CSV files",
-                    "*.csv",
-                ),
-                (
-                    "All files",
-                    "*.*",
-                ),
-            ],
-        )
-    finally:
-        root.destroy()
-
-    if not selected:
-        return None
-
-    return Path(selected).resolve()
-
-
-
-
-def prompt_for_wrapper_session_folder(
-    initial_path: str | Path | None = None,
-) -> Path | None:
-    try:
-        from tkinter import Tk
-        from tkinter.filedialog import askdirectory
-    except ImportError as error:
-        raise RuntimeError(
-            "Tkinter is required to browse for the wrapper session folder."
-        ) from error
-
-    initial_dir = None
-    if initial_path:
-        candidate = Path(initial_path).expanduser()
-        if candidate.exists() and candidate.is_dir():
-            initial_dir = candidate.resolve()
-
-    root = Tk()
-    root.withdraw()
-    root.attributes("-topmost", True)
-
-    try:
-        selected = askdirectory(
-            parent=root,
-            title="Select Wrapper Test Session Folder",
-            initialdir=str(initial_dir) if initial_dir else None,
-            mustexist=True,
-        )
-    finally:
-        root.destroy()
-
-    if not selected:
-        return None
-
-    return Path(selected).resolve()
 
 
 def validate_wrapper_session_folder(
@@ -1934,6 +1930,199 @@ def _valid_adb_candidate(
     return None
 
 
+def _valid_pcat_candidate(
+    candidate: str | Path | None,
+) -> Path | None:
+    if not candidate:
+        return None
+
+    try:
+        path = Path(candidate).expanduser().resolve()
+    except OSError:
+        return None
+
+    if (
+        path.exists()
+        and path.is_file()
+        and path.suffix.lower() == ".exe"
+    ):
+        return path
+
+    return None
+
+
+PCAT_COMMON_PATHS = (
+    Path(r"C:\Program Files\Qualcomm\PCAT\PCAT.exe"),
+    Path(r"C:\Program Files (x86)\Qualcomm\PCAT\PCAT.exe"),
+    Path(r"C:\Qualcomm\PCAT\PCAT.exe"),
+    Path(r"C:\PCAT\PCAT.exe"),
+)
+
+# Start Menu entries are shortcuts (.lnk), not the executable itself, and
+# their folder name/location varies by install (some installers create it
+# directly under "Start Menu", others under the usual "Start Menu\Programs").
+PCAT_START_MENU_ROOTS = (
+    Path(r"C:\ProgramData\Microsoft\Windows\Start Menu\PCAT"),
+    Path(r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\PCAT"),
+    Path.home()
+    / "AppData/Roaming/Microsoft/Windows/Start Menu/Programs/PCAT",
+)
+
+
+def _resolve_shortcut_target(
+    shortcut_path: Path,
+) -> Path | None:
+    """
+    Resolve a Windows .lnk shortcut to the real executable it points at.
+    """
+    try:
+        import win32com.client
+    except ImportError:
+        return None
+
+    try:
+        shell = win32com.client.Dispatch("WScript.Shell")
+        shortcut = shell.CreateShortCut(str(shortcut_path))
+        target = (shortcut.Targetpath or "").strip()
+    except Exception:
+        return None
+
+    return _valid_pcat_candidate(target) if target else None
+
+
+def _search_folder_for_pcat_executable(
+    root: Path,
+) -> Path | None:
+    """
+    Look inside a folder (and its subfolders) for the PCAT executable,
+    either directly or by resolving a PCAT-named .lnk shortcut - covers
+    Start Menu entries, which point at the real install location rather
+    than containing PCAT.exe themselves.
+    """
+    if not root.exists():
+        return None
+
+    try:
+        for found in root.rglob("*"):
+            if not found.is_file():
+                continue
+
+            if (
+                found.suffix.lower() == ".exe"
+                and found.stem.lower() == "pcat"
+            ):
+                candidate = _valid_pcat_candidate(found)
+
+                if candidate is not None:
+                    return candidate
+
+            if (
+                found.suffix.lower() == ".lnk"
+                and "pcat" in found.stem.lower()
+            ):
+                resolved = _resolve_shortcut_target(found)
+
+                if resolved is not None:
+                    return resolved
+    except OSError:
+        pass
+
+    return None
+
+
+def find_pcat_executable() -> tuple[Path | None, str | None]:
+    """
+    Dynamically locate the PCAT executable on the current testing computer,
+    the same way find_adb_executable() locates adb.exe.
+
+    "Open PCAT" used to fall back to a native file-picker dialog every
+    single time the backend restarted, because the selected path was only
+    ever kept in memory (pcat_state), never written to pcat_config.json
+    like the ADB path already is. That dialog isn't reliably visible on
+    every test PC, so in practice PCAT could stop being openable purely
+    because the app had been restarted since the executable was last
+    picked. Persisting the path and adding the same kind of automatic
+    discovery ADB already has means most machines never need the dialog
+    at all after the first successful open.
+
+    Search order:
+      1. Previously verified path for this PC (persisted machine setting)
+      2. WNC_PCAT_EXECUTABLE environment variable
+      3. Common Qualcomm PCAT install locations
+      4. One level under the Qualcomm Program Files folders, for versioned
+         subfolder names (e.g. PCAT_5.2)
+      5. The PCAT Start Menu folder, resolving its .lnk shortcut to the
+         real executable (PCAT is commonly installed outside Program
+         Files entirely, only reachable this way)
+    """
+    config = load_pcat_config()
+
+    cached = _valid_pcat_candidate(
+        config.get("pcat_executable")
+    )
+
+    if cached is not None:
+        return cached, "saved machine setting"
+
+    environment_path = os.environ.get(
+        "WNC_PCAT_EXECUTABLE", ""
+    ).strip()
+
+    if environment_path:
+        candidate = _valid_pcat_candidate(
+            environment_path
+        )
+
+        if candidate is not None:
+            save_pcat_config(
+                pcat_executable=str(candidate)
+            )
+            return candidate, "WNC_PCAT_EXECUTABLE"
+
+    for raw_candidate in PCAT_COMMON_PATHS:
+        candidate = _valid_pcat_candidate(
+            raw_candidate
+        )
+
+        if candidate is not None:
+            save_pcat_config(
+                pcat_executable=str(candidate)
+            )
+            return candidate, "common PCAT install location"
+
+    qualcomm_roots = (
+        Path(r"C:\Program Files\Qualcomm"),
+        Path(r"C:\Program Files (x86)\Qualcomm"),
+    )
+
+    for root in qualcomm_roots:
+        if not root.exists():
+            continue
+
+        try:
+            for found in root.glob("*/PCAT.exe"):
+                candidate = _valid_pcat_candidate(found)
+
+                if candidate is not None:
+                    save_pcat_config(
+                        pcat_executable=str(candidate)
+                    )
+                    return candidate, f"search under {root}"
+        except OSError:
+            continue
+
+    for root in PCAT_START_MENU_ROOTS:
+        candidate = _search_folder_for_pcat_executable(root)
+
+        if candidate is not None:
+            save_pcat_config(
+                pcat_executable=str(candidate)
+            )
+            return candidate, f"Start Menu shortcut under {root}"
+
+    return None, None
+
+
 def find_adb_executable() -> tuple[Path | None, str | None]:
     """
     Dynamically locate adb.exe on the current testing computer.
@@ -2306,6 +2495,13 @@ def get_pcat_status() -> dict[str, Any]:
         pcat_state["adb_executable"] = str(cached_adb)
         pcat_state["adb_folder"] = str(cached_adb.parent)
 
+    cached_pcat = _valid_pcat_candidate(
+        config.get("pcat_executable")
+    )
+
+    if cached_pcat is not None:
+        pcat_state["pcat_executable"] = str(cached_pcat)
+
     return dict(pcat_state)
 
 
@@ -2343,6 +2539,52 @@ def find_pcat_adb() -> dict[str, Any]:
             "discovery_source": discovery_source,
             "message": (
                 "ADB was found automatically"
+                + (
+                    f" using {discovery_source}."
+                    if discovery_source
+                    else "."
+                )
+            ),
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(error),
+        ) from error
+
+
+@app.get("/api/pcat/find-executable")
+def find_pcat_executable_endpoint() -> dict[str, Any]:
+    try:
+        pcat_executable, discovery_source = find_pcat_executable()
+
+        if pcat_executable is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=(
+                    "TestHub could not find the PCAT executable "
+                    "automatically. Use Browse and select PCAT.exe manually."
+                ),
+            )
+
+        pcat_state.update(
+            {
+                "pcat_executable": str(pcat_executable),
+                "message": "PCAT executable was found automatically.",
+                "error": None,
+            }
+        )
+
+        return {
+            "success": True,
+            "path": str(pcat_executable),
+            "discovery_source": discovery_source,
+            "message": (
+                "PCAT executable was found automatically"
                 + (
                     f" using {discovery_source}."
                     if discovery_source
@@ -2473,6 +2715,13 @@ def browse_pcat_executable() -> dict[str, Any]:
                 "message": "PCAT executable selected.",
                 "error": None,
             }
+        )
+
+        # Persist it so the next Open PCAT (even after an app/backend
+        # restart) doesn't need the dialog again - previously this was
+        # only kept in memory and got forgotten on every restart.
+        save_pcat_config(
+            pcat_executable=str(selected)
         )
 
         return {
@@ -2616,15 +2865,15 @@ def open_pcat_application(
             or pcat_state.get("pcat_executable")
         )
 
-        executable: Path | None = None
+        executable = _valid_pcat_candidate(executable_value)
 
-        if executable_value:
-            candidate = Path(
-                executable_value
-            ).expanduser().resolve()
-
-            if candidate.exists() and candidate.is_file():
-                executable = candidate
+        # Nothing explicitly selected/cached yet - try the same automatic
+        # discovery "Find PCAT" uses before ever falling back to a native
+        # dialog, since that dialog isn't reliably visible on every test
+        # PC (it can render off-screen or behind other windows even when
+        # marked topmost).
+        if executable is None:
+            executable, _source = find_pcat_executable()
 
         if executable is None:
             selected = prompt_for_pcat_executable()
@@ -2637,6 +2886,12 @@ def open_pcat_application(
                 }
 
             executable = selected
+
+        # Always persist a resolved path, so a manual pick here (not just
+        # ones made through Browse) survives the next backend restart too.
+        save_pcat_config(
+            pcat_executable=str(executable)
+        )
 
         subprocess.Popen(
             [str(executable)],
@@ -2988,6 +3243,43 @@ def health_check() -> dict[str, str]:
     }
 
 
+# Cached Verizon GUI session cookies for live radio metrics, keyed by
+# Titan IP. Reading cgi_home.js needs an authenticated `sysauth` cookie,
+# which needs a password to obtain - but the Devices page polls status
+# automatically every 10 seconds, so asking for the password on every
+# poll isn't workable. Instead, POST /api/device/radio-metrics/connect
+# logs in once (with a real browser, same as the syslog download) and
+# caches the resulting cookie here; subsequent polls reuse it with a
+# plain HTTP request until it expires, at which point the engineer needs
+# to Connect again. Nothing here is written to disk.
+titan_radio_sessions: dict[str, str] = {}
+
+
+@app.post("/api/device/radio-metrics/connect")
+def connect_titan_radio_metrics(
+    request: TitanRadioConnectRequest,
+) -> dict[str, Any]:
+    try:
+        metrics, sysauth = fetch_radio_metrics(
+            titan_ip=request.titan_ip,
+            password=request.password,
+        )
+
+        titan_radio_sessions[request.titan_ip] = sysauth
+
+        return {
+            "success": True,
+            **metrics,
+            "metrics_error": None,
+        }
+
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(error),
+        ) from error
+
+
 @app.get("/api/device/status")
 def get_device_status(
     titan_ip: str = DEFAULT_TITAN_IP,
@@ -3015,6 +3307,7 @@ def get_device_status(
         "rsrp_dbm": None,
         "rssi_dbm": None,
         "sinr_db": None,
+        "radio_metrics_connected": titan_ip in titan_radio_sessions,
         "metrics_error": None,
     }
 
@@ -3025,15 +3318,28 @@ def get_device_status(
 
         return device_status
 
-    try:
-        metrics = titan.get_radio_metrics()
+    cached_sysauth = titan_radio_sessions.get(titan_ip)
 
-        if not isinstance(metrics, dict):
-            raise TypeError(
-                "Titan radio metrics must be returned as a dictionary."
-            )
+    if cached_sysauth is None:
+        device_status["metrics_error"] = (
+            "Connect with the Verizon GUI password to see live radio "
+            "metrics."
+        )
+
+        return device_status
+
+    try:
+        metrics = fetch_radio_metrics_with_cookie(
+            titan_ip=titan_ip,
+            sysauth=cached_sysauth,
+        )
 
         device_status.update(metrics)
+
+    except PermissionError as error:
+        titan_radio_sessions.pop(titan_ip, None)
+        device_status["radio_metrics_connected"] = False
+        device_status["metrics_error"] = str(error)
 
     except Exception as error:
         device_status["metrics_error"] = str(error)
@@ -3719,6 +4025,28 @@ def get_wrapper_syslog_status() -> dict[str, Any]:
     return syslog_controller.status()
 
 
+def _find_wrapper_session_metadata_files(
+    results_folder: Path,
+) -> list[Path]:
+    """
+    Find every wrapper_session.json under results_folder, at any depth.
+
+    This used to be a one-level-deep glob ("*/metadata/wrapper_session.json"),
+    which assumed every session sits directly under RESULTS_FOLDER. Sessions
+    created while a stale save location pointed inside an existing session
+    (a picker opened inside the results folder, an existing session folder
+    right there to accidentally drill into) ended up nested two or more
+    levels deep instead - and the one-level glob silently never found them,
+    so "latest session" kept resolving to the oldest, outermost one no
+    matter how many newer sessions existed. Searching recursively finds
+    sessions at any nesting depth, including ones created before the nesting
+    itself was fixed at the source in TestWrapper.create_workspace.
+    """
+    return list(
+        results_folder.rglob("metadata/wrapper_session.json")
+    )
+
+
 @app.get("/api/wrapper/latest-session")
 def get_latest_wrapper_session() -> dict[str, str | None]:
     """
@@ -3735,9 +4063,7 @@ def get_latest_wrapper_session() -> dict[str, str | None]:
     if not results_folder.exists():
         return {"session_folder": None}
 
-    metadata_files = list(
-        results_folder.glob("*/metadata/wrapper_session.json")
-    )
+    metadata_files = _find_wrapper_session_metadata_files(results_folder)
 
     if not metadata_files:
         return {"session_folder": None}
@@ -3751,6 +4077,133 @@ def get_latest_wrapper_session() -> dict[str, str | None]:
 
     return {
         "session_folder": str(session_folder.resolve())
+    }
+
+
+@app.get("/api/wrapper/sessions")
+def list_wrapper_sessions() -> dict[str, list[dict[str, Any]]]:
+    """
+    List every wrapper test session under RESULTS_FOLDER, newest first.
+
+    Lets pages offer an explicit "pick a session" control instead of only
+    ever defaulting to whatever is newest - some engineers want a specific
+    earlier session, not just the latest one.
+    """
+    results_folder = Path(RESULTS_FOLDER).resolve()
+
+    if not results_folder.exists():
+        return {"sessions": []}
+
+    metadata_files = _find_wrapper_session_metadata_files(results_folder)
+
+    sessions: list[dict[str, Any]] = []
+
+    for metadata_file in metadata_files:
+        session_folder = metadata_file.parent.parent
+
+        session_name = session_folder.name
+        created_at = None
+
+        try:
+            metadata = json.loads(
+                metadata_file.read_text(encoding="utf-8")
+            )
+            session_name = metadata.get("session_name", session_name)
+            created_at = metadata.get("created_at")
+        except (OSError, ValueError):
+            pass
+
+        sessions.append(
+            {
+                "session_folder": str(session_folder.resolve()),
+                "session_name": session_name,
+                "created_at": created_at,
+                "modified_at": metadata_file.stat().st_mtime,
+            }
+        )
+
+    sessions.sort(key=lambda item: item["modified_at"], reverse=True)
+
+    return {"sessions": sessions}
+
+
+class WrapperSessionReportRequest(BaseModel):
+    session_folder: str = Field(
+        min_length=1,
+        max_length=1000,
+    )
+
+
+@app.post("/api/wrapper/report-and-zip")
+def report_and_zip_wrapper_session(
+    request: WrapperSessionReportRequest,
+) -> dict[str, Any]:
+    """
+    Build a Session_Report.docx summary inside the wrapper session's
+    reports/ folder, then zip the whole session (qxdm/, reports/,
+    syslog/, metadata/) into one file next to it - a single deliverable
+    to hand off instead of several separate subfolders.
+    """
+    try:
+        session_folder = validate_wrapper_session_folder(
+            Path(request.session_folder)
+        )
+
+        report_path = generate_session_report(session_folder)
+
+        # The report was just generated above - no need to have
+        # zip_session_folder regenerate it a second time.
+        zip_path = zip_session_folder(
+            session_folder,
+            include_report=False,
+        )
+
+        return {
+            "success": True,
+            "report_path": str(report_path.resolve()),
+            "zip_path": str(zip_path.resolve()),
+            "message": f"Report and zip created: {zip_path.name}",
+        }
+
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(error),
+        ) from error
+
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(error),
+        ) from error
+
+
+@app.get("/api/wrapper/open-zip-folder")
+def open_wrapper_zip_folder(
+    zip_path: str,
+) -> dict[str, Any]:
+    """
+    Open File Explorer at the folder containing a generated session zip.
+    """
+    folder = Path(zip_path).expanduser().resolve().parent
+
+    if not folder.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Folder not found: {folder}",
+        )
+
+    try:
+        os.startfile(str(folder))
+    except AttributeError as error:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Opening folders is supported on Windows only.",
+        ) from error
+
+    return {
+        "success": True,
+        "path": str(folder),
     }
 
 
@@ -4029,13 +4482,17 @@ def import_latest_speedtest_csv_results(
         job_snapshot = dict(existing_job)
 
     try:
-        selected_csv = prompt_for_speedtest_csv()
+        selected_csv = find_latest_speedtest_csv_in_downloads()
 
         if selected_csv is None:
             return {
                 "success": False,
                 "cancelled": True,
-                "message": "Speedtest CSV selection was cancelled.",
+                "message": (
+                    "No Speedtest Result History CSV was found in "
+                    "Downloads. In Speedtest, open Result History and "
+                    "export it as a CSV, then try again."
+                ),
                 "results": [],
             }
 
@@ -4112,16 +4569,16 @@ def import_latest_speedtest_csv_results(
         }
 
         selected_wrapper_folder = (
-            prompt_for_wrapper_session_folder(
-                RESULTS_FOLDER
-            )
+            Path(request.wrapper_session_folder).expanduser().resolve()
+            if request.wrapper_session_folder
+            else None
         )
 
         if selected_wrapper_folder is None:
             response_payload["message"] = (
                 f"Imported {len(imported_results)} test(s) to Analytics. "
-                "Wrapper folder selection was cancelled, so nothing was "
-                "copied to a wrapper session."
+                "No wrapper session was selected, so nothing was copied "
+                "to a wrapper session."
             )
 
             return response_payload

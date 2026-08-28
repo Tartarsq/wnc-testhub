@@ -130,6 +130,33 @@ function PCAT() {
     }
   }
 
+  const handleFindPcat = async () => {
+    setError('')
+    setMessage('')
+    setBusyAction('find-pcat')
+
+    try {
+      const response = await api.get('/pcat/find-executable')
+
+      if (response.data?.path) {
+        setPcatExecutable(response.data.path)
+      }
+
+      setMessage(
+        response.data?.message ||
+          'PCAT executable was found automatically.'
+      )
+    } catch (requestError) {
+      setError(
+        requestError.response?.data?.detail ||
+          requestError.message ||
+          'Unable to find the PCAT executable automatically.'
+      )
+    } finally {
+      setBusyAction('')
+    }
+  }
+
   const handleBrowsePcat = async () => {
     setError('')
     setMessage('')
@@ -471,6 +498,17 @@ function PCAT() {
                     }
                     placeholder="Select PCAT .exe"
                   />
+
+                  <button
+                    type="button"
+                    className="qxdm-start-button"
+                    onClick={handleFindPcat}
+                    disabled={Boolean(busyAction)}
+                  >
+                    {busyAction === 'find-pcat'
+                      ? 'Finding...'
+                      : 'Find PCAT'}
+                  </button>
 
                   <button
                     type="button"

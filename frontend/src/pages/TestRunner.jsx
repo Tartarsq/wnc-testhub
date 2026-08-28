@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   FiActivity,
+  FiArchive,
   FiCheckCircle,
   FiDatabase,
   FiFileText,
@@ -33,6 +34,16 @@ function TestRunner() {
   const [error, setError] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isFinalizingQxdm, setIsFinalizingQxdm] = useState(false)
+  const [isGeneratingReport, setIsGeneratingReport] = useState(false)
+  const [reportResult, setReportResult] = useState(null)
+
+  // Which wrapper session to report-and-zip. Independent of the active
+  // job above on purpose - the button used to only work for whatever
+  // session was currently loaded in `job` state, so it went dead the
+  // moment you navigated away, restarted the app, or wanted to generate
+  // a report for an older session instead of the one just run.
+  const [reportSessionFolder, setReportSessionFolder] = useState('')
+  const [reportSessions, setReportSessions] = useState([])
 
   const pollingRef = useRef(null)
 
@@ -232,6 +243,134 @@ function TestRunner() {
       )
     } finally {
       setIsFinalizingQxdm(false)
+    }
+  }
+
+  const activeSessionFolder =
+    job?.session_folder ?? job?.result?.session_folder ?? null
+
+  // Prefills the report session picker with whatever the active job just
+  // produced, but only if the engineer hasn't already picked a different
+  // session to report on - a finished run shouldn't silently overwrite a
+  // deliberate choice to generate a report for an older session instead.
+  useEffect(() => {
+    if (activeSessionFolder && !reportSessionFolder) {
+      setReportSessionFolder(activeSessionFolder)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSessionFolder])
+
+  const loadLatestReportSession = async () => {
+    try {
+      const response = await api.get('/wrapper/latest-session')
+      const latestFolder = response.data?.session_folder
+
+      if (latestFolder) {
+        setReportSessionFolder(latestFolder)
+      }
+    } catch {
+      // Non-fatal - the engineer can still Browse or pick from the
+      // dropdown manually.
+    }
+  }
+
+  const loadReportSessions = async () => {
+    try {
+      const response = await api.get('/wrapper/sessions')
+      setReportSessions(response.data?.sessions ?? [])
+    } catch {
+      // Non-fatal - the dropdown just stays empty/whatever it last had.
+    }
+  }
+
+  useEffect(() => {
+    loadReportSessions()
+  }, [])
+
+  const handleSelectReportSession = (event) => {
+    const selectedFolder = event.target.value
+
+    if (!selectedFolder) {
+      return
+    }
+
+    setReportSessionFolder(selectedFolder)
+  }
+
+  const handleBrowseReportSession = async () => {
+    setError('')
+
+    try {
+      const response = await api.get(
+        '/wrapper/browse-folder',
+        {
+          params: {
+            current_path: reportSessionFolder,
+          },
+          // Keep this request alive while the Windows folder picker is
+          // open.
+          timeout: 0,
+        }
+      )
+
+      if (response.data?.path) {
+        setReportSessionFolder(response.data.path)
+      }
+    } catch (requestError) {
+      setError(
+        requestError.response?.data?.detail ||
+          requestError.message ||
+          'Unable to open the folder picker.'
+      )
+    }
+  }
+
+  const generateReportAndZip = async () => {
+    if (!reportSessionFolder.trim() || isGeneratingReport) {
+      return
+    }
+
+    setError('')
+    setIsGeneratingReport(true)
+
+    try {
+      const response = await api.post(
+        '/wrapper/report-and-zip',
+        {
+          session_folder: reportSessionFolder.trim(),
+        }
+      )
+
+      setReportResult(response.data)
+    } catch (requestError) {
+      setReportResult(null)
+      setError(
+        requestError.response?.data?.detail ||
+          requestError.message ||
+          'Unable to generate the report and zip.'
+      )
+    } finally {
+      setIsGeneratingReport(false)
+    }
+  }
+
+  const openReportZipFolder = async () => {
+    if (!reportResult?.zip_path) {
+      return
+    }
+
+    try {
+      await api.get('/wrapper/open-zip-folder', {
+        params: {
+          zip_path: reportResult.zip_path,
+        },
+      })
+    } catch (requestError) {
+      setError(
+        requestError.response?.data?.detail ||
+          requestError.message ||
+          'Unable to open the folder.'
+      )
     }
   }
 
@@ -520,6 +659,107 @@ function TestRunner() {
                 </dd>
               </div>
             </dl>
+
+            <label className="form-field qxdm-folder-field">
+              <span>Session To Report &amp; Zip</span>
+
+              <div className="qxdm-folder-input">
+                <FiFolder />
+
+                <input
+                  type="text"
+                  value={reportSessionFolder}
+                  onChange={(event) =>
+                    setReportSessionFolder(event.target.value)
+                  }
+                  placeholder="Select a wrapper session folder"
+                />
+
+                <button
+                  type="button"
+                  className="qxdm-refresh-button"
+                  onClick={handleBrowseReportSession}
+                >
+                  Browse
+                </button>
+
+                <button
+                  type="button"
+                  className="qxdm-refresh-button"
+                  onClick={() => {
+                    loadLatestReportSession()
+                    loadReportSessions()
+                  }}
+                  title="Re-sync to whichever wrapper session was created most recently"
+                >
+                  <FiRefreshCw />
+                  Use Latest
+                </button>
+              </div>
+
+              <div className="qxdm-folder-input">
+                <select
+                  value={reportSessionFolder}
+                  onChange={handleSelectReportSession}
+                  onFocus={loadReportSessions}
+                >
+                  <option value="">
+                    Or pick an existing session (
+                    {reportSessions.length} found)...
+                  </option>
+                  {reportSessions.map((session) => (
+                    <option
+                      key={session.session_folder}
+                      value={session.session_folder}
+                    >
+                      {session.session_name} -{' '}
+                      {session.session_folder}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <small className="qxdm-session-help">
+                Not limited to the session above - pick any past
+                session (current or previous) to build its report and
+                zip.
+              </small>
+            </label>
+
+            <div className="qxdm-action-row">
+              <button
+                type="button"
+                className="qxdm-start-button"
+                onClick={generateReportAndZip}
+                disabled={
+                  !reportSessionFolder.trim() ||
+                  isGeneratingReport
+                }
+              >
+                <FiArchive />
+                {isGeneratingReport
+                  ? 'Generating...'
+                  : 'Generate Report & Zip'}
+              </button>
+
+              {reportResult?.zip_path && (
+                <button
+                  type="button"
+                  className="qxdm-refresh-button"
+                  onClick={openReportZipFolder}
+                >
+                  <FiFolder />
+                  Open Folder
+                </button>
+              )}
+            </div>
+
+            {reportResult?.zip_path && (
+              <div className="qxdm-manual-settings-banner">
+                <strong>Session Zip</strong>
+                <span>{reportResult.zip_path}</span>
+              </div>
+            )}
 
             <div className="wrapper-progress-list">
               {(job?.progress ?? []).map((item, index) => (

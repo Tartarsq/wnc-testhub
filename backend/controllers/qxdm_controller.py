@@ -3,6 +3,7 @@ import ctypes.wintypes
 import json
 import re
 import subprocess
+import sys
 import time
 
 import cv2
@@ -22,6 +23,25 @@ from config import (
 )
 
 from tool_settings import ToolSettings
+
+
+def _controllers_resource_dir() -> Path:
+    """
+    Folder to load the QXDM UI-matching PNG templates from.
+
+    In dev mode this is just this module's own folder. In a packaged app,
+    this module's Python source is bundled inside PyInstaller's archive
+    rather than sitting on disk next to Path(__file__), so that same
+    __file__-relative lookup would silently point at a path that doesn't
+    exist. The PNGs themselves are added to the build as real data files
+    (see WNCTestHubBackend.spec) that land in a controllers/ folder next
+    to the packaged executable - so when frozen, resolve relative to
+    sys.executable instead.
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent / "controllers"
+
+    return Path(__file__).resolve().parent
 
 
 class QXDMController:
@@ -46,7 +66,7 @@ class QXDMController:
     WINDOW_TITLE_PATTERN = r".*QXDM.*"
 
     COMMAND_TEMPLATE_PATH = (
-        Path(__file__).resolve().parent
+        _controllers_resource_dir()
         / "qxdm_command_bar.png"
     )
     COMMAND_TEMPLATE_THRESHOLD = 0.72
@@ -60,15 +80,15 @@ class QXDMController:
     COMMAND_SEARCH_WIDTH_RATIO = 0.58
 
     MENU_BAR_TEMPLATE_PATH = (
-        Path(__file__).resolve().parent
+        _controllers_resource_dir()
         / "qxdm_menu_bar.png"
     )
     LOAD_CONFIGURATION_TEMPLATE_PATH = (
-        Path(__file__).resolve().parent
+        _controllers_resource_dir()
         / "qxdm_load_configuration_item.png"
     )
     SETTINGS_MENU_TEMPLATE_PATH = (
-        Path(__file__).resolve().parent
+        _controllers_resource_dir()
         / "qxdm_options_settings_item.png"
     )
 
@@ -77,7 +97,7 @@ class QXDMController:
     OPTIONS_MENU_CLICK_X_OFFSET = 140
     MENU_BAR_CLICK_Y_RATIO = 0.50
     SETTINGS_ANCHOR_TEMPLATE_PATH = (
-        Path(__file__).resolve().parent
+        _controllers_resource_dir()
         / "qxdm_settings_anchor.png"
     )
     SETTINGS_TEMPLATE_THRESHOLD = 0.72

@@ -17,6 +17,11 @@ eggs/
 # Electron-builder output
 /release/
 
+# Chromium browser copied here for bundling into the installer (see
+# scripts/prepare-playwright-browsers.js) - too large to commit, and
+# regenerated fresh from the local Playwright cache on every build.
+/backend/playwright-browsers/
+
 # Node.js (root-level - frontend/ has its own .gitignore for its
 # node_modules, but the root package.json added for electron-builder
 # needs this too)

@@ -151,6 +151,62 @@ def automate_verizon_syslog_download(
     )
 
 
+def login_and_get_sysauth_cookie(
+    titan_ip: str,
+    password: str,
+    headless: bool = True,
+) -> str:
+    """
+    Log into the Titan 3 Verizon GUI with a real browser (so the page's
+    own JavaScript hashes the password correctly, same reasoning as
+    automate_verizon_syslog_download above) and return the resulting
+    `sysauth` session cookie value.
+
+    Shared by anything that needs an authenticated session against the
+    Verizon GUI without also wanting the syslog-specific download step -
+    e.g. reading the live radio metrics page.
+    """
+    try:
+        from playwright.sync_api import (
+            TimeoutError as PlaywrightTimeoutError,
+            sync_playwright,
+        )
+    except ImportError as error:
+        raise RuntimeError(
+            "Playwright is not installed. Run 'pip install playwright "
+            "&& playwright install chromium' in the backend virtual "
+            "environment first."
+        ) from error
+
+    gui_url = f"https://{titan_ip}/#/login/"
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=headless)
+        context = browser.new_context(ignore_https_errors=True)
+        page = context.new_page()
+
+        try:
+            try:
+                page.goto(
+                    gui_url,
+                    timeout=NAVIGATION_TIMEOUT_MS,
+                )
+            except PlaywrightTimeoutError as error:
+                raise RuntimeError(
+                    f"Could not reach the Verizon GUI at {gui_url}. "
+                    "Confirm the Titan IP is correct and the device is "
+                    "reachable on the network."
+                ) from error
+
+            _login(page, password)
+
+            return _get_sysauth_cookie(context, titan_ip)
+
+        finally:
+            context.close()
+            browser.close()
+
+
 def _login(page, password: str) -> None:
     from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 

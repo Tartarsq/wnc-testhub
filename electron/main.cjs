@@ -30,10 +30,27 @@ function resolveBackendCommand() {
       "WNCTestHubBackend.exe"
     );
 
+    // Playwright (used for the Syslog and Devices radio-metrics login
+    // steps) needs a real Chromium binary, which PyInstaller doesn't
+    // bundle on its own - end-user machines normally have no Python/pip
+    // to run `playwright install chromium` themselves. electron-builder
+    // instead bundles a pre-downloaded Chromium as an extra resource
+    // (see package.json's `build.extraResources` and
+    // scripts/prepare-playwright-browsers.js), and this env var is how
+    // Playwright's own Python library is told to look there instead of
+    // its normal per-user cache folder.
+    const bundledBrowsersPath = path.join(
+      process.resourcesPath,
+      "playwright-browsers"
+    );
+
     return {
       command: backendExecutable,
       args: [],
       cwd: path.dirname(backendExecutable),
+      env: fs.existsSync(bundledBrowsersPath)
+        ? { PLAYWRIGHT_BROWSERS_PATH: bundledBrowsersPath }
+        : {},
     };
   }
 
@@ -59,11 +76,12 @@ function resolveBackendCommand() {
       BACKEND_PORT,
     ],
     cwd: backendDirectory,
+    env: {},
   };
 }
 
 function startBackend() {
-  const { command, args, cwd } = resolveBackendCommand();
+  const { command, args, cwd, env } = resolveBackendCommand();
 
   if (!fs.existsSync(command)) {
     const message = app.isPackaged
@@ -83,6 +101,7 @@ function startBackend() {
   backendProcess = spawn(command, args, {
     cwd,
     windowsHide: true,
+    env: { ...process.env, ...env },
   });
 
   backendProcess.stdout?.on("data", (data) => {

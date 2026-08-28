@@ -48,6 +48,42 @@ class TestWrapper:
         cleaned = cleaned.replace(" ", "_")
         return cleaned or "WNC_Test"
 
+    _SESSION_ARTIFACT_FOLDER_NAMES = {"qxdm", "reports", "syslog", "metadata"}
+
+    @classmethod
+    def _resolve_save_root(cls, save_root: Path) -> Path:
+        """
+        Walk save_root back up to the nearest folder that is not itself a
+        wrapper session (or an artifact folder inside one).
+
+        The Windows folder picker naturally opens inside the results
+        folder, where previously-created session folders are visible right
+        alongside it. If someone drills into one of those (or into its
+        qxdm/reports/syslog/metadata subfolder) and picks that as the save
+        location, every session created after that would otherwise nest
+        inside the first one forever - each new session landing deeper
+        inside the last, instead of as its own separate folder.
+        """
+        current = save_root
+
+        while True:
+            if (current / "metadata" / "wrapper_session.json").exists():
+                current = current.parent
+                continue
+
+            if (
+                current.name in cls._SESSION_ARTIFACT_FOLDER_NAMES
+                and (
+                    current.parent / "metadata" / "wrapper_session.json"
+                ).exists()
+            ):
+                current = current.parent.parent
+                continue
+
+            break
+
+        return current
+
     def create_workspace(
         self,
         save_root: Path,
@@ -56,6 +92,7 @@ class TestWrapper:
         mode: str,
     ) -> dict[str, Any]:
         save_root = Path(save_root).expanduser().resolve()
+        save_root = self._resolve_save_root(save_root)
         save_root.mkdir(parents=True, exist_ok=True)
 
         safe_name = self._safe_name(session_name)

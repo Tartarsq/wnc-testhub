@@ -1,11 +1,23 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import glob
+
+# QXDM automation locates on-screen UI elements by matching these PNG
+# templates with OpenCV (see controllers/qxdm_controller.py). They're plain
+# data files, not Python source, so PyInstaller's own import analysis never
+# picks them up on its own - without listing them here explicitly, the
+# packaged app would be missing them entirely and QXDM's Settings autofill
+# (and command-bar location) would fail every time.
+controller_template_datas = [
+    (png_path, "controllers")
+    for png_path in glob.glob("controllers/*.png")
+]
 
 a = Analysis(
     ['backend_launcher.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=controller_template_datas,
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
