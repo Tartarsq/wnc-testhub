@@ -230,6 +230,13 @@ cd wnc-testhub
 
 ## Backend Setup
 
+> This section walks through setting up and running the backend by itself
+> (useful for backend-only development, e.g. with `uvicorn --reload` for
+> live code reloading). If you just want to run the full app, `npm run
+> electron:dev` / `npm run dist` set up this same virtual environment
+> automatically — see "Run in development" and "Build a distributable
+> installer" below.
+
 Navigate to the backend directory:
 
 ```bash
@@ -353,7 +360,9 @@ so nothing needs to be run from a terminal.
 ## Run in development
 
 This runs the Electron shell against your local `.venv` Python backend and a
-production build of the frontend:
+production build of the frontend. The only things that need to already be
+installed on the machine are Python and Node.js themselves — everything else
+(creating the venv, installing Python dependencies) happens automatically:
 
 ```bash
 # from the project root
@@ -362,41 +371,34 @@ npm install
 npm run electron:dev
 ```
 
-`npm run electron:dev` builds `frontend/dist` and then launches Electron,
-which spawns `backend/.venv/Scripts/python.exe -m uvicorn` and waits for it
-to respond on `http://127.0.0.1:8000/` before opening the window.
+`npm run electron:dev` runs `backend:setup` first (creates `backend/.venv`
+if it doesn't exist yet, and installs/updates every Python dependency from
+`requirements.txt`), builds `frontend/dist`, then launches Electron, which
+spawns `backend/.venv/Scripts/python.exe -m uvicorn` and waits for it to
+respond on `http://127.0.0.1:8000/` before opening the window.
 
 ## Build a distributable installer
 
 End users don't have Python installed, so the backend first needs to be
 compiled into a standalone executable with PyInstaller, and only then does
-Electron get packaged around it. PyInstaller is included in
-`backend/requirements.txt`, so no separate `pip install pyinstaller` step is
-needed as long as the venv's dependencies are up to date.
+Electron get packaged around it. Nothing beyond Python + Node.js needs to be
+installed manually on the machine building it — `npm run dist` bootstraps
+everything else itself:
 
-The installer also bundles a real Chromium browser directly, so end-user
-machines don't need Python/pip to fetch one themselves for the Syslog and
-Devices radio-metrics login steps. `npm run dist` handles this automatically
-too — if Chromium isn't already cached on the machine building the
-installer, it runs `playwright install chromium` itself before bundling it,
-so no separate manual step is required beyond the normal first-time setup.
+- Creates/updates the backend virtual environment and installs every Python
+  dependency (including PyInstaller) if needed.
+- Installs Chromium via Playwright if it isn't already cached, then bundles
+  it directly into the installer — end-user machines won't need Python/pip
+  to fetch it themselves for the Syslog and Devices radio-metrics login
+  steps.
+- Compiles the backend, builds the frontend, and packages the Electron app.
 
 ```bash
-# One-time, if not already done (see First-Time Setup above):
-cd backend
-python -m pip install -r requirements.txt
-cd ..
-
-# Then, every time you want a fresh installer:
+# from the project root
+cd frontend && npm install && cd ..
 npm install
 npm run dist
 ```
-
-`npm run dist` runs the full chain itself: compiles the backend
-(`backend:build`), builds the frontend (`frontend:build`), installs
-Chromium if it isn't already cached and copies it into
-`backend/playwright-browsers/` for bundling (`playwright:bundle`, via
-`scripts/prepare-playwright-browsers.js`), then runs `electron-builder`.
 
 The installer is written to `release/`. `electron-builder` bundles
 `backend/dist/WNCTestHubBackend/` and `backend/playwright-browsers/` as extra

@@ -7,9 +7,10 @@
   "scripts": {
     "frontend:install": "cd frontend && npm install",
     "frontend:build": "cd frontend && npm run build",
-    "backend:build": "cd backend && pyinstaller WNCTestHubBackend.spec --noconfirm",
+    "backend:setup": "node scripts/prepare-backend-venv.js",
+    "backend:build": "npm run backend:setup && node scripts/run-pyinstaller.js",
     "electron": "electron .",
-    "electron:dev": "npm run frontend:build && electron .",
+    "electron:dev": "npm run backend:setup && npm run frontend:build && electron .",
     "playwright:bundle": "node scripts/prepare-playwright-browsers.js",
     "dist": "npm run backend:build && npm run frontend:build && npm run playwright:bundle && electron-builder"
   },
